@@ -4,16 +4,15 @@ This directory contains the project operating model, governance, architecture, a
 
 ## Contents
 
-- `Manifesto/` - Project identity, purpose, and non-negotiable principles.
-- `Vision/` - Long-term direction and desired end state.
-- `Roadmap/` - Sequenced project evolution and milestones.
-- `Architecture/` - System structure, boundaries, and flow diagrams.
-- `Ontology/` - Domain vocabulary, entities, relationships, and semantic rules.
-- `Decision Log/` - Durable records of significant decisions and their rationale.
-- `Assumption Register/` - Explicit assumptions, confidence, and review triggers.
-- `Risk Propagation Library/` - Reusable patterns for tracing event-to-outcome pathways.
-- `Knowledge Sources/` - Source categories, trust criteria, and provenance notes.
-- `Engineering Standards/` - Technical conventions and implementation rules.
-- `Coding Standards/` - Language-level coding expectations and style rules.
-- `Product Principles/` - Product-level constraints and design guardrails.
-
+- `manifesto/` - Project identity, purpose, and non-negotiable principles.
+- `vision/` - Long-term direction and desired end state.
+- `roadmap/` - Sequenced project evolution and milestones.
+- `architecture/` - System structure, boundaries, and flow diagrams.
+- `ontology/` - Domain vocabulary, entities, relationships, and semantic rules.
+- `adr/` - Durable records of significant decisions and their rationale.
+- `assumptions/` - Explicit assumptions, confidence, and review triggers.
+- `propagation-library/` - Reusable patterns for tracing event-to-outcome pathways.
+- `research/` - Source categories, trust criteria, and provenance notes.
+- `standards/` - Technical conventions and implementation rules.
+- `standards/coding-standards/` - Language-level coding expectations and style rules.
+- `standards/product-principles/` - Product-level constraints and design guardrails.

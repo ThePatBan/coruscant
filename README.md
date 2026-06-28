@@ -15,15 +15,17 @@ This repository is intentionally documentation-first. The software comes after t
 ## Repository Structure
 
 - `docs/` - Core product, governance, and operating documentation.
-- `ontology/` - Domain concepts, entity models, relationships, and controlled vocabulary.
-- `knowledge/` - Curated source material, evidence notes, and structured knowledge artifacts.
-- `engineering/` - Engineering standards, implementation notes, and technical operating guidance.
 - `backend/` - Backend application boundary and future service implementation.
 - `frontend/` - Frontend application boundary and future interface implementation.
+- `graph/` - Knowledge graph modeling, schema, and reasoning support.
+- `ingestion/` - Source acquisition, parsing, normalization, and evidence capture.
+- `llm/` - Model interfaces, prompts, evaluation, and local LLM experiments.
 - `infrastructure/` - Docker, deployment, and environment definitions.
 - `experiments/` - Isolated prototypes, research, and disposable investigations.
+- `scripts/` - Operational and maintenance scripts.
+- `tests/` - Automated verification and quality checks.
+- `docker/` - Docker assets and container-related configuration.
 
 ## Status
 
 This repository currently contains the foundation for documentation, architecture, and governance only. No application code is included yet.
-
