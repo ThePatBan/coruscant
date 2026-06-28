@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from coruscant.common.types import NormalizedDocument, SourceDocument
 from coruscant.connectors.base import FetchRequest, SourceConnector
-from coruscant.connectors.common import build_source_document, normalize_reference_document
+from coruscant.connectors.common import (
+    build_source_document,
+    developments_text,
+    normalize_reference_document,
+)
 
 DOCUMENT_TYPE = "investor_update"
 
@@ -31,6 +35,7 @@ class ReferenceInvestorRelationsConnector(SourceConnector):
                 f"{name} reaffirmed full-year guidance and outlined capital allocation "
                 "priorities including reinvestment and shareholder returns.",
             ),
+            ("Recent Developments", developments_text(request.revision)),
         ]
         return build_source_document(
             source_type="investor_relations",
@@ -42,6 +47,7 @@ class ReferenceInvestorRelationsConnector(SourceConnector):
                 "company_name": name,
                 "title": f"{name} Investor Update {period}",
                 "period": period,
+                "published_at": request.published_at,
                 "industry": request.industry,
             },
         )

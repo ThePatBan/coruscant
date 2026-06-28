@@ -18,6 +18,7 @@ from coruscant.common.types import (
     SourceDocument,
 )
 from coruscant.connectors.base import FetchRequest, SourceConnector
+from coruscant.connectors.common import developments_text
 
 
 class _TextStripper(HTMLParser):
@@ -58,7 +59,9 @@ class ReferenceEdgarConnector(SourceConnector):
 
     def fetch(self, request: FetchRequest) -> SourceDocument:
         name = request.company_name or request.company_slug.title()
-        form_type = request.source_name or "10-K"
+        form_type = "10-K"
+        developments = developments_text(request.revision)
+        filing_date = request.published_at or "2025-01-31"
         text = (
             "Item 1. Business\n"
             f"{name} designs, manufactures, and markets products and services across its "
@@ -68,7 +71,7 @@ class ReferenceEdgarConnector(SourceConnector):
             "that could affect results.\n\n"
             "Item 7. Management's Discussion and Analysis\n"
             f"{name} discusses revenue trends, margins, liquidity, and capital allocation "
-            "for the reporting period.\n"
+            f"for the reporting period. {developments}\n"
         )
         return SourceDocument(
             source_type="sec_edgar",
@@ -81,8 +84,10 @@ class ReferenceEdgarConnector(SourceConnector):
                 "company_slug": request.company_slug,
                 "company_name": name,
                 "form_type": form_type,
-                "title": f"{name} {form_type}",
-                "filing_date": request.period or "2025-01-31",
+                "title": f"{name} {form_type} ({request.period or filing_date})",
+                "filing_date": filing_date,
+                "published_at": filing_date,
+                "period": request.period,
                 "provenance": "reference-sample",
             },
         )

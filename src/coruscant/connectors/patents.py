@@ -42,6 +42,7 @@ class ReferencePatentsConnector(SourceConnector):
                 "company_name": name,
                 "title": title,
                 "assignee": name,
+                "published_at": request.published_at,
                 "industry": request.industry,
             },
         )

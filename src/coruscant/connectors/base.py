@@ -14,6 +14,8 @@ class FetchRequest:
     company_name: str | None = None
     industry: str | None = None
     period: str | None = None
+    published_at: str | None = None
+    revision: int = 0
 
 
 class SourceConnector(ABC):

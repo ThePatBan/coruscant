@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from coruscant.common.config import Settings, get_settings, load_companies, load_sources
 from coruscant.infrastructure.catalog import SqliteDocumentCatalog
+from coruscant.infrastructure.intelligence_store import SqliteIntelligenceStore
 from coruscant.infrastructure.repositories import (
     FileSystemNormalizedDocumentRepository,
     FileSystemRawDocumentRepository,
@@ -23,6 +24,11 @@ def build_catalog(settings: Settings | None = None) -> SqliteDocumentCatalog:
     return SqliteDocumentCatalog(settings.database_url)
 
 
+def build_intelligence_store(settings: Settings | None = None) -> SqliteIntelligenceStore:
+    settings = settings or get_settings()
+    return SqliteIntelligenceStore(settings.database_url)
+
+
 def run_ingestion(settings: Settings | None = None) -> IngestionReport:
     """Run the full ingestion lifecycle and persist all derived stores."""
 
@@ -34,6 +40,7 @@ def run_ingestion(settings: Settings | None = None) -> IngestionReport:
         catalog=build_catalog(settings),
         graph_store=graph_store,
         engine=HybridRetrievalEngine(),
+        intelligence_store=build_intelligence_store(settings),
     )
     companies = load_companies(settings.config_dir)
     sources = load_sources(settings.config_dir)

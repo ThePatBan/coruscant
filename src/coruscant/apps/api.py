@@ -9,10 +9,14 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from coruscant.apps.runtime import load_engine, load_graph_store
+from coruscant.apps.runtime import build_intelligence_store, load_engine, load_graph_store
 from coruscant.common.config import get_settings, load_companies
 from coruscant.common.types import NormalizedDocument
+from coruscant.infrastructure.intelligence_store import SqliteIntelligenceStore
 from coruscant.ingestion.registry import default_registry
+from coruscant.intelligence.models import ChangeSet
+from coruscant.intelligence.models import DocumentSummary as AISummary
+from coruscant.intelligence.models import ExtractedEvent
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 from coruscant.search.hybrid import HybridRetrievalEngine
 from coruscant.search.reference import TemplateReasoningLayer
@@ -97,10 +101,26 @@ class GraphResponse(BaseModel):
     neighbors: list[GraphNeighbor] = Field(default_factory=list)
 
 
+class DashboardResponse(BaseModel):
+    companies: int
+    documents: int
+    events: int
+    material_changes: int
+    latest_documents: list[DocumentSummary] = Field(default_factory=list)
+    recent_events: list[ExtractedEvent] = Field(default_factory=list)
+    recent_risks: list[ExtractedEvent] = Field(default_factory=list)
+    recent_opportunities: list[ExtractedEvent] = Field(default_factory=list)
+
+
+RISK_EVENT_CATEGORIES = {"risk", "regulatory", "litigation", "supply_chain"}
+OPPORTUNITY_EVENT_CATEGORIES = {"opportunity", "product", "capital_allocation"}
+
+
 @dataclass
 class _AppState:
     engine: Any
     graph: InMemoryKnowledgeGraphStore
+    intelligence: SqliteIntelligenceStore | None = None
 
 
 def _all_documents(engine: Any) -> list[NormalizedDocument]:
@@ -128,12 +148,14 @@ def create_app(
     retrieval_engine: Any | None = None,
     graph_store: InMemoryKnowledgeGraphStore | None = None,
     *,
+    intelligence_store: SqliteIntelligenceStore | None = None,
     load_from_storage: bool = False,
 ) -> FastAPI:
     settings = get_settings()
     state = _AppState(
         engine=retrieval_engine if retrieval_engine is not None else HybridRetrievalEngine(),
         graph=graph_store if graph_store is not None else InMemoryKnowledgeGraphStore(),
+        intelligence=intelligence_store,
     )
 
     @asynccontextmanager
@@ -141,6 +163,7 @@ def create_app(
         if load_from_storage:
             state.engine = load_engine(settings)
             state.graph = load_graph_store(settings)
+            state.intelligence = build_intelligence_store(settings)
         yield
 
     app = FastAPI(title="Coruscant API", version="0.1.0", lifespan=lifespan)
@@ -242,6 +265,50 @@ def create_app(
             for edge, target in state.graph.neighbors("Company", slug)
         ]
         return GraphResponse(company_slug=slug, found=True, neighbors=neighbors)
+
+    # ---- Intelligence ------------------------------------------------------
+
+    @app.get("/documents/{canonical_id}/summary", response_model=AISummary)
+    def document_summary(canonical_id: str) -> AISummary:
+        summary = state.intelligence.get_summary(canonical_id) if state.intelligence else None
+        if summary is None:
+            raise HTTPException(status_code=404, detail="summary not available")
+        return summary
+
+    @app.get("/companies/{slug}/timeline", response_model=list[ExtractedEvent])
+    def company_timeline(slug: str, limit: int = 50) -> list[ExtractedEvent]:
+        if state.intelligence is None:
+            return []
+        return state.intelligence.list_events(company_slug=slug, limit=limit)
+
+    @app.get("/companies/{slug}/changes", response_model=list[ChangeSet])
+    def company_changes(slug: str) -> list[ChangeSet]:
+        if state.intelligence is None:
+            return []
+        return state.intelligence.list_change_sets(company_slug=slug)
+
+    @app.get("/dashboard", response_model=DashboardResponse)
+    def dashboard() -> DashboardResponse:
+        documents = _all_documents(state.engine)
+        latest = sorted(documents, key=lambda d: d.published_at or "", reverse=True)[:6]
+        events: list[ExtractedEvent] = []
+        change_sets: list[ChangeSet] = []
+        if state.intelligence is not None:
+            events = state.intelligence.list_events(limit=40)
+            change_sets = state.intelligence.list_change_sets()
+        material_changes = sum(1 for cs in change_sets if cs.material)
+        risks = [e for e in events if e.category in RISK_EVENT_CATEGORIES][:6]
+        opportunities = [e for e in events if e.category in OPPORTUNITY_EVENT_CATEGORIES][:6]
+        return DashboardResponse(
+            companies=len(load_companies(settings.config_dir)),
+            documents=len(documents),
+            events=len(events),
+            material_changes=material_changes,
+            latest_documents=[_to_summary(d) for d in latest],
+            recent_events=events[:8],
+            recent_risks=risks,
+            recent_opportunities=opportunities,
+        )
 
     return app
 

@@ -42,6 +42,7 @@ class ReferencePressReleaseConnector(SourceConnector):
                 "company_name": name,
                 "title": headline,
                 "headline": headline,
+                "published_at": request.published_at,
                 "industry": request.industry,
             },
         )

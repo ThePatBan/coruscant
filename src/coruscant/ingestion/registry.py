@@ -44,6 +44,14 @@ class SourceDefinition:
     document_type: str
     connector_factory: ConnectorFactory
     normalizer: Normalizer
+    # (display label, ISO date) per disclosure. Periodic sources carry two so the
+    # change detector has a prior and a current version to diff; episodic sources
+    # carry one. The last entry is treated as the current disclosure.
+    periods: tuple[tuple[str, str], ...] = (("current", "2025-01-31"),)
+
+    @property
+    def is_periodic(self) -> bool:
+        return len(self.periods) > 1
 
 
 class UnknownSourceError(KeyError):
@@ -80,6 +88,7 @@ _DEFAULT_DEFINITIONS: tuple[SourceDefinition, ...] = (
         document_type="filing",
         connector_factory=ReferenceEdgarConnector,
         normalizer=normalize_edgar_filing,
+        periods=(("FY2024 10-K", "2024-01-31"), ("FY2025 10-K", "2025-01-31")),
     ),
     SourceDefinition(
         source_type="investor_relations",
@@ -87,6 +96,7 @@ _DEFAULT_DEFINITIONS: tuple[SourceDefinition, ...] = (
         document_type="investor_update",
         connector_factory=ReferenceInvestorRelationsConnector,
         normalizer=normalize_investor_relations,
+        periods=(("Q3 FY2025", "2025-04-30"), ("Q4 FY2025", "2025-07-31")),
     ),
     SourceDefinition(
         source_type="earnings_call",
@@ -94,6 +104,7 @@ _DEFAULT_DEFINITIONS: tuple[SourceDefinition, ...] = (
         document_type="transcript",
         connector_factory=ReferenceEarningsCallConnector,
         normalizer=normalize_earnings_call,
+        periods=(("Q3 FY2025", "2025-04-30"), ("Q4 FY2025", "2025-07-31")),
     ),
     SourceDefinition(
         source_type="press_release",
@@ -101,6 +112,7 @@ _DEFAULT_DEFINITIONS: tuple[SourceDefinition, ...] = (
         document_type="press_release",
         connector_factory=ReferencePressReleaseConnector,
         normalizer=normalize_press_release,
+        periods=(("Mar 2025", "2025-03-15"),),
     ),
     SourceDefinition(
         source_type="job_postings",
@@ -108,6 +120,7 @@ _DEFAULT_DEFINITIONS: tuple[SourceDefinition, ...] = (
         document_type="job_posting",
         connector_factory=ReferenceJobPostingsConnector,
         normalizer=normalize_job_postings,
+        periods=(("Feb 2025", "2025-02-10"),),
     ),
     SourceDefinition(
         source_type="news",
@@ -115,6 +128,7 @@ _DEFAULT_DEFINITIONS: tuple[SourceDefinition, ...] = (
         document_type="news_article",
         connector_factory=ReferenceNewsConnector,
         normalizer=normalize_news,
+        periods=(("Apr 2025", "2025-04-02"),),
     ),
     SourceDefinition(
         source_type="patents",
@@ -122,6 +136,7 @@ _DEFAULT_DEFINITIONS: tuple[SourceDefinition, ...] = (
         document_type="patent",
         connector_factory=ReferencePatentsConnector,
         normalizer=normalize_patents,
+        periods=(("Nov 2024", "2024-11-20"),),
     ),
 )
 

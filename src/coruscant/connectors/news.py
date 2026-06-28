@@ -43,6 +43,7 @@ class ReferenceNewsConnector(SourceConnector):
                 "title": headline,
                 "headline": headline,
                 "publisher": "Reference Newswire",
+                "published_at": request.published_at,
                 "industry": request.industry,
             },
         )

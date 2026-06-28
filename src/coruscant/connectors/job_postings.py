@@ -42,6 +42,7 @@ class ReferenceJobPostingsConnector(SourceConnector):
                 "company_name": name,
                 "title": f"{role} at {name}",
                 "role": role,
+                "published_at": request.published_at,
                 "industry": request.industry,
             },
         )

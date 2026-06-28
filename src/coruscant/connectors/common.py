@@ -24,6 +24,25 @@ from coruscant.common.types import (
 EXCERPT_LIMIT = 280
 _HEADING_RE = re.compile(r"(?m)^##\s+(?P<title>.+?)\s*$")
 
+# Period-over-period variation that drives the change-detection demo. The prior
+# revision carries a risk that is later resolved; the current revision discloses
+# new, materially different developments. Sentences are deliberately distinct so
+# the diff is clean and each change traces to a real source span.
+_PRIOR_DEVELOPMENT = "The company flagged supply chain shortage risk during the prior period."
+_CURRENT_DEVELOPMENTS = (
+    "The company disclosed a new regulatory investigation risk.",
+    "The company appointed a new chief financial officer.",
+    "The company lowered full-year guidance amid softer demand.",
+)
+
+
+def developments_text(revision: int) -> str:
+    """Revision-specific 'recent developments' prose for periodic sources."""
+
+    if revision <= 0:
+        return _PRIOR_DEVELOPMENT
+    return " ".join(_CURRENT_DEVELOPMENTS)
+
 
 def canonical_id_for(source_uri: str) -> str:
     """Stable canonical identifier derived from a source URI."""
