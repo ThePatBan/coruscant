@@ -36,10 +36,15 @@ class Settings(BaseSettings):
     seed_demo_user: bool = True
     demo_email: str = "demo@coruscant.local"
     demo_password: str = "coruscant-demo"
+    ingest_max_attempts: int = 3
 
     @property
     def graph_snapshot_path(self) -> Path:
         return self.data_dir / "graph" / "graph.json"
+
+    @property
+    def status_path(self) -> Path:
+        return self.data_dir / "status.json"
 
 
 @lru_cache(maxsize=1)

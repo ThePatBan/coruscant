@@ -6,11 +6,14 @@ snapshot) are constructed and how an ingestion run is assembled and replayed.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from coruscant.auth.service import AuthService
 from coruscant.auth.store import SqliteUserStore
 from coruscant.common.config import Settings, get_settings, load_companies, load_sources
 from coruscant.infrastructure.catalog import SqliteDocumentCatalog
 from coruscant.infrastructure.intelligence_store import SqliteIntelligenceStore
+from coruscant.infrastructure.status import RunStatus, load_status, save_status
 from coruscant.infrastructure.repositories import (
     FileSystemNormalizedDocumentRepository,
     FileSystemRawDocumentRepository,
@@ -79,12 +82,22 @@ def run_ingestion(settings: Settings | None = None) -> IngestionReport:
         graph_store=graph_store,
         engine=HybridRetrievalEngine(),
         intelligence_store=build_intelligence_store(settings),
+        max_attempts=settings.ingest_max_attempts,
     )
     companies = load_companies(settings.config_dir)
     sources = load_sources(settings.config_dir)
     report = orchestrator.run(companies, sources)
     save_graph(graph_store, settings.graph_snapshot_path)
+    status = RunStatus.from_report(
+        report, completed_at=datetime.now(tz=timezone.utc).isoformat()
+    )
+    save_status(status, settings.status_path)
     return report
+
+
+def load_run_status(settings: Settings | None = None) -> RunStatus | None:
+    settings = settings or get_settings()
+    return load_status(settings.status_path)
 
 
 def load_engine(settings: Settings | None = None) -> HybridRetrievalEngine:

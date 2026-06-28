@@ -14,7 +14,9 @@ from coruscant.apps.runtime import (
     build_intelligence_store,
     load_engine,
     load_graph_store,
+    load_run_status,
 )
+from coruscant.infrastructure.status import RunStatus
 from coruscant.auth.service import AuthError, AuthService
 from coruscant.auth.store import StoredUser
 from coruscant.common.config import get_settings, load_companies
@@ -404,6 +406,10 @@ def create_app(
         if state.intelligence is None:
             return []
         return state.intelligence.list_change_sets(company_slug=slug)
+
+    @app.get("/status", response_model=RunStatus | None, dependencies=protected)
+    def status() -> RunStatus | None:
+        return load_run_status(settings)
 
     @app.get("/dashboard", response_model=DashboardResponse, dependencies=protected)
     def dashboard() -> DashboardResponse:

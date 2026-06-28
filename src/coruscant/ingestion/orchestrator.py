@@ -86,6 +86,7 @@ class IngestionOrchestrator:
         engine: HybridRetrievalEngine | None = None,
         registry: SourceRegistry | None = None,
         intelligence_store: SqliteIntelligenceStore | None = None,
+        max_attempts: int = 1,
     ) -> None:
         self.raw_repository = raw_repository
         self.normalized_repository = normalized_repository
@@ -94,6 +95,7 @@ class IngestionOrchestrator:
         self.engine = engine if engine is not None else HybridRetrievalEngine()
         self.registry = registry if registry is not None else default_registry()
         self.intelligence_store = intelligence_store
+        self.max_attempts = max(1, max_attempts)
         self.projector = ReferenceGraphProjector()
         self.summarizer = ReferenceSummarizer()
         self.event_extractor = ReferenceEventExtractor()
@@ -130,13 +132,13 @@ class IngestionOrchestrator:
         documents: list[NormalizedDocument] = []
         for revision, (label, published_at) in enumerate(definition.periods):
             try:
-                item, normalized = self._ingest_one(
+                item, normalized = self._ingest_one_with_retry(
                     company, source_type, definition, label, published_at, revision
                 )
-            except Exception as exc:  # pragma: no cover - defensive guard
+            except Exception as exc:
                 message = f"{company.slug}:{source_type}:{label}: {exc}"
                 report.errors.append(message)
-                logger.exception("Ingestion failed for %s", message)
+                logger.error("Ingestion failed after %d attempts for %s", self.max_attempts, message)
                 continue
             report.items.append(item)
             documents.append(normalized)
@@ -170,6 +172,35 @@ class IngestionOrchestrator:
         )
         self.intelligence_store.replace_events(document.canonical_id, events)
         report.event_count += len(events)
+
+    def _ingest_one_with_retry(
+        self,
+        company: CompanyConfig,
+        source_type: str,
+        definition: SourceDefinition,
+        label: str,
+        published_at: str,
+        revision: int,
+    ) -> tuple[IngestionItem, NormalizedDocument]:
+        last_exc: Exception | None = None
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                return self._ingest_one(
+                    company, source_type, definition, label, published_at, revision
+                )
+            except Exception as exc:
+                last_exc = exc
+                logger.warning(
+                    "Attempt %d/%d failed for %s:%s:%s: %s",
+                    attempt,
+                    self.max_attempts,
+                    company.slug,
+                    source_type,
+                    label,
+                    exc,
+                )
+        assert last_exc is not None
+        raise last_exc
 
     def _ingest_one(
         self,

@@ -1,76 +1,79 @@
 # Coruscant
 
-Coruscant is an AI-powered financial and corporate intelligence platform built on traceable evidence rather than scraped summaries.
+Coruscant is an AI-powered financial and corporate intelligence platform built on **traceable evidence** rather than scraped summaries. It continuously ingests public company information, understands **what materially changed** since the last disclosure, and presents it through a clean interface — with the source evidence behind every statement.
 
-This repository contains the MVP ingestion-to-intelligence platform: a config-driven pipeline that fetches source material, normalizes it into evidence-bearing documents, projects it into a knowledge graph, embeds and indexes it for hybrid search, and serves it through an API and CLI.
+> Never sacrifice traceability for intelligence. Every insight links back to the exact source text that supports it.
 
-## What Is In Scope
+## What it does
 
-The MVP ingests and normalizes seven source types:
+- **Change detection ("what changed?")** — diffs each new disclosure against the prior one and surfaces categorized, evidence-backed material changes (new/removed risks, guidance moves, executive changes, regulatory developments).
+- **AI summaries** — overview, key points, risks, opportunities, management commentary, financial highlights, and events for every document. Each line is lifted verbatim from the source and cited.
+- **Event timeline** — chronological, categorized events extracted per company.
+- **Natural-language search** — across SEC filings, investor relations, transcripts, press releases, job postings, news, and patents, with evidence attached.
+- **Knowledge graph** — companies, documents, and sections with provenance.
+- **Authentication** — email/password accounts, sessions, protected routes.
 
-- SEC EDGAR
-- investor relations materials
-- earnings call transcripts
-- company press releases
-- job postings
-- news
-- patent metadata
+The intelligence layer is **deterministic and extractive by default** (fully auditable, runs offline) behind `Protocol` ports, with a **Claude-ready adapter seam** — see [ADR-0004](docs/adr/ADR-0004-intelligence-layer.md).
 
-SEC EDGAR ships with a live HTTP connector; every source ships with an offline **reference connector** that synthesizes deterministic, evidence-bearing sample documents (marked `provenance: reference-sample`) so the full lifecycle runs without network access. New sources are added by registering a `SourceDefinition` — not by writing company-specific code.
-
-## Lifecycle
-
-Every source travels the same path (see [docs/architecture/Data Flow.md](docs/architecture/Data%20Flow.md)):
-
-`fetch → store raw (immutable) → normalize → project graph → embed → index → catalog → reason`
-
-## Repository Layout
-
-- [src/coruscant/apps/](src/coruscant/apps/) — API, CLI, worker, and shared runtime wiring
-- [src/coruscant/common/](src/coruscant/common/) — config, logging, and domain models
-- [src/coruscant/connectors/](src/coruscant/connectors/) — source connectors + normalizers
-- [src/coruscant/ingestion/](src/coruscant/ingestion/) — registry, generic pipeline, orchestrator
-- [src/coruscant/knowledge_graph/](src/coruscant/knowledge_graph/) — graph projection, query, snapshot
-- [src/coruscant/search/](src/coruscant/search/) — embeddings, vector index, hybrid retrieval, reasoning
-- [src/coruscant/infrastructure/](src/coruscant/infrastructure/) — filesystem repositories + SQLite catalog
-- [config/companies.yml](config/companies.yml) — company registry
-- [config/sources.yml](config/sources.yml) — enabled ingestion sources
-- [docs/](docs/) — architecture and governance docs
-- [tests/](tests/) — verification suite
-
-## Local Start
+## Run the full product (Docker)
 
 ```bash
-make setup           # editable install with dev dependencies
-make test            # run the test suite
-coruscant ingest     # run the full lifecycle for every company × enabled source
-coruscant query "Apple risk factors and guidance"
-coruscant graph apple
-make api             # serve the API (also: coruscant serve)
+docker compose up --build
+# then open http://localhost:8080
 ```
 
-### CLI
+This brings up three services sharing a data volume: `ingest` (one-shot lifecycle run that also seeds a demo account), `api` (FastAPI, health-gated), and `web` (nginx serving the SPA and reverse-proxying `/api`).
 
-| Command | Description |
-| --- | --- |
-| `coruscant companies` | List configured companies |
-| `coruscant sources` | List registered ingestion sources |
-| `coruscant ingest` | Run the full ingestion lifecycle and persist all stores |
-| `coruscant query <q>` | Answer a query against the ingested corpus, with evidence |
-| `coruscant graph <slug>` | Show graph neighbors for a company |
-| `coruscant serve` | Run the API server |
+**Demo login:** `demo@coruscant.local` / `coruscant-demo` (pre-filled on the login screen).
 
-### API
+Coverage: Apple, Microsoft, Tesla, SpaceX, Cargill, ExxonMobil.
 
-`GET /health`, `GET /companies`, `GET /sources`, `GET /documents`,
-`GET /documents/{id}`, `POST /retrieve`, `GET /answer`, and
-`GET /graph/company/{slug}`. The API loads its read model from the SQLite catalog
-and the graph snapshot on startup, so it serves whatever the worker last ingested.
+## Run locally (without Docker)
 
-## Design Rules
+```bash
+make setup                 # editable install with dev dependencies
+make test                  # 77 tests
+coruscant ingest           # run the lifecycle + seed the demo user
+coruscant query "Apple risk factors and guidance"
+make api                   # serve the API (coruscant serve)
+cd frontend && npm install && npm run dev   # SPA on :5173, proxying /api -> :8000
+```
 
-- Raw data remains immutable.
-- Normalized facts are separate from documents.
-- Provenance is required for every extracted claim.
-- Source-specific behavior lives in connector implementations or configuration.
-- New pipelines must fit the same fetch, store, normalize, extract, graph, embed, index, reason lifecycle.
+## Architecture
+
+```
+React SPA (nginx)  ──/api──▶  FastAPI  ──▶  hybrid search · knowledge graph · intelligence
+        │                        │                 ▲
+   auth (JWT)              auth · intelligence      │
+                                 ▼                  │
+   worker / `coruscant ingest` ──▶ orchestrator ──▶ connectors → normalize → graph → embed → index
+                                       │                              → summarize → events → change-detect
+                                       ▼
+                       SQLite (catalog + intelligence + users) · graph snapshot · raw/normalized artifacts
+```
+
+- `src/coruscant/connectors` — source connectors + normalizers (SEC live + reference; reference connectors for the other six sources)
+- `src/coruscant/ingestion` — registry, generic pipeline, orchestrator (multi-period)
+- `src/coruscant/intelligence` — summarizer, event extractor, change detector (cited)
+- `src/coruscant/search` — embeddings, vector index, hybrid retrieval
+- `src/coruscant/knowledge_graph` — projection, query, snapshot
+- `src/coruscant/infrastructure` — filesystem repos, SQLite catalog + intelligence store, run status
+- `src/coruscant/auth` — password hashing, signed tokens, user store, auth service
+- `src/coruscant/apps` — API, CLI, worker, shared runtime
+- `frontend/` — React + TypeScript SPA
+
+See [docs/Architecture](docs/Architecture/) and the ADRs in [docs/adr](docs/adr/).
+
+## API
+
+Public: `GET /health`, `POST /auth/register`, `POST /auth/login`, `POST /auth/reset/{request,confirm}`.
+Authenticated (bearer token): `GET /auth/me`, `/companies`, `/sources`, `/documents`, `/documents/{id}`,
+`/documents/{id}/summary`, `/companies/{slug}/timeline`, `/companies/{slug}/changes`,
+`/graph/company/{slug}`, `POST /retrieve`, `GET /answer`, `GET /dashboard`, `GET /status`.
+
+## Design rules
+
+- Raw data remains immutable; normalized facts are separate from raw documents.
+- Provenance is required for every extracted claim and every AI statement.
+- Source-specific behavior lives in connectors/config; all sources share one lifecycle.
+- New sources are added by registering a `SourceDefinition`, not by changing core code.
