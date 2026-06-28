@@ -59,3 +59,12 @@ export function docTypeLabel(key: string): string {
 export function Badge({ children }: { children: ReactNode }) {
   return <span className="badge">{children}</span>;
 }
+
+export function Cat({ category }: { category: string | null | undefined }) {
+  const c = category ?? "general";
+  return (
+    <span className="cat" data-c={c}>
+      {c.replace(/_/g, " ")}
+    </span>
+  );
+}

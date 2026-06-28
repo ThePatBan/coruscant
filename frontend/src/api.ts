@@ -1,7 +1,25 @@
 // Typed client for the Coruscant API. All calls go to a same-origin `/api`
-// prefix (Vite proxy in dev, nginx proxy in prod).
+// prefix (Vite proxy in dev, nginx proxy in prod) and carry the bearer token
+// when the user is authenticated.
 
 const BASE = "/api";
+const TOKEN_KEY = "coruscant.token";
+
+export const tokenStore = {
+  get: (): string | null => localStorage.getItem(TOKEN_KEY),
+  set: (token: string): void => localStorage.setItem(TOKEN_KEY, token),
+  clear: (): void => localStorage.removeItem(TOKEN_KEY),
+};
+
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+// ---- types -----------------------------------------------------------------
 
 export interface Health {
   status: string;
@@ -72,13 +90,112 @@ export interface GraphResponse {
   neighbors: GraphNeighbor[];
 }
 
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`);
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+export interface Claim {
+  text: string;
+  source_uri: string;
+  section_title: string | null;
+  canonical_id: string | null;
+  category: string | null;
+}
+
+export interface AISummary {
+  canonical_id: string;
+  company_slug: string;
+  document_type: string;
+  source_type: string;
+  title: string | null;
+  published_at: string | null;
+  source_uri: string;
+  overview: string;
+  key_points: Claim[];
+  risks: Claim[];
+  opportunities: Claim[];
+  management_commentary: Claim[];
+  financial_highlights: Claim[];
+  events: Claim[];
+}
+
+export interface TimelineEvent {
+  canonical_id: string;
+  company_slug: string;
+  source_type: string;
+  category: string;
+  title: string;
+  description: string;
+  occurred_at: string | null;
+  source_uri: string;
+  section_title: string | null;
+}
+
+export interface DocumentChange {
+  kind: "added" | "removed";
+  category: string;
+  statement: string;
+  evidence: Claim;
+}
+
+export interface ChangeSet {
+  company_slug: string;
+  source_type: string;
+  current_canonical_id: string;
+  previous_canonical_id: string | null;
+  current_title: string | null;
+  previous_title: string | null;
+  changes: DocumentChange[];
+  material: boolean;
+  added_count: number;
+  removed_count: number;
+}
+
+export interface Dashboard {
+  companies: number;
+  documents: number;
+  events: number;
+  material_changes: number;
+  latest_documents: DocumentSummary[];
+  recent_events: TimelineEvent[];
+  recent_risks: TimelineEvent[];
+  recent_opportunities: TimelineEvent[];
+}
+
+export interface AuthToken {
+  token: string;
+  email: string;
+}
+
+export interface CurrentUser {
+  email: string;
+  created_at: string | null;
+}
+
+// ---- transport -------------------------------------------------------------
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  const token = tokenStore.get();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  if (init?.body) headers.set("Content-Type", "application/json");
+  const res = await fetch(`${BASE}${path}`, { ...init, headers });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = await res.json();
+      if (body?.detail) detail = typeof body.detail === "string" ? body.detail : detail;
+    } catch {
+      /* ignore */
+    }
+    throw new ApiError(res.status, detail);
+  }
+  if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
 
+const get = <T>(path: string) => request<T>(path);
+const post = <T>(path: string, body: unknown) =>
+  request<T>(path, { method: "POST", body: JSON.stringify(body) });
+
 export const api = {
+  // data
   health: () => get<Health>("/health"),
   companies: () => get<Company[]>("/companies"),
   sources: () => get<Source[]>("/sources"),
@@ -91,13 +208,19 @@ export const api = {
   },
   document: (id: string) => get<DocumentDetail>(`/documents/${encodeURIComponent(id)}`),
   companyGraph: (slug: string) => get<GraphResponse>(`/graph/company/${encodeURIComponent(slug)}`),
-  retrieve: async (query: string, topK = 5): Promise<RetrieveResponse> => {
-    const res = await fetch(`${BASE}/retrieve`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query, top_k: topK }),
-    });
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-    return (await res.json()) as RetrieveResponse;
-  },
+  retrieve: (query: string, topK = 6) => post<RetrieveResponse>("/retrieve", { query, top_k: topK }),
+  // intelligence
+  dashboard: () => get<Dashboard>("/dashboard"),
+  documentSummary: (id: string) => get<AISummary>(`/documents/${encodeURIComponent(id)}/summary`),
+  companyTimeline: (slug: string) =>
+    get<TimelineEvent[]>(`/companies/${encodeURIComponent(slug)}/timeline`),
+  companyChanges: (slug: string) =>
+    get<ChangeSet[]>(`/companies/${encodeURIComponent(slug)}/changes`),
+  // auth
+  login: (email: string, password: string) => post<AuthToken>("/auth/login", { email, password }),
+  register: (email: string, password: string) =>
+    post<AuthToken>("/auth/register", { email, password }),
+  me: () => get<CurrentUser>("/auth/me"),
+  resetRequest: (email: string) =>
+    post<{ email: string; reset_token: string | null }>("/auth/reset/request", { email }),
 };

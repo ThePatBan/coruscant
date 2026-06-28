@@ -1,22 +1,28 @@
-import { NavLink, Route, Routes, useLocation } from "react-router-dom";
+import { NavLink, Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { api } from "./api";
+import { useAuth } from "./auth";
 import { useAsync } from "./hooks";
 import { AskPage } from "./pages/AskPage";
 import { CompaniesPage } from "./pages/CompaniesPage";
 import { CompanyDetailPage } from "./pages/CompanyDetailPage";
+import { DashboardPage } from "./pages/DashboardPage";
 import { DocumentsPage } from "./pages/DocumentsPage";
 import { DocumentDetailPage } from "./pages/DocumentDetailPage";
+import { LandingPage } from "./pages/LandingPage";
+import { LoginPage } from "./pages/LoginPage";
 import { SourcesPage } from "./pages/SourcesPage";
 
 const NAV = [
-  { to: "/", label: "Ask", icon: "◎", end: true },
-  { to: "/companies", label: "Companies", icon: "▤", end: false },
-  { to: "/documents", label: "Documents", icon: "▦", end: false },
-  { to: "/sources", label: "Sources", icon: "⌥", end: false },
+  { to: "/dashboard", label: "Dashboard", icon: "◧" },
+  { to: "/search", label: "Search", icon: "⌕" },
+  { to: "/companies", label: "Companies", icon: "▤" },
+  { to: "/documents", label: "Documents", icon: "▦" },
+  { to: "/sources", label: "Sources", icon: "⌥" },
 ];
 
 const CRUMBS: Array<[RegExp, string]> = [
-  [/^\/$/, "Ask the evidence"],
+  [/^\/dashboard/, "Dashboard"],
+  [/^\/search/, "Search the evidence"],
   [/^\/companies\/.+/, "Company"],
   [/^\/companies$/, "Companies"],
   [/^\/documents\/.+/, "Document"],
@@ -34,44 +40,50 @@ function HealthPills() {
       </span>
     );
   }
-  if (!data) {
-    return (
-      <span className="pill">
-        <span className="spinner" style={{ width: 12, height: 12 }} />
-      </span>
-    );
-  }
+  if (!data) return <span className="pill"><span className="spinner" style={{ width: 12, height: 12 }} /></span>;
   return (
     <>
       <span className="pill">
         <span className="dot" />
-        API healthy
+        {data.documents} docs
       </span>
-      <span className="pill accent">{data.documents} documents</span>
-      <span className="pill">{data.graph_nodes} graph nodes</span>
+      <span className="pill">{data.graph_nodes} nodes</span>
     </>
   );
 }
 
-export default function App() {
+function ProtectedLayout() {
+  const { email, ready, logout } = useAuth();
   const location = useLocation();
+
+  if (!ready) {
+    return (
+      <div style={{ display: "grid", placeItems: "center", height: "100vh" }}>
+        <span className="spinner" style={{ width: 26, height: 26 }} />
+      </div>
+    );
+  }
+  if (!email) {
+    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  }
+
   const crumb = CRUMBS.find(([re]) => re.test(location.pathname))?.[1] ?? "";
 
   return (
     <div className="app">
       <aside className="sidebar">
-        <div className="brand">
+        <NavLink to="/dashboard" className="brand">
           <div className="logo" />
           <div>
             <div className="name">Coruscant</div>
             <div className="tag">Intelligence</div>
           </div>
-        </div>
+        </NavLink>
 
         <nav className="nav">
-          <div className="label">Explore</div>
+          <div className="label">Workspace</div>
           {NAV.map((item) => (
-            <NavLink key={item.to} to={item.to} end={item.end}>
+            <NavLink key={item.to} to={item.to}>
               <span className="ico">{item.icon}</span>
               {item.label}
             </NavLink>
@@ -79,8 +91,7 @@ export default function App() {
         </nav>
 
         <div className="foot">
-          Evidence-based financial &amp; corporate intelligence. Every answer traces back to a
-          source.
+          Evidence-based intelligence. Every insight traces back to its source.
         </div>
       </aside>
 
@@ -89,20 +100,37 @@ export default function App() {
           <div className="crumb">{crumb}</div>
           <div className="stats">
             <HealthPills />
+            <span className="pill accent" title={email}>
+              {email}
+            </span>
+            <button className="btn ghost" onClick={logout} style={{ padding: "6px 12px" }}>
+              Sign out
+            </button>
           </div>
         </header>
-
         <div className="content">
-          <Routes>
-            <Route path="/" element={<AskPage />} />
-            <Route path="/companies" element={<CompaniesPage />} />
-            <Route path="/companies/:slug" element={<CompanyDetailPage />} />
-            <Route path="/documents" element={<DocumentsPage />} />
-            <Route path="/documents/:id" element={<DocumentDetailPage />} />
-            <Route path="/sources" element={<SourcesPage />} />
-          </Routes>
+          <Outlet />
         </div>
       </main>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/" element={<LandingPage />} />
+      <Route path="/login" element={<LoginPage />} />
+      <Route element={<ProtectedLayout />}>
+        <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/search" element={<AskPage />} />
+        <Route path="/companies" element={<CompaniesPage />} />
+        <Route path="/companies/:slug" element={<CompanyDetailPage />} />
+        <Route path="/documents" element={<DocumentsPage />} />
+        <Route path="/documents/:id" element={<DocumentDetailPage />} />
+        <Route path="/sources" element={<SourcesPage />} />
+      </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
 }

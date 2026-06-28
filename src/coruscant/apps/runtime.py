@@ -6,6 +6,8 @@ snapshot) are constructed and how an ingestion run is assembled and replayed.
 
 from __future__ import annotations
 
+from coruscant.auth.service import AuthService
+from coruscant.auth.store import SqliteUserStore
 from coruscant.common.config import Settings, get_settings, load_companies, load_sources
 from coruscant.infrastructure.catalog import SqliteDocumentCatalog
 from coruscant.infrastructure.intelligence_store import SqliteIntelligenceStore
@@ -27,6 +29,42 @@ def build_catalog(settings: Settings | None = None) -> SqliteDocumentCatalog:
 def build_intelligence_store(settings: Settings | None = None) -> SqliteIntelligenceStore:
     settings = settings or get_settings()
     return SqliteIntelligenceStore(settings.database_url)
+
+
+def build_user_store(settings: Settings | None = None) -> SqliteUserStore:
+    settings = settings or get_settings()
+    return SqliteUserStore(settings.database_url)
+
+
+def build_auth_service(settings: Settings | None = None) -> AuthService:
+    settings = settings or get_settings()
+    return AuthService(
+        store=build_user_store(settings),
+        secret=settings.secret_key,
+        token_ttl_seconds=settings.token_ttl_seconds,
+    )
+
+
+def seed_demo_user(settings: Settings | None = None) -> bool:
+    """Create the demo account if enabled and not already present.
+
+    Returns True if a new account was created. Kept out of run_ingestion so the
+    document pipeline has no user side effects; invoked by the CLI / worker.
+    """
+
+    from coruscant.auth.service import AuthError
+
+    settings = settings or get_settings()
+    if not settings.seed_demo_user:
+        return False
+    service = build_auth_service(settings)
+    if service.store.get(settings.demo_email) is not None:
+        return False
+    try:
+        service.register(settings.demo_email, settings.demo_password)
+    except AuthError:
+        return False
+    return True
 
 
 def run_ingestion(settings: Settings | None = None) -> IngestionReport:

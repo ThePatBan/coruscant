@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     neo4j_url: str | None = None
     edgar_user_agent: str = "Coruscant/0.1.0 contact@coruscant.local"
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
+    secret_key: str = "dev-insecure-secret-change-me"
+    token_ttl_seconds: int = 86_400
+    seed_demo_user: bool = True
+    demo_email: str = "demo@coruscant.local"
+    demo_password: str = "coruscant-demo"
 
     @property
     def graph_snapshot_path(self) -> Path:

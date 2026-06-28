@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import argparse
 
-from coruscant.apps.runtime import load_engine, load_graph_store, run_ingestion
+from coruscant.apps.runtime import load_engine, load_graph_store, run_ingestion, seed_demo_user
 from coruscant.common.config import get_settings, load_companies
 from coruscant.common.logging import configure_logging
 from coruscant.ingestion.registry import default_registry
@@ -40,6 +40,13 @@ def cmd_ingest(_: argparse.Namespace) -> int:
     for source_type in report.source_types:
         count = sum(1 for item in report.items if item.source_type == source_type)
         print(f"  {source_type:20} {count}")
+    print(
+        f"Intelligence: {report.summary_count} summaries, {report.event_count} events, "
+        f"{report.material_change_count} material change sets."
+    )
+    if seed_demo_user():
+        settings = get_settings()
+        print(f"Seeded demo user: {settings.demo_email} / {settings.demo_password}")
     if report.errors:
         print(f"Errors: {len(report.errors)}")
         for error in report.errors:
