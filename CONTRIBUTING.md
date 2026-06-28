@@ -18,6 +18,7 @@ Coruscant is a documentation-first and evidence-first project. Contributions sho
 3. Make the smallest useful change.
 4. Update tests, documentation, and decision logs as needed.
 5. Verify the change locally.
+6. Open a pull request using the repository template.
 
 ## Documentation Expectations
 
@@ -27,6 +28,13 @@ Significant contributions should include updates to:
 - architecture documentation
 - decision logs
 - assumption register entries
+
+## GitHub Workflow
+
+- Use issues to capture work before implementation.
+- Use pull requests to merge changes.
+- Use ADRs for decisions that should outlive the implementation.
+- Use labels to classify and triage work.
 
 Documentation should explain:
 

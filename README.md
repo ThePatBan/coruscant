@@ -6,6 +6,8 @@ This repository is intentionally documentation-first. The software comes after t
 
 No code is merged unless the documentation explaining why it exists is merged with it.
 
+Repository work should be tracked through issues, PRs, and ADRs rather than informal notes.
+
 ## Repository Principles
 
 - Explain rather than predict.
