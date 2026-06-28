@@ -20,4 +20,4 @@
 - Use labels to classify work.
 - Use branches for every change.
 - Protect `main` once the repo leaves initialization.
-
+- Use milestones to group work into coherent project stages.
