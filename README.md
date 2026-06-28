@@ -4,10 +4,13 @@ Coruscant is a long-term knowledge platform for understanding how geopolitical, 
 
 This repository is intentionally documentation-first. The software comes after the operating model, ontology, and reasoning standards are defined.
 
+No code is merged unless the documentation explaining why it exists is merged with it.
+
 ## Repository Principles
 
 - Explain rather than predict.
 - Make every conclusion traceable to evidence.
+- Keep reasoning alongside implementation.
 - Prefer modular, maintainable systems over novelty.
 - Keep the knowledge model explicit.
 - Avoid unnecessary frameworks and hidden behavior.
