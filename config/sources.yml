@@ -1,0 +1,24 @@
+# Enabled ingestion sources for the MVP.
+#
+# Each entry maps to a registered SourceDefinition (see
+# coruscant.ingestion.registry). Toggle `enabled` to turn a pipeline on or off
+# without code changes; `period` is passed through to the connector as the
+# reporting period / label for the synthesized reference document.
+sources:
+  - type: sec_edgar
+    enabled: true
+    period: "2025-01-31"
+  - type: investor_relations
+    enabled: true
+    period: "FY2025"
+  - type: earnings_call
+    enabled: true
+    period: "Q4 2025"
+  - type: press_release
+    enabled: true
+  - type: job_postings
+    enabled: true
+  - type: news
+    enabled: true
+  - type: patents
+    enabled: true

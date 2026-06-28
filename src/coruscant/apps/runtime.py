@@ -1,0 +1,57 @@
+"""Application runtime wiring shared by the API, CLI, and worker.
+
+Centralizes how the durable stores (filesystem artifacts, SQLite catalog, graph
+snapshot) are constructed and how an ingestion run is assembled and replayed.
+"""
+
+from __future__ import annotations
+
+from coruscant.common.config import Settings, get_settings, load_companies, load_sources
+from coruscant.infrastructure.catalog import SqliteDocumentCatalog
+from coruscant.infrastructure.repositories import (
+    FileSystemNormalizedDocumentRepository,
+    FileSystemRawDocumentRepository,
+)
+from coruscant.ingestion.orchestrator import IngestionOrchestrator, IngestionReport
+from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
+from coruscant.knowledge_graph.persistence import load_graph, save_graph
+from coruscant.search.hybrid import HybridRetrievalEngine
+
+
+def build_catalog(settings: Settings | None = None) -> SqliteDocumentCatalog:
+    settings = settings or get_settings()
+    return SqliteDocumentCatalog(settings.database_url)
+
+
+def run_ingestion(settings: Settings | None = None) -> IngestionReport:
+    """Run the full ingestion lifecycle and persist all derived stores."""
+
+    settings = settings or get_settings()
+    graph_store = InMemoryKnowledgeGraphStore()
+    orchestrator = IngestionOrchestrator(
+        raw_repository=FileSystemRawDocumentRepository(settings.data_dir),
+        normalized_repository=FileSystemNormalizedDocumentRepository(settings.data_dir),
+        catalog=build_catalog(settings),
+        graph_store=graph_store,
+        engine=HybridRetrievalEngine(),
+    )
+    companies = load_companies(settings.config_dir)
+    sources = load_sources(settings.config_dir)
+    report = orchestrator.run(companies, sources)
+    save_graph(graph_store, settings.graph_snapshot_path)
+    return report
+
+
+def load_engine(settings: Settings | None = None) -> HybridRetrievalEngine:
+    """Rebuild a hybrid retrieval engine from the persisted catalog."""
+
+    settings = settings or get_settings()
+    engine = HybridRetrievalEngine()
+    for document in build_catalog(settings).list_documents():
+        engine.add(document)
+    return engine
+
+
+def load_graph_store(settings: Settings | None = None) -> InMemoryKnowledgeGraphStore:
+    settings = settings or get_settings()
+    return load_graph(settings.graph_snapshot_path)

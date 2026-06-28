@@ -17,6 +17,10 @@ venv/
 .env.*
 !.env.example
 
+# Ingested data artifacts (raw, normalized, catalog DB, graph snapshot)
+/data/
+*.db
+
 # OS
 .DS_Store
 Thumbs.db

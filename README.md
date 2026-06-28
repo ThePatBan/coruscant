@@ -1,36 +1,76 @@
 # Coruscant
 
-Coruscant exists to help every investor understand how geopolitical, economic, climate, and supply-chain events propagate into financial outcomes through explainable reasoning built on public information.
+Coruscant is an AI-powered financial and corporate intelligence platform built on traceable evidence rather than scraped summaries.
 
-This repository is intentionally documentation-first. The software comes after the operating model, ontology, and reasoning standards are defined.
+This repository contains the MVP ingestion-to-intelligence platform: a config-driven pipeline that fetches source material, normalizes it into evidence-bearing documents, projects it into a knowledge graph, embeds and indexes it for hybrid search, and serves it through an API and CLI.
 
-No code is merged unless the documentation explaining why it exists is merged with it.
+## What Is In Scope
 
-Repository work should be tracked through issues, PRs, and ADRs rather than informal notes.
+The MVP ingests and normalizes seven source types:
 
-## Repository Principles
+- SEC EDGAR
+- investor relations materials
+- earnings call transcripts
+- company press releases
+- job postings
+- news
+- patent metadata
 
-- Explain rather than predict.
-- Make every conclusion traceable to evidence.
-- Keep reasoning alongside implementation.
-- Prefer modular, maintainable systems over novelty.
-- Keep the knowledge model explicit.
-- Avoid unnecessary frameworks and hidden behavior.
+SEC EDGAR ships with a live HTTP connector; every source ships with an offline **reference connector** that synthesizes deterministic, evidence-bearing sample documents (marked `provenance: reference-sample`) so the full lifecycle runs without network access. New sources are added by registering a `SourceDefinition` — not by writing company-specific code.
 
-## Repository Structure
+## Lifecycle
 
-- `docs/` - Core product, governance, and operating documentation.
-- `backend/` - Backend application boundary and future service implementation.
-- `frontend/` - Frontend application boundary and future interface implementation.
-- `graph/` - Knowledge graph modeling, schema, and reasoning support.
-- `ingestion/` - Source acquisition, parsing, normalization, and evidence capture.
-- `llm/` - Model interfaces, prompts, evaluation, and local LLM experiments.
-- `infrastructure/` - Docker, deployment, and environment definitions.
-- `experiments/` - Isolated prototypes, research, and disposable investigations.
-- `scripts/` - Operational and maintenance scripts.
-- `tests/` - Automated verification and quality checks.
-- `docker/` - Docker assets and container-related configuration.
+Every source travels the same path (see [docs/architecture/Data Flow.md](docs/architecture/Data%20Flow.md)):
 
-## Status
+`fetch → store raw (immutable) → normalize → project graph → embed → index → catalog → reason`
 
-This repository currently contains the foundation for documentation, architecture, and governance only. No application code is included yet.
+## Repository Layout
+
+- [src/coruscant/apps/](src/coruscant/apps/) — API, CLI, worker, and shared runtime wiring
+- [src/coruscant/common/](src/coruscant/common/) — config, logging, and domain models
+- [src/coruscant/connectors/](src/coruscant/connectors/) — source connectors + normalizers
+- [src/coruscant/ingestion/](src/coruscant/ingestion/) — registry, generic pipeline, orchestrator
+- [src/coruscant/knowledge_graph/](src/coruscant/knowledge_graph/) — graph projection, query, snapshot
+- [src/coruscant/search/](src/coruscant/search/) — embeddings, vector index, hybrid retrieval, reasoning
+- [src/coruscant/infrastructure/](src/coruscant/infrastructure/) — filesystem repositories + SQLite catalog
+- [config/companies.yml](config/companies.yml) — company registry
+- [config/sources.yml](config/sources.yml) — enabled ingestion sources
+- [docs/](docs/) — architecture and governance docs
+- [tests/](tests/) — verification suite
+
+## Local Start
+
+```bash
+make setup           # editable install with dev dependencies
+make test            # run the test suite
+coruscant ingest     # run the full lifecycle for every company × enabled source
+coruscant query "Apple risk factors and guidance"
+coruscant graph apple
+make api             # serve the API (also: coruscant serve)
+```
+
+### CLI
+
+| Command | Description |
+| --- | --- |
+| `coruscant companies` | List configured companies |
+| `coruscant sources` | List registered ingestion sources |
+| `coruscant ingest` | Run the full ingestion lifecycle and persist all stores |
+| `coruscant query <q>` | Answer a query against the ingested corpus, with evidence |
+| `coruscant graph <slug>` | Show graph neighbors for a company |
+| `coruscant serve` | Run the API server |
+
+### API
+
+`GET /health`, `GET /companies`, `GET /sources`, `GET /documents`,
+`GET /documents/{id}`, `POST /retrieve`, `GET /answer`, and
+`GET /graph/company/{slug}`. The API loads its read model from the SQLite catalog
+and the graph snapshot on startup, so it serves whatever the worker last ingested.
+
+## Design Rules
+
+- Raw data remains immutable.
+- Normalized facts are separate from documents.
+- Provenance is required for every extracted claim.
+- Source-specific behavior lives in connector implementations or configuration.
+- New pipelines must fit the same fetch, store, normalize, extract, graph, embed, index, reason lifecycle.

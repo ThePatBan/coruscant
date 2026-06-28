@@ -1,8 +1,15 @@
 services:
-  docs:
+  api:
     image: python:3.11-slim
     working_dir: /workspace
-    command: ["python", "-c", "print('Coruscant foundation only. No application services yet.')"]
+    command: ["python", "-m", "uvicorn", "coruscant.apps.api:app", "--host", "0.0.0.0", "--port", "8000"]
     volumes:
       - ./:/workspace
-
+    ports:
+      - "8000:8000"
+  worker:
+    image: python:3.11-slim
+    working_dir: /workspace
+    command: ["python", "-m", "coruscant.apps.worker"]
+    volumes:
+      - ./:/workspace

@@ -1,0 +1,21 @@
+{
+  "filing": {
+    "accessionNumber": "0000320193-25-000079",
+    "filingDate": "2025-01-31",
+    "periodOfReport": "2024-12-31",
+    "companyName": "Apple Inc."
+  },
+  "directory": {
+    "item": [
+      {
+        "type": "10-K",
+        "name": "primary document",
+        "href": "/Archives/edgar/data/320193/000032019325000079/a10-k20250927.htm"
+      },
+      {
+        "name": "exhibit21.htm",
+        "href": "/Archives/edgar/data/320193/000032019325000079/ex21.htm"
+      }
+    ]
+  }
+}
