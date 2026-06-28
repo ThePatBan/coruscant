@@ -82,8 +82,9 @@ def test_login_to_change_to_evidence(client: TestClient) -> None:
     document = client.get(f"/documents/{source_doc_id}", headers=headers).json()
     assert document["sections"]
     summary = client.get(f"/documents/{source_doc_id}/summary", headers=headers).json()
-    assert summary["overview"]
-    for claim in summary["risks"] + summary["key_points"]:
+    # The overview itself is a cited claim (no uncited AI assertions).
+    assert summary["overview"]["source_uri"] == document["source_uri"]
+    for claim in summary["risks"] + summary["key_points"] + [summary["overview"]]:
         assert claim["source_uri"] == document["source_uri"]
 
     # 7. Natural-language search returns evidence-linked results.

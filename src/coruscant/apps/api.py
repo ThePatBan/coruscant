@@ -67,7 +67,6 @@ class HealthResponse(BaseModel):
     status: str
     documents: int
     graph_nodes: int
-    data_dir: str
 
 
 class CompanyOut(BaseModel):
@@ -196,10 +195,12 @@ def create_app(
     *,
     intelligence_store: SqliteIntelligenceStore | None = None,
     auth_service: AuthService | None = None,
-    require_auth: bool = False,
+    require_auth: bool = True,
+    expose_reset_token: bool = False,
     load_from_storage: bool = False,
 ) -> FastAPI:
     settings = get_settings()
+    # Fail closed: enforcement is on unless a caller explicitly opts out (tests).
     enforce_auth = require_auth or load_from_storage
     state = _AppState(
         engine=retrieval_engine if retrieval_engine is not None else HybridRetrievalEngine(),
@@ -281,9 +282,14 @@ def create_app(
 
     @app.post("/auth/reset/request", response_model=ResetIssued)
     def reset_request(body: ResetRequest) -> ResetIssued:
+        # Always returns an identical generic response (no account enumeration).
+        # The token is included only when explicitly enabled for offline/dev use.
         service = _auth()
         token = service.request_reset(body.email)
-        return ResetIssued(email=body.email.strip().lower(), reset_token=token)
+        return ResetIssued(
+            email=body.email.strip().lower(),
+            reset_token=token if expose_reset_token else None,
+        )
 
     @app.post("/auth/reset/confirm")
     def reset_confirm(body: ResetConfirm) -> dict[str, bool]:
@@ -302,7 +308,6 @@ def create_app(
             status="ok",
             documents=_document_count(state.engine),
             graph_nodes=len(state.graph.nodes),
-            data_dir=str(settings.data_dir),
         )
 
     @app.get("/companies", response_model=list[CompanyOut], dependencies=protected)

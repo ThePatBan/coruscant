@@ -1,18 +1,19 @@
 import { type FormEvent, useState } from "react";
-import { Link, Navigate, useNavigate } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { ApiError } from "../api";
 import { useAuth } from "../auth";
 
 export function LoginPage() {
   const { email: current, login, register } = useAuth();
   const navigate = useNavigate();
+  const from = (useLocation().state as { from?: string } | null)?.from ?? "/dashboard";
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("demo@coruscant.local");
   const [password, setPassword] = useState("coruscant-demo");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  if (current) return <Navigate to="/dashboard" replace />;
+  if (current) return <Navigate to={from} replace />;
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -21,7 +22,7 @@ export function LoginPage() {
     try {
       if (mode === "login") await login(email, password);
       else await register(email, password);
-      navigate("/dashboard");
+      navigate(from);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong");
     } finally {

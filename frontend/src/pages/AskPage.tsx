@@ -10,13 +10,6 @@ const SAMPLES = [
   "Microsoft investor update",
 ];
 
-function answerLines(answer: string): string[] {
-  return answer
-    .split("\n")
-    .map((line) => line.replace(/^[-•]\s*/, "").trim())
-    .filter(Boolean);
-}
-
 export function AskPage() {
   const [query, setQuery] = useState("");
   const [submitted, setSubmitted] = useState("");
@@ -98,33 +91,26 @@ export function AskPage() {
             hint="Try a company name or a topic like risk, guidance, or patents."
           />
         ) : (
-          <div className="stack gap-lg">
-            <div className="answer">
-              <div className="answer-label">Synthesis · {result.results.length} sources</div>
-              <div className="stack">
-                {answerLines(result.answer).map((line, i) => (
-                  <div className="line" key={i}>
-                    <span className="faint">{String(i + 1).padStart(2, "0")}</span>
-                    <span>{line}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="stack gap">
+          <div className="stack gap">
+            <div className="row-between">
               <h2>Evidence</h2>
-              {result.results.map((r) => (
-                <div className="card" key={r.canonical_id}>
-                  <div className="row-between" style={{ marginBottom: 4 }}>
-                    <Link to={`/documents/${r.canonical_id}`} style={{ fontWeight: 620 }}>
-                      {r.title ?? "Untitled document"}
-                    </Link>
-                    {r.document_type ? (
-                      <span className="badge">{docTypeLabel(r.document_type)}</span>
-                    ) : null}
-                  </div>
-                  {r.evidence.map((ev, i) => (
-                    <div className="evidence" key={i}>
+              <span className="badge">{result.results.length} sources</span>
+            </div>
+            <p className="faint" style={{ fontSize: 13, marginTop: -6 }}>
+              Results are grounded in retrievable source spans — every excerpt links to its origin.
+            </p>
+            {result.results.map((r) => (
+              <div className="card" key={r.canonical_id}>
+                <div className="row-between" style={{ marginBottom: 4 }}>
+                  <Link to={`/documents/${r.canonical_id}`} style={{ fontWeight: 620 }}>
+                    {r.title ?? "Untitled document"}
+                  </Link>
+                  {r.document_type ? (
+                    <span className="badge">{docTypeLabel(r.document_type)}</span>
+                  ) : null}
+                </div>
+                {r.evidence.map((ev, i) => (
+                  <div className="evidence" key={`${ev.source_uri}-${i}`}>
                       <div className="excerpt">“{ev.excerpt ?? "—"}”</div>
                       <div className="src">
                         {ev.section_title ? (
@@ -138,7 +124,6 @@ export function AskPage() {
                   ))}
                 </div>
               ))}
-            </div>
           </div>
         )
       ) : null}

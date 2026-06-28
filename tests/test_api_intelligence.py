@@ -36,7 +36,7 @@ def client(tmp_path: Path) -> TestClient:
         [CompanyConfig(slug="apple", name="Apple", industry="Technology")],
         [SourceSetting(type="sec_edgar"), SourceSetting(type="news")],
     )
-    return TestClient(create_app(engine, graph, intelligence_store=intel))
+    return TestClient(create_app(engine, graph, intelligence_store=intel, require_auth=False))
 
 
 def test_dashboard(client: TestClient) -> None:

@@ -105,7 +105,7 @@ CATEGORY_CUES: dict[str, tuple[str, ...]] = {
     ),
 }
 
-_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z(])")
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z(\"'$\d])")
 _WS = re.compile(r"\s+")
 
 

@@ -25,7 +25,7 @@ function ChangePanel({ changeSet }: { changeSet: ChangeSet }) {
       </div>
       <div>
         {changeSet.changes.map((c, i) => (
-          <div className={`change-row ${c.kind}`} key={i}>
+          <div className={`change-row ${c.kind}`} key={`${c.kind}-${c.statement}-${i}`}>
             <span className="change-mark">{c.kind === "added" ? "+" : "−"}</span>
             <div className="grow">
               <div className="wrap" style={{ gap: 8, marginBottom: 3 }}>

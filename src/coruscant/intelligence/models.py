@@ -9,6 +9,18 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, computed_field
 
+_MATERIAL_CATEGORIES = {
+    "guidance",
+    "executive",
+    "m&a",
+    "litigation",
+    "regulatory",
+    "supply_chain",
+    "capital_allocation",
+    "risk",
+    "product",
+}
+
 
 class Claim(BaseModel):
     """A statement plus the exact source span that supports it."""
@@ -28,7 +40,7 @@ class DocumentSummary(BaseModel):
     title: str | None = None
     published_at: str | None = None
     source_uri: str
-    overview: str
+    overview: Claim
     key_points: list[Claim] = Field(default_factory=list)
     risks: list[Claim] = Field(default_factory=list)
     opportunities: list[Claim] = Field(default_factory=list)
@@ -69,7 +81,9 @@ class ChangeSet(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def material(self) -> bool:
-        return bool(self.changes)
+        # Material only if at least one change falls in a material category — a
+        # purely generic reword is a change but not a material one.
+        return any(change.category in _MATERIAL_CATEGORIES for change in self.changes)
 
     @computed_field  # type: ignore[prop-decorator]
     @property

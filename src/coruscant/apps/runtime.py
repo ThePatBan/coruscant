@@ -7,6 +7,8 @@ snapshot) are constructed and how an ingestion run is assembled and replayed.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
+import secrets
 
 from coruscant.auth.service import AuthService
 from coruscant.auth.store import SqliteUserStore
@@ -39,11 +41,38 @@ def build_user_store(settings: Settings | None = None) -> SqliteUserStore:
     return SqliteUserStore(settings.database_url)
 
 
+logger = logging.getLogger(__name__)
+
+_INSECURE_SECRETS = {"", "dev-insecure-secret-change-me"}
+_ephemeral_secret: str | None = None
+
+
+def _resolve_secret(settings: Settings) -> str:
+    """Return the configured secret, or a per-process ephemeral one.
+
+    Never falls back to a committed constant: an unset/placeholder secret yields
+    a random secret generated once per process (tokens then last a process
+    lifetime). Set CORUSCANT_SECRET_KEY for stable, secure tokens.
+    """
+
+    global _ephemeral_secret
+    secret = settings.secret_key.strip()
+    if secret not in _INSECURE_SECRETS:
+        return secret
+    if _ephemeral_secret is None:
+        _ephemeral_secret = secrets.token_urlsafe(32)
+        logger.warning(
+            "CORUSCANT_SECRET_KEY is not set; using an ephemeral per-process secret. "
+            "Set CORUSCANT_SECRET_KEY for stable, secure auth tokens."
+        )
+    return _ephemeral_secret
+
+
 def build_auth_service(settings: Settings | None = None) -> AuthService:
     settings = settings or get_settings()
     return AuthService(
         store=build_user_store(settings),
-        secret=settings.secret_key,
+        secret=_resolve_secret(settings),
         token_ttl_seconds=settings.token_ttl_seconds,
     )
 
@@ -58,7 +87,7 @@ def seed_demo_user(settings: Settings | None = None) -> bool:
     from coruscant.auth.service import AuthError
 
     settings = settings or get_settings()
-    if not settings.seed_demo_user:
+    if not settings.seed_demo_user or not settings.demo_password:
         return False
     service = build_auth_service(settings)
     if service.store.get(settings.demo_email) is not None:

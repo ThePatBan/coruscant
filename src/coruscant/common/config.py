@@ -31,11 +31,19 @@ class Settings(BaseSettings):
     neo4j_url: str | None = None
     edgar_user_agent: str = "Coruscant/0.1.0 contact@coruscant.local"
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
-    secret_key: str = "dev-insecure-secret-change-me"
+    # Empty by default: build_auth_service falls back to a per-process ephemeral
+    # secret (never a committed constant). Set CORUSCANT_SECRET_KEY for stable,
+    # secure tokens in any real deployment.
+    secret_key: str = ""
     token_ttl_seconds: int = 86_400
-    seed_demo_user: bool = True
+    # Demo seeding is OFF by default; the docker stack opts in explicitly. A real
+    # deployment never auto-creates a known account.
+    seed_demo_user: bool = False
     demo_email: str = "demo@coruscant.local"
-    demo_password: str = "coruscant-demo"
+    demo_password: str = ""
+    # Returning the reset token in the API response is a dev/offline convenience
+    # only (no email delivery); never expose it on an untrusted deployment.
+    expose_reset_token: bool = False
     ingest_max_attempts: int = 3
 
     @property

@@ -9,19 +9,28 @@ function str(value: unknown): string {
 
 const HIDDEN_META = new Set(["company_slug", "source_name", "title", "headline"]);
 
+function ClaimRow({ claim }: { claim: Claim }) {
+  return (
+    <div className="evidence">
+      <div className="excerpt">{claim.text}</div>
+      <div className="src">
+        {claim.category ? <Cat category={claim.category} /> : null}
+        {claim.section_title ? <span className="pill">§ {claim.section_title}</span> : null}
+        <a className="mono faint truncate" href={claim.source_uri} title={claim.source_uri}>
+          ↳ {claim.source_uri}
+        </a>
+      </div>
+    </div>
+  );
+}
+
 function ClaimList({ title, claims }: { title: string; claims: Claim[] }) {
   if (claims.length === 0) return null;
   return (
     <div className="stack gap-sm">
       <h3>{title}</h3>
       {claims.map((c, i) => (
-        <div className="evidence" key={i}>
-          <div className="excerpt">{c.text}</div>
-          <div className="src">
-            {c.category ? <Cat category={c.category} /> : null}
-            {c.section_title ? <span className="pill">§ {c.section_title}</span> : null}
-          </div>
-        </div>
+        <ClaimRow claim={c} key={`${c.source_uri}-${i}`} />
       ))}
     </div>
   );
@@ -34,10 +43,20 @@ function SummaryPanel({ summary }: { summary: AISummary }) {
         <h2>AI summary</h2>
         <span className="pill accent">cited · extractive</span>
       </div>
-      <div className="answer">
-        <div className="answer-label">Overview</div>
-        <div>{summary.overview}</div>
-      </div>
+      {summary.overview.text ? (
+        <div className="answer">
+          <div className="answer-label">Overview</div>
+          <div>{summary.overview.text}</div>
+          <div className="src" style={{ marginTop: 8 }}>
+            {summary.overview.section_title ? (
+              <span className="pill">§ {summary.overview.section_title}</span>
+            ) : null}
+            <a className="mono faint truncate" href={summary.overview.source_uri}>
+              ↳ {summary.overview.source_uri}
+            </a>
+          </div>
+        </div>
+      ) : null}
       <ClaimList title="Key points" claims={summary.key_points} />
       <div className="grid cols-2">
         <ClaimList title="Risks" claims={summary.risks} />

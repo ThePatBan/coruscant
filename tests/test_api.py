@@ -33,7 +33,7 @@ def test_retrieve_route_returns_evidence() -> None:
             ],
         )
     )
-    client = TestClient(create_app(engine))
+    client = TestClient(create_app(engine, require_auth=False))
 
     response = client.post("/retrieve", json={"query": "Apple market", "top_k": 3})
 

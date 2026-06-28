@@ -25,7 +25,6 @@ export interface Health {
   status: string;
   documents: number;
   graph_nodes: number;
-  data_dir: string;
 }
 
 export interface Company {
@@ -106,7 +105,7 @@ export interface AISummary {
   title: string | null;
   published_at: string | null;
   source_uri: string;
-  overview: string;
+  overview: Claim;
   key_points: Claim[];
   risks: Claim[];
   opportunities: Claim[];
@@ -177,6 +176,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (init?.body) headers.set("Content-Type", "application/json");
   const res = await fetch(`${BASE}${path}`, { ...init, headers });
   if (!res.ok) {
+    // A 401 on anything other than the login/register attempt means the session
+    // expired or was revoked: clear it and send the user back to login.
+    if (res.status === 401 && !path.startsWith("/auth/login") && !path.startsWith("/auth/register")) {
+      tokenStore.clear();
+      if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+        window.location.assign("/login");
+      }
+    }
     let detail = res.statusText;
     try {
       const body = await res.json();

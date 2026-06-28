@@ -40,7 +40,7 @@ def _client() -> TestClient:
     document = _document()
     engine.add(document)
     ProjectingKnowledgeGraphStore(graph).project_document(document)
-    return TestClient(create_app(engine, graph))
+    return TestClient(create_app(engine, graph, require_auth=False))
 
 
 def test_health_reports_counts() -> None:

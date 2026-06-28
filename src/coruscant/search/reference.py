@@ -7,6 +7,7 @@ from coruscant.search.contracts import (
     ReasoningLayer,
     RetrievalEngine,
 )
+from coruscant.search.embeddings import document_text
 
 
 @dataclass
@@ -18,15 +19,9 @@ class InMemoryRetrievalEngine(RetrievalEngine):
 
     @staticmethod
     def _haystack(document: NormalizedDocument) -> str:
-        return " ".join(
-            [
-                document.title or "",
-                document.source_uri,
-                document.metadata.__repr__(),
-                document.sections.__repr__(),
-                document.entities.__repr__(),
-            ]
-        ).lower()
+        # Use real text (title, section titles/content, entity names) rather than
+        # repr() of containers, which would leak Python syntax into matching.
+        return (document.source_uri + " " + document_text(document)).lower()
 
     def retrieve(self, query: str, *, top_k: int = 10) -> list[NormalizedDocument]:
         terms = {term.lower() for term in query.split() if term}

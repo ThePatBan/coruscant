@@ -20,6 +20,10 @@ from coruscant.auth.store import SqliteUserStore, StoredUser, UserExistsError
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MIN_PASSWORD_LENGTH = 8
 
+# A fixed hash to verify against when the account is unknown, so authentication
+# takes the same time whether or not the email exists (no user enumeration).
+_DUMMY_HASH = hash_password("dummy-password-for-constant-time")
+
 
 class AuthError(Exception):
     """Invalid credentials or input."""
@@ -47,7 +51,10 @@ class AuthService:
 
     def authenticate(self, email: str, password: str) -> str:
         user = self.store.get(_normalize_email(email))
-        if user is None or not verify_password(password, user.password_hash):
+        if user is None:
+            verify_password(password, _DUMMY_HASH)  # equalize timing
+            raise AuthError("invalid email or password")
+        if not verify_password(password, user.password_hash):
             raise AuthError("invalid email or password")
         return self.issue_token(user.email)
 

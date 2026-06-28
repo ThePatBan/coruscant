@@ -11,7 +11,13 @@ from collections.abc import Iterator
 
 from coruscant.common.types import NormalizedDocument
 from coruscant.intelligence.models import Claim, DocumentSummary
-from coruscant.intelligence.text import categories_of, iso_date, primary_category, sentences
+from coruscant.intelligence.text import (
+    CATEGORY_CUES,
+    categories_of,
+    iso_date,
+    primary_category,
+    sentences,
+)
 
 RISK_CATEGORIES = {"risk", "supply_chain", "litigation", "regulatory"}
 OPPORTUNITY_CATEGORIES = {"opportunity", "product"}
@@ -58,7 +64,12 @@ def _bucket(
         if sentence in seen:
             continue
         seen.add(sentence)
-        category = next((c for c in wanted if c in cats), primary_category(sentence))
+        # Deterministic: pick the first category in the canonical CATEGORY_CUES
+        # order that is both wanted and present (set iteration order is unstable).
+        category = next(
+            (c for c in CATEGORY_CUES if c in wanted and c in cats),
+            primary_category(sentence),
+        )
         claims.append(_claim(document, title, sentence, category))
         if len(claims) >= _MAX_PER_BUCKET:
             break
@@ -83,7 +94,12 @@ class ReferenceSummarizer:
             if len(key_points) >= _MAX_PER_BUCKET:
                 break
 
-        overview = rows[0][1] if rows else (document.title or "No content available.")
+        # Overview is the first source sentence, kept as a cited Claim. For an
+        # empty document it is a non-asserting empty Claim (nothing fabricated).
+        if rows:
+            overview = _claim(document, rows[0][0], rows[0][1], primary_category(rows[0][1]))
+        else:
+            overview = _claim(document, "", "", "general")
 
         return DocumentSummary(
             canonical_id=document.canonical_id,

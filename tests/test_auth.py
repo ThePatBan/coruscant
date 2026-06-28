@@ -77,7 +77,7 @@ def client(tmp_path: Path) -> TestClient:
     service = AuthService(
         SqliteUserStore(f"sqlite:///{tmp_path / 'u.db'}"), secret="s", token_ttl_seconds=3600
     )
-    return TestClient(create_app(auth_service=service, require_auth=True))
+    return TestClient(create_app(auth_service=service, require_auth=True, expose_reset_token=True))
 
 
 def test_protected_routes_require_auth(client: TestClient) -> None:
@@ -99,6 +99,19 @@ def test_register_login_and_access(client: TestClient) -> None:
     assert client.post("/auth/login", json={"email": "inv@example.com", "password": "password123"}).status_code == 200
     assert client.post("/auth/login", json={"email": "inv@example.com", "password": "bad"}).status_code == 401
     assert client.post("/auth/logout").json()["ok"] is True
+
+
+def test_reset_does_not_enumerate_or_leak_token_by_default(tmp_path: Path) -> None:
+    service = AuthService(
+        SqliteUserStore(f"sqlite:///{tmp_path / 'u.db'}"), secret="s", token_ttl_seconds=60
+    )
+    # expose_reset_token defaults to False -> token never returned.
+    c = TestClient(create_app(auth_service=service, require_auth=True))
+    c.post("/auth/register", json={"email": "known@e.com", "password": "password123"})
+    known = c.post("/auth/reset/request", json={"email": "known@e.com"}).json()
+    unknown = c.post("/auth/reset/request", json={"email": "nobody@e.com"}).json()
+    assert known["reset_token"] is None
+    assert unknown == {"email": "nobody@e.com", "reset_token": None}  # identical, no enumeration
 
 
 def test_password_reset_flow(client: TestClient) -> None:
