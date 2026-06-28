@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "coruscant"
+version = "0.1.0"
+description = "Documentation-first knowledge platform for evidence-based financial understanding."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Coruscant Contributors" }
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = []
+
+[tool.setuptools]
+include-package-data = true
+

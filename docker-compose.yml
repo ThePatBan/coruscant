@@ -1,0 +1,8 @@
+services:
+  docs:
+    image: python:3.11-slim
+    working_dir: /workspace
+    command: ["python", "-c", "print('Coruscant foundation only. No application services yet.')"]
+    volumes:
+      - ./:/workspace
+
