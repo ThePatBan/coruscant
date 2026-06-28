@@ -1,6 +1,6 @@
 # Coruscant
 
-Coruscant is a long-term knowledge platform for understanding how geopolitical, economic, climate, and supply-chain events propagate into financial outcomes using publicly available information.
+Coruscant exists to help every investor understand how geopolitical, economic, climate, and supply-chain events propagate into financial outcomes through explainable reasoning built on public information.
 
 This repository is intentionally documentation-first. The software comes after the operating model, ontology, and reasoning standards are defined.
 
