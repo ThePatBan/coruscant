@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from coruscant.apps.runtime import load_engine, load_graph_store
@@ -144,14 +143,6 @@ def create_app(
         yield
 
     app = FastAPI(title="Coruscant API", version="0.1.0", lifespan=lifespan)
-
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.cors_origins,
-        allow_credentials=False,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:

@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///data/coruscant.db"
     neo4j_url: str | None = None
     edgar_user_agent: str = "Coruscant/0.1.0 contact@coruscant.local"
+    cors_origins: list[str] = Field(default_factory=lambda: ["*"])
 
     @property
     def graph_snapshot_path(self) -> Path:
