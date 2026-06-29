@@ -248,7 +248,6 @@ class SavedSearchCreate(BaseModel):
 class OrgCreate(BaseModel):
     name: str
     plan: str = "free"
-    members: list[str] = Field(default_factory=list)
 
 
 class PlanUpdate(BaseModel):
@@ -875,9 +874,12 @@ def create_app(
     @app.post("/organizations", response_model=Organization, dependencies=protected)
     def create_organization(body: OrgCreate, email: str = Depends(current_email)) -> Organization:
         plan = body.plan if body.plan in PLANS else "free"
-        members = [m.strip().lower() for m in body.members if m.strip()]
+        # Membership is owner-only at creation. Additional members must come through
+        # an explicit invite/accept flow (not yet built) — never from a client-supplied
+        # list, which would let a caller inject a victim's email and read their usage
+        # (aggregated into the org's billing summary).
         org = _orgs().create_org(
-            email, body.name, plan, members, created_at=datetime.now(tz=timezone.utc).isoformat()
+            email, body.name, plan, [], created_at=datetime.now(tz=timezone.utc).isoformat()
         )
         _audit(email, "organization.create", org.name)
         return org

@@ -106,6 +106,15 @@ def test_billing_is_owner_only_and_per_day(tmp_path: Path) -> None:
     assert billing["within_limits"] is True
 
 
+def test_org_creation_ignores_injected_members(client: TestClient) -> None:
+    # A caller must not be able to inject another user's email as a member: that
+    # email's private usage would otherwise surface in the org's billing summary.
+    org = client.post(
+        "/organizations", json={"name": "Acme", "members": ["victim@example.com"]}
+    ).json()
+    assert org["members"] == ["anonymous@local"]  # only the creator, injected member dropped
+
+
 def test_unknown_plan_rejected_and_owner_only(client: TestClient) -> None:
     org = client.post("/organizations", json={"name": "Acme"}).json()
     assert org["plan"] == "free"  # default
