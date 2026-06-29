@@ -95,6 +95,7 @@ export interface Claim {
   section_title: string | null;
   canonical_id: string | null;
   category: string | null;
+  confidence?: number;
 }
 
 export interface AISummary {
@@ -131,6 +132,7 @@ export interface DocumentChange {
   category: string;
   statement: string;
   evidence: Claim;
+  confidence: number;
 }
 
 export interface ChangeSet {
@@ -326,6 +328,14 @@ export interface ApiKey {
   created_at: string;
 }
 
+export interface SavedSearch {
+  id: string;
+  name: string;
+  query: string;
+  source_type: string | null;
+  created_at: string;
+}
+
 export interface AuthToken {
   token: string;
   email: string;
@@ -414,6 +424,14 @@ export const api = {
     get<Notification[]>(`/notifications${unreadOnly ? "?unread_only=true" : ""}`),
   markRead: (id: string) =>
     post<{ ok: boolean }>(`/notifications/${encodeURIComponent(id)}/read`, {}),
+  // saved searches & comparison
+  savedSearches: () => get<SavedSearch[]>("/saved-searches"),
+  createSavedSearch: (name: string, query: string, source_type?: string | null) =>
+    post<SavedSearch>("/saved-searches", { name, query, source_type: source_type ?? null }),
+  deleteSavedSearch: (id: string) =>
+    request<{ ok: boolean }>(`/saved-searches/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  compare: (a: string, b: string) =>
+    get<ChangeSet>(`/compare?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`),
   // analyst & signals
   analyst: (slug: string, question: string) =>
     post<AnalysisReport>(`/analyst/${encodeURIComponent(slug)}`, { question }),

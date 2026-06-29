@@ -18,6 +18,7 @@ from coruscant.apps.runtime import (
     build_dead_letter_store,
     build_intelligence_store,
     build_portfolio_store,
+    build_saved_search_store,
     build_watchlist_store,
     build_workspace_store,
     load_engine,
@@ -28,6 +29,8 @@ from coruscant.apps.runtime import (
 from coruscant.enterprise.api_keys import ApiKey, ApiKeyCreated, SqliteApiKeyStore
 from coruscant.enterprise.audit import AuditEntry, SqliteAuditStore
 from coruscant.infrastructure.dead_letter import DeadLetterEntry, SqliteDeadLetterStore
+from coruscant.infrastructure.saved_searches import SavedSearch, SqliteSavedSearchStore
+from coruscant.intelligence.changes import ReferenceChangeDetector
 from coruscant.portfolio.models import Holding, Portfolio, PortfolioBriefing
 from coruscant.portfolio.store import SqlitePortfolioStore
 from coruscant.workspaces.models import ITEM_TYPES, Workspace, WorkspaceItem
@@ -231,6 +234,12 @@ class ApiKeyCreate(BaseModel):
     name: str
 
 
+class SavedSearchCreate(BaseModel):
+    name: str
+    query: str
+    source_type: str | None = None
+
+
 class WatchlistCreate(BaseModel):
     name: str
     items: list[WatchItem] = Field(default_factory=list)
@@ -253,6 +262,7 @@ class _AppState:
     audit: SqliteAuditStore | None = None
     api_keys: SqliteApiKeyStore | None = None
     dead_letters: SqliteDeadLetterStore | None = None
+    saved_searches: SqliteSavedSearchStore | None = None
 
 
 def _all_documents(engine: Any) -> list[NormalizedDocument]:
@@ -288,6 +298,7 @@ def create_app(
     audit_store: SqliteAuditStore | None = None,
     api_key_store: SqliteApiKeyStore | None = None,
     dead_letter_store: SqliteDeadLetterStore | None = None,
+    saved_search_store: SqliteSavedSearchStore | None = None,
     require_auth: bool = True,
     expose_reset_token: bool = False,
     load_from_storage: bool = False,
@@ -306,6 +317,7 @@ def create_app(
         audit=audit_store,
         api_keys=api_key_store,
         dead_letters=dead_letter_store,
+        saved_searches=saved_search_store,
     )
 
     @asynccontextmanager
@@ -321,6 +333,7 @@ def create_app(
             state.audit = build_audit_store(settings)
             state.api_keys = build_api_key_store(settings)
             state.dead_letters = build_dead_letter_store(settings)
+            state.saved_searches = build_saved_search_store(settings)
         yield
 
     app = FastAPI(title="Coruscant API", version=API_VERSION, lifespan=lifespan)
@@ -528,6 +541,47 @@ def create_app(
     def answer(q: str) -> AnswerResponse:
         reasoning = TemplateReasoningLayer(state.engine)
         return AnswerResponse(query=q, answer=reasoning.answer(q))
+
+    # ---- Saved searches & document comparison (analyst workflow) -----------
+
+    def _searches() -> SqliteSavedSearchStore:
+        if state.saved_searches is None:
+            raise HTTPException(status_code=503, detail="saved searches are not configured")
+        return state.saved_searches
+
+    @app.post("/saved-searches", response_model=SavedSearch, dependencies=protected)
+    def create_saved_search(body: SavedSearchCreate, email: str = Depends(current_email)) -> SavedSearch:
+        return _searches().create(
+            email,
+            body.name,
+            body.query,
+            body.source_type,
+            created_at=datetime.now(tz=timezone.utc).isoformat(),
+        )
+
+    @app.get("/saved-searches", response_model=list[SavedSearch], dependencies=protected)
+    def list_saved_searches(email: str = Depends(current_email)) -> list[SavedSearch]:
+        return _searches().list_searches(email)
+
+    @app.delete("/saved-searches/{search_id}", dependencies=protected)
+    def delete_saved_search(search_id: str, email: str = Depends(current_email)) -> dict[str, bool]:
+        if not _searches().delete(email, search_id):
+            raise HTTPException(status_code=404, detail="saved search not found")
+        return {"ok": True}
+
+    @app.get("/compare", response_model=ChangeSet, dependencies=protected)
+    def compare(a: str, b: str) -> ChangeSet:
+        """Side-by-side comparison of two documents: what is in `a` but not `b`."""
+        by_id = {d.canonical_id: d for d in _all_documents(state.engine)}
+        doc_a, doc_b = by_id.get(a), by_id.get(b)
+        if doc_a is None or doc_b is None:
+            raise HTTPException(status_code=404, detail="document not found")
+        return ReferenceChangeDetector().diff(
+            doc_a,
+            doc_b,
+            company_slug=str(doc_a.metadata.get("company_slug") or ""),
+            source_type=str(doc_a.metadata.get("source_name") or doc_a.document_type),
+        )
 
     @app.get("/graph/company/{slug}", response_model=GraphResponse, dependencies=protected)
     def graph_company(slug: str) -> GraphResponse:

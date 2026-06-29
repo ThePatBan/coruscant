@@ -1,6 +1,6 @@
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, type RetrieveResponse } from "../api";
+import { api, type RetrieveResponse, type SavedSearch } from "../api";
 import { docTypeLabel, Empty } from "../components";
 
 const SAMPLES = [
@@ -16,6 +16,25 @@ export function AskPage() {
   const [result, setResult] = useState<RetrieveResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<SavedSearch[]>([]);
+
+  const reloadSaved = useCallback(async () => {
+    try {
+      setSaved(await api.savedSearches());
+    } catch {
+      /* saved searches are optional */
+    }
+  }, []);
+  useEffect(() => {
+    void reloadSaved();
+  }, [reloadSaved]);
+
+  async function save() {
+    const text = query.trim();
+    if (!text) return;
+    await api.createSavedSearch(text.slice(0, 48), text);
+    await reloadSaved();
+  }
 
   async function run(raw: string) {
     const text = raw.trim();
@@ -64,6 +83,15 @@ export function AskPage() {
           <button className="btn" type="submit" disabled={loading || !query.trim()}>
             {loading ? <span className="spinner" style={{ width: 14, height: 14 }} /> : "Ask"}
           </button>
+          <button
+            className="btn ghost"
+            type="button"
+            disabled={!query.trim()}
+            onClick={() => void save()}
+            title="Save this search"
+          >
+            ☆ Save
+          </button>
         </div>
         <div className="chips">
           {SAMPLES.map((s) => (
@@ -72,6 +100,36 @@ export function AskPage() {
             </button>
           ))}
         </div>
+        {saved.length > 0 ? (
+          <div className="wrap" style={{ gap: 8 }}>
+            <span className="faint" style={{ fontSize: 12.5 }}>Saved:</span>
+            {saved.map((s) => (
+              <span key={s.id} className="pill" style={{ gap: 6 }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuery(s.query);
+                    void run(s.query);
+                  }}
+                  style={{ background: "none", border: "none", color: "var(--accent)", cursor: "pointer", padding: 0 }}
+                >
+                  {s.name}
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await api.deleteSavedSearch(s.id);
+                    await reloadSaved();
+                  }}
+                  style={{ background: "none", border: "none", color: "var(--text-faint)", cursor: "pointer", padding: 0 }}
+                  title="Delete"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : null}
       </form>
 
       {error ? <div className="errbox">Query failed: {error}</div> : null}

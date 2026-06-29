@@ -38,6 +38,7 @@ from coruscant.knowledge_graph.persistence import load_graph, save_graph
 from coruscant.enterprise.api_keys import SqliteApiKeyStore
 from coruscant.enterprise.audit import SqliteAuditStore
 from coruscant.infrastructure.dead_letter import SqliteDeadLetterStore
+from coruscant.infrastructure.saved_searches import SqliteSavedSearchStore
 from coruscant.infrastructure.schedule_store import SqliteScheduleStore
 from coruscant.ingestion.scheduler import due_sources
 from coruscant.portfolio.store import SqlitePortfolioStore
@@ -94,6 +95,11 @@ def build_dead_letter_store(settings: Settings | None = None) -> SqliteDeadLette
 def build_schedule_store(settings: Settings | None = None) -> SqliteScheduleStore:
     settings = settings or get_settings()
     return SqliteScheduleStore(settings.database_url)
+
+
+def build_saved_search_store(settings: Settings | None = None) -> SqliteSavedSearchStore:
+    settings = settings or get_settings()
+    return SqliteSavedSearchStore(settings.database_url)
 
 
 def due_source_types(settings: Settings | None = None, now: datetime | None = None) -> list[str]:

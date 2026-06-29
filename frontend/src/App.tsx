@@ -5,6 +5,7 @@ import { useAsync } from "./hooks";
 import { AskPage } from "./pages/AskPage";
 import { CompaniesPage } from "./pages/CompaniesPage";
 import { CompanyDetailPage } from "./pages/CompanyDetailPage";
+import { ComparePage } from "./pages/ComparePage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { DocumentsPage } from "./pages/DocumentsPage";
 import { DocumentDetailPage } from "./pages/DocumentDetailPage";
@@ -27,6 +28,7 @@ const NAV = [
   { to: "/watchlists", label: "Watchlists", icon: "🔔" },
   { to: "/workspaces", label: "Workspaces", icon: "❏" },
   { to: "/documents", label: "Documents", icon: "▦" },
+  { to: "/compare", label: "Compare", icon: "⇄" },
   { to: "/sources", label: "Sources", icon: "⌥" },
   { to: "/monitoring", label: "Monitoring", icon: "◉" },
   { to: "/settings", label: "Settings", icon: "⚙" },
@@ -43,6 +45,7 @@ const CRUMBS: Array<[RegExp, string]> = [
   [/^\/workspaces/, "Workspaces"],
   [/^\/documents\/.+/, "Document"],
   [/^\/documents$/, "Documents"],
+  [/^\/compare/, "Compare documents"],
   [/^\/sources$/, "Sources"],
   [/^\/monitoring/, "Source monitoring"],
   [/^\/settings/, "Settings"],
@@ -150,6 +153,7 @@ export default function App() {
         <Route path="/workspaces" element={<WorkspacesPage />} />
         <Route path="/documents" element={<DocumentsPage />} />
         <Route path="/documents/:id" element={<DocumentDetailPage />} />
+        <Route path="/compare" element={<ComparePage />} />
         <Route path="/sources" element={<SourcesPage />} />
         <Route path="/monitoring" element={<MonitoringPage />} />
         <Route path="/settings" element={<SettingsPage />} />
