@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 
 from coruscant.apps.runtime import (
+    backup,
     build_schedule_store,
     due_source_types,
     load_engine,
@@ -97,6 +98,15 @@ def cmd_graph(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_backup(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    out = Path(args.out) if args.out else None
+    path = backup(out_path=out)
+    print(f"Backup written to {path}")
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
@@ -120,6 +130,10 @@ def build_parser() -> argparse.ArgumentParser:
     graph = sub.add_parser("graph", help="Show graph neighbors for a company")
     graph.add_argument("company", help="Company slug")
     graph.set_defaults(func=cmd_graph)
+
+    backup_p = sub.add_parser("backup", help="Back up the data directory to a tar.gz")
+    backup_p.add_argument("--out", default=None, help="Output archive path")
+    backup_p.set_defaults(func=cmd_backup)
 
     serve = sub.add_parser("serve", help="Run the API server")
     serve.add_argument("--host", default="127.0.0.1")

@@ -10,8 +10,12 @@ from datetime import datetime, timezone
 import logging
 import secrets
 
+from pathlib import Path
+import tarfile
+
 from coruscant.auth.service import AuthService
 from coruscant.auth.store import SqliteUserStore
+from coruscant.commercial.store import SqliteOrgStore, SqliteUsageStore
 from coruscant.common.config import (
     Settings,
     get_settings,
@@ -100,6 +104,29 @@ def build_schedule_store(settings: Settings | None = None) -> SqliteScheduleStor
 def build_saved_search_store(settings: Settings | None = None) -> SqliteSavedSearchStore:
     settings = settings or get_settings()
     return SqliteSavedSearchStore(settings.database_url)
+
+
+def build_org_store(settings: Settings | None = None) -> SqliteOrgStore:
+    settings = settings or get_settings()
+    return SqliteOrgStore(settings.database_url)
+
+
+def build_usage_store(settings: Settings | None = None) -> SqliteUsageStore:
+    settings = settings or get_settings()
+    return SqliteUsageStore(settings.database_url)
+
+
+def backup(settings: Settings | None = None, *, out_path: Path | None = None) -> Path:
+    """Create a tar.gz backup of the data directory (DB + artifacts + snapshots)."""
+
+    settings = settings or get_settings()
+    data_dir = settings.data_dir
+    target = out_path or (data_dir.parent / f"{data_dir.name}-backup.tar.gz")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(target, "w:gz") as tar:
+        if data_dir.exists():
+            tar.add(data_dir, arcname=data_dir.name)
+    return target
 
 
 def due_source_types(settings: Settings | None = None, now: datetime | None = None) -> list[str]:

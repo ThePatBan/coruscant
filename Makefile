@@ -1,6 +1,6 @@
 PYTHON ?= python
 
-.PHONY: setup test api worker lint format
+.PHONY: setup test api worker lint format up down prod backup
 
 setup:
 	$(PYTHON) -m pip install -e ".[dev]"
@@ -20,3 +20,15 @@ lint:
 
 format:
 	$(PYTHON) -m ruff format src tests
+
+up:
+	docker compose up --build -d
+
+down:
+	docker compose down
+
+prod:
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+
+backup:
+	$(PYTHON) -m coruscant.apps.cli backup

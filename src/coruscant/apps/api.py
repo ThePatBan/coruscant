@@ -17,8 +17,10 @@ from coruscant.apps.runtime import (
     build_auth_service,
     build_dead_letter_store,
     build_intelligence_store,
+    build_org_store,
     build_portfolio_store,
     build_saved_search_store,
+    build_usage_store,
     build_watchlist_store,
     build_workspace_store,
     load_engine,
@@ -26,6 +28,8 @@ from coruscant.apps.runtime import (
     load_run_status,
     source_monitoring,
 )
+from coruscant.commercial.models import PLANS, BillingSummary, Organization, UsageSummary
+from coruscant.commercial.store import SqliteOrgStore, SqliteUsageStore
 from coruscant.enterprise.api_keys import ApiKey, ApiKeyCreated, SqliteApiKeyStore
 from coruscant.enterprise.audit import AuditEntry, SqliteAuditStore
 from coruscant.infrastructure.dead_letter import DeadLetterEntry, SqliteDeadLetterStore
@@ -240,6 +244,16 @@ class SavedSearchCreate(BaseModel):
     source_type: str | None = None
 
 
+class OrgCreate(BaseModel):
+    name: str
+    plan: str = "free"
+    members: list[str] = Field(default_factory=list)
+
+
+class PlanUpdate(BaseModel):
+    plan: str
+
+
 class WatchlistCreate(BaseModel):
     name: str
     items: list[WatchItem] = Field(default_factory=list)
@@ -263,6 +277,8 @@ class _AppState:
     api_keys: SqliteApiKeyStore | None = None
     dead_letters: SqliteDeadLetterStore | None = None
     saved_searches: SqliteSavedSearchStore | None = None
+    orgs: SqliteOrgStore | None = None
+    usage: SqliteUsageStore | None = None
 
 
 def _all_documents(engine: Any) -> list[NormalizedDocument]:
@@ -299,6 +315,8 @@ def create_app(
     api_key_store: SqliteApiKeyStore | None = None,
     dead_letter_store: SqliteDeadLetterStore | None = None,
     saved_search_store: SqliteSavedSearchStore | None = None,
+    org_store: SqliteOrgStore | None = None,
+    usage_store: SqliteUsageStore | None = None,
     require_auth: bool = True,
     expose_reset_token: bool = False,
     load_from_storage: bool = False,
@@ -318,6 +336,8 @@ def create_app(
         api_keys=api_key_store,
         dead_letters=dead_letter_store,
         saved_searches=saved_search_store,
+        orgs=org_store,
+        usage=usage_store,
     )
 
     @asynccontextmanager
@@ -334,6 +354,8 @@ def create_app(
             state.api_keys = build_api_key_store(settings)
             state.dead_letters = build_dead_letter_store(settings)
             state.saved_searches = build_saved_search_store(settings)
+            state.orgs = build_org_store(settings)
+            state.usage = build_usage_store(settings)
         yield
 
     app = FastAPI(title="Coruscant API", version=API_VERSION, lifespan=lifespan)
@@ -385,6 +407,10 @@ def create_app(
             state.audit.record(
                 email, action, detail, created_at=datetime.now(tz=timezone.utc).isoformat()
             )
+
+    def _record_usage(email: str, action: str) -> None:
+        if state.usage is not None:
+            state.usage.record(email, action, created_at=datetime.now(tz=timezone.utc).isoformat())
 
     def _auth() -> AuthService:
         if state.auth is None:
@@ -520,7 +546,8 @@ def create_app(
         raise HTTPException(status_code=404, detail="document not found")
 
     @app.post("/retrieve", response_model=RetrieveResponse, dependencies=protected)
-    def retrieve(request: RetrieveRequest) -> RetrieveResponse:
+    def retrieve(request: RetrieveRequest, email: str = Depends(current_email)) -> RetrieveResponse:
+        _record_usage(email, "retrieve")
         reasoning = TemplateReasoningLayer(state.engine)
         matches = state.engine.retrieve_with_evidence(request.query, top_k=request.top_k)
         results = [
@@ -836,6 +863,59 @@ def create_app(
 
     # ---- Admin (RBAC) ------------------------------------------------------
 
+    # ---- Organizations, plans, usage & billing (commercialization) ---------
+
+    def _orgs() -> SqliteOrgStore:
+        if state.orgs is None:
+            raise HTTPException(status_code=503, detail="organizations are not configured")
+        return state.orgs
+
+    @app.post("/organizations", response_model=Organization, dependencies=protected)
+    def create_organization(body: OrgCreate, email: str = Depends(current_email)) -> Organization:
+        plan = body.plan if body.plan in PLANS else "free"
+        members = [m.strip().lower() for m in body.members if m.strip()]
+        org = _orgs().create_org(
+            email, body.name, plan, members, created_at=datetime.now(tz=timezone.utc).isoformat()
+        )
+        _audit(email, "organization.create", org.name)
+        return org
+
+    @app.get("/organizations", response_model=list[Organization], dependencies=protected)
+    def list_organizations(email: str = Depends(current_email)) -> list[Organization]:
+        return _orgs().list_orgs(email)
+
+    @app.post("/organizations/{org_id}/plan", response_model=Organization, dependencies=protected)
+    def set_org_plan(org_id: str, body: PlanUpdate, email: str = Depends(current_email)) -> Organization:
+        if body.plan not in PLANS:
+            raise HTTPException(status_code=400, detail=f"unknown plan: {body.plan}")
+        if not _orgs().set_plan(email, org_id, body.plan):
+            raise HTTPException(status_code=403, detail="only the owner can change the plan")
+        org = _orgs().get_org(email, org_id)
+        if org is None:
+            raise HTTPException(status_code=404, detail="organization not found")
+        _audit(email, "organization.plan", f"{org_id}:{body.plan}")
+        return org
+
+    @app.get("/organizations/{org_id}/billing", response_model=BillingSummary, dependencies=protected)
+    def org_billing(org_id: str, email: str = Depends(current_email)) -> BillingSummary:
+        org = _orgs().get_org(email, org_id)
+        if org is None:
+            raise HTTPException(status_code=404, detail="organization not found")
+        plan = PLANS.get(org.plan, PLANS["free"])
+        usage = state.usage.summary(org.members) if state.usage else UsageSummary()
+        return BillingSummary(
+            organization_id=org.id,
+            plan=plan,
+            members=len(org.members),
+            usage=usage,
+            api_calls=usage.total,
+            within_limits=usage.total <= plan.max_api_calls_per_day,
+        )
+
+    @app.get("/usage", response_model=UsageSummary, dependencies=protected)
+    def usage(email: str = Depends(current_email)) -> UsageSummary:
+        return state.usage.summary([email]) if state.usage else UsageSummary()
+
     @app.get("/admin/audit", response_model=list[AuditEntry])
     def admin_audit(_: StoredUser = Depends(require_admin), limit: int = 200) -> list[AuditEntry]:
         return state.audit.list_entries(limit=limit) if state.audit else []
@@ -874,7 +954,8 @@ def create_app(
         return source_monitoring(settings)
 
     @app.post("/analyst/{slug}", response_model=AnalysisReport, dependencies=protected)
-    def analyst(slug: str, body: AnalystRequest) -> AnalysisReport:
+    def analyst(slug: str, body: AnalystRequest, email: str = Depends(current_email)) -> AnalysisReport:
+        _record_usage(email, "analyst")
         company = next((c for c in load_companies(settings.config_dir) if c.slug == slug), None)
         name = company.name if company else slug
         change_sets = state.intelligence.list_change_sets(company_slug=slug) if state.intelligence else []
