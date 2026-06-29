@@ -243,6 +243,89 @@ export interface Notification {
   read: boolean;
 }
 
+export interface AnalysisStep {
+  label: string;
+  detail: string;
+}
+
+export interface AnalysisConcern {
+  title: string;
+  category: string;
+  severity: string;
+  confidence: number;
+  rationale: string;
+  evidence: Claim[];
+}
+
+export interface AnalysisReport {
+  company_slug: string;
+  company_name: string;
+  question: string;
+  focus: string;
+  headline: string;
+  steps: AnalysisStep[];
+  concerns: AnalysisConcern[];
+  disclaimer: string;
+}
+
+export interface Signal {
+  type: string;
+  company_slug: string;
+  label: string;
+  direction: string;
+  strength: number;
+  rationale: string;
+  evidence: Claim[];
+}
+
+export interface Holding {
+  company_slug: string;
+  label?: string | null;
+}
+
+export interface Portfolio {
+  id: string;
+  name: string;
+  holdings: Holding[];
+  created_at: string;
+}
+
+export interface PortfolioBriefing {
+  portfolio_id: string;
+  name: string;
+  holdings: Holding[];
+  headline: string;
+  material_changes: ChangeSet[];
+  recent_events: TimelineEvent[];
+  companies_with_changes: number;
+}
+
+export interface WorkspaceItem {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  ref: string | null;
+  author_email: string;
+  created_at: string;
+}
+
+export interface Workspace {
+  id: string;
+  name: string;
+  owner_email: string;
+  members: string[];
+  created_at: string;
+  items: WorkspaceItem[];
+}
+
+export interface ApiKey {
+  id: string;
+  name: string;
+  display: string;
+  created_at: string;
+}
+
 export interface AuthToken {
   token: string;
   email: string;
@@ -251,6 +334,7 @@ export interface AuthToken {
 export interface CurrentUser {
   email: string;
   created_at: string | null;
+  role: string;
 }
 
 // ---- transport -------------------------------------------------------------
@@ -330,6 +414,34 @@ export const api = {
     get<Notification[]>(`/notifications${unreadOnly ? "?unread_only=true" : ""}`),
   markRead: (id: string) =>
     post<{ ok: boolean }>(`/notifications/${encodeURIComponent(id)}/read`, {}),
+  // analyst & signals
+  analyst: (slug: string, question: string) =>
+    post<AnalysisReport>(`/analyst/${encodeURIComponent(slug)}`, { question }),
+  signals: (slug: string) => get<Signal[]>(`/signals/${encodeURIComponent(slug)}`),
+  // portfolios
+  portfolios: () => get<Portfolio[]>("/portfolios"),
+  createPortfolio: (name: string, holdings: Holding[]) =>
+    post<Portfolio>("/portfolios", { name, holdings }),
+  deletePortfolio: (id: string) =>
+    request<{ ok: boolean }>(`/portfolios/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  portfolioBriefing: (id: string) =>
+    get<PortfolioBriefing>(`/portfolios/${encodeURIComponent(id)}/briefing`),
+  // workspaces
+  workspaces: () => get<Workspace[]>("/workspaces"),
+  workspace: (id: string) => get<Workspace>(`/workspaces/${encodeURIComponent(id)}`),
+  createWorkspace: (name: string, members: string[]) =>
+    post<Workspace>("/workspaces", { name, members }),
+  addWorkspaceItem: (id: string, item: { type: string; title: string; body?: string; ref?: string | null }) =>
+    post<WorkspaceItem>(`/workspaces/${encodeURIComponent(id)}/items`, item),
+  deleteWorkspaceItem: (id: string, itemId: string) =>
+    request<{ ok: boolean }>(`/workspaces/${encodeURIComponent(id)}/items/${encodeURIComponent(itemId)}`, { method: "DELETE" }),
+  deleteWorkspace: (id: string) =>
+    request<{ ok: boolean }>(`/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  // api keys
+  apiKeys: () => get<ApiKey[]>("/api-keys"),
+  createApiKey: (name: string) => post<{ key: ApiKey; secret: string }>("/api-keys", { name }),
+  revokeApiKey: (id: string) =>
+    request<{ ok: boolean }>(`/api-keys/${encodeURIComponent(id)}`, { method: "DELETE" }),
   // auth
   login: (email: string, password: string) => post<AuthToken>("/auth/login", { email, password }),
   register: (email: string, password: string) =>

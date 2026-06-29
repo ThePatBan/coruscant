@@ -2,6 +2,7 @@ import { Link, useParams } from "react-router-dom";
 import { api, type ChangeSet } from "../api";
 import { Cat, docTypeLabel, Empty, ErrorView, Loading, sourceLabel } from "../components";
 import { useAsync } from "../hooks";
+import { AnalystPanel, SignalsPanel } from "./CompanyIntel";
 
 function ChangePanel({ changeSet }: { changeSet: ChangeSet }) {
   if (!changeSet.material) return null;
@@ -93,6 +94,9 @@ export function CompanyDetailPage() {
 
       {data ? (
         <>
+          <AnalystPanel slug={slug} name={data.company?.name ?? slug} />
+          <SignalsPanel slug={slug} />
+
           <div className="stack gap">
             <div className="row-between">
               <h2>What changed</h2>

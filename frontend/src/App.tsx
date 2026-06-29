@@ -12,18 +12,24 @@ import { GraphPage } from "./pages/GraphPage";
 import { LandingPage } from "./pages/LandingPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MonitoringPage } from "./pages/MonitoringPage";
+import { PortfolioPage } from "./pages/PortfolioPage";
+import { SettingsPage } from "./pages/SettingsPage";
 import { SourcesPage } from "./pages/SourcesPage";
 import { WatchlistsPage } from "./pages/WatchlistsPage";
+import { WorkspacesPage } from "./pages/WorkspacesPage";
 
 const NAV = [
   { to: "/dashboard", label: "Dashboard", icon: "◧" },
   { to: "/search", label: "Search", icon: "⌕" },
   { to: "/companies", label: "Companies", icon: "▤" },
   { to: "/graph", label: "Entity graph", icon: "◬" },
+  { to: "/portfolio", label: "Portfolio", icon: "▣" },
   { to: "/watchlists", label: "Watchlists", icon: "🔔" },
+  { to: "/workspaces", label: "Workspaces", icon: "❏" },
   { to: "/documents", label: "Documents", icon: "▦" },
   { to: "/sources", label: "Sources", icon: "⌥" },
   { to: "/monitoring", label: "Monitoring", icon: "◉" },
+  { to: "/settings", label: "Settings", icon: "⚙" },
 ];
 
 const CRUMBS: Array<[RegExp, string]> = [
@@ -32,11 +38,14 @@ const CRUMBS: Array<[RegExp, string]> = [
   [/^\/companies\/.+/, "Company"],
   [/^\/companies$/, "Companies"],
   [/^\/graph/, "Entity graph"],
+  [/^\/portfolio/, "Portfolio"],
   [/^\/watchlists/, "Watchlists"],
+  [/^\/workspaces/, "Workspaces"],
   [/^\/documents\/.+/, "Document"],
   [/^\/documents$/, "Documents"],
   [/^\/sources$/, "Sources"],
   [/^\/monitoring/, "Source monitoring"],
+  [/^\/settings/, "Settings"],
 ];
 
 function HealthPills() {
@@ -136,11 +145,14 @@ export default function App() {
         <Route path="/companies" element={<CompaniesPage />} />
         <Route path="/companies/:slug" element={<CompanyDetailPage />} />
         <Route path="/graph" element={<GraphPage />} />
+        <Route path="/portfolio" element={<PortfolioPage />} />
         <Route path="/watchlists" element={<WatchlistsPage />} />
+        <Route path="/workspaces" element={<WorkspacesPage />} />
         <Route path="/documents" element={<DocumentsPage />} />
         <Route path="/documents/:id" element={<DocumentDetailPage />} />
         <Route path="/sources" element={<SourcesPage />} />
         <Route path="/monitoring" element={<MonitoringPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
