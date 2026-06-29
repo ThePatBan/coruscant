@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 from coruscant.common.types import NormalizedDocument
+from coruscant.intelligence.confidence import category_confidence
 from coruscant.intelligence.models import Claim, DocumentSummary
 from coruscant.intelligence.text import (
     CATEGORY_CUES,
@@ -44,6 +45,7 @@ def _claim(document: NormalizedDocument, title: str, sentence: str, category: st
         section_title=title or None,
         canonical_id=document.canonical_id,
         category=category,
+        confidence=category_confidence(category),
     )
 
 

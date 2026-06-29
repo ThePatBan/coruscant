@@ -8,6 +8,7 @@ events, each retaining the source sentence and section as evidence.
 from __future__ import annotations
 
 from coruscant.common.types import NormalizedDocument
+from coruscant.intelligence.confidence import category_confidence
 from coruscant.intelligence.models import ExtractedEvent
 from coruscant.intelligence.text import headline, iso_date, primary_category, sentences
 
@@ -49,6 +50,7 @@ class ReferenceEventExtractor:
                         occurred_at=occurred_at,
                         source_uri=document.source_uri,
                         section_title=title or None,
+                        confidence=category_confidence(category),
                     )
                 )
         return events

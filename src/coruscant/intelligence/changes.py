@@ -9,6 +9,7 @@ keeps the exact source span as evidence on the side it came from.
 from __future__ import annotations
 
 from coruscant.common.types import NormalizedDocument
+from coruscant.intelligence.confidence import category_confidence
 from coruscant.intelligence.models import ChangeSet, Claim, DocumentChange
 from coruscant.intelligence.text import normalize_statement, primary_category, sentences
 
@@ -82,12 +83,14 @@ class ReferenceChangeDetector:
                         kind="added",
                         category=category,
                         statement=sentence,
+                        confidence=category_confidence(category),
                         evidence=Claim(
                             text=sentence,
                             source_uri=current.source_uri,
                             section_title=title or None,
                             canonical_id=current.canonical_id,
                             category=category,
+                            confidence=category_confidence(category),
                         ),
                     )
                 )
@@ -99,12 +102,14 @@ class ReferenceChangeDetector:
                         kind="removed",
                         category=category,
                         statement=sentence,
+                        confidence=category_confidence(category),
                         evidence=Claim(
                             text=sentence,
                             source_uri=previous.source_uri,
                             section_title=title or None,
                             canonical_id=previous.canonical_id,
                             category=category,
+                            confidence=category_confidence(category),
                         ),
                     )
                 )

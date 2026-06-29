@@ -30,6 +30,7 @@ class Claim(BaseModel):
     section_title: str | None = None
     canonical_id: str | None = None
     category: str | None = None
+    confidence: float = 0.8  # bounded; never certainty
 
 
 class DocumentSummary(BaseModel):
@@ -60,6 +61,8 @@ class ExtractedEvent(BaseModel):
     occurred_at: str | None = None
     source_uri: str
     section_title: str | None = None
+    confidence: float = 0.6
+    generator: str = "reference-extractive"
 
 
 class DocumentChange(BaseModel):
@@ -67,6 +70,7 @@ class DocumentChange(BaseModel):
     category: str
     statement: str
     evidence: Claim
+    confidence: float = 0.6
 
 
 class ChangeSet(BaseModel):
@@ -77,6 +81,7 @@ class ChangeSet(BaseModel):
     current_title: str | None = None
     previous_title: str | None = None
     changes: list[DocumentChange] = Field(default_factory=list)
+    generator: str = "reference-diff"
 
     @computed_field  # type: ignore[prop-decorator]
     @property
