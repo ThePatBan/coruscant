@@ -1,5 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
-import { api, type ApiKey, type CurrentUser } from "../api";
+import { ApiError, api, type ApiKey, type CurrentUser } from "../api";
 import { Empty, Loading } from "../components";
 import { useAsync } from "../hooks";
 
@@ -9,10 +9,17 @@ export function SettingsPage() {
   const [name, setName] = useState("My integration");
   const [secret, setSecret] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
-    setKeys(await api.apiKeys());
-    setLoading(false);
+    setError(null);
+    try {
+      setKeys(await api.apiKeys());
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to load API keys");
+    } finally {
+      setLoading(false);
+    }
   }, []);
   useEffect(() => {
     void reload();
@@ -21,9 +28,26 @@ export function SettingsPage() {
   async function create(e: FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
-    const created = await api.createApiKey(name.trim());
-    setSecret(created.secret);
-    await reload();
+    setSecret(null);
+    setError(null);
+    try {
+      const created = await api.createApiKey(name.trim());
+      setSecret(created.secret);
+      await reload();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to create key");
+    }
+  }
+
+  async function revoke(id: string) {
+    setSecret(null); // end the shown-once window
+    setError(null);
+    try {
+      await api.revokeApiKey(id);
+      await reload();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to revoke key");
+    }
   }
 
   return (
@@ -63,6 +87,7 @@ export function SettingsPage() {
           <input className="input" style={{ flex: 1 }} value={name} onChange={(e) => setName(e.target.value)} placeholder="Key name" />
           <button className="btn" type="submit">Create key</button>
         </form>
+        {error ? <div className="errbox">{error}</div> : null}
         {loading ? <Loading label="Loading keys" /> : null}
         {!loading && keys.length === 0 ? <Empty title="No API keys" /> : null}
         {keys.length > 0 ? (
@@ -73,14 +98,7 @@ export function SettingsPage() {
                   <div style={{ fontWeight: 560 }}>{k.name}</div>
                   <div className="mono faint" style={{ fontSize: 12 }}>{k.display}</div>
                 </div>
-                <button
-                  className="btn ghost"
-                  style={{ padding: "5px 10px" }}
-                  onClick={async () => {
-                    await api.revokeApiKey(k.id);
-                    await reload();
-                  }}
-                >
+                <button className="btn ghost" style={{ padding: "5px 10px" }} onClick={() => void revoke(k.id)}>
                   Revoke
                 </button>
               </div>

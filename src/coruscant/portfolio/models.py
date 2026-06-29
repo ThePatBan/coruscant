@@ -8,7 +8,7 @@ from coruscant.intelligence.models import ChangeSet, ExtractedEvent
 
 
 class Holding(BaseModel):
-    company_slug: str
+    company_slug: str = Field(min_length=1)
     label: str | None = None
 
 

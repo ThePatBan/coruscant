@@ -94,7 +94,7 @@ export function CompanyDetailPage() {
 
       {data ? (
         <>
-          <AnalystPanel slug={slug} name={data.company?.name ?? slug} />
+          <AnalystPanel key={slug} slug={slug} name={data.company?.name ?? slug} />
           <SignalsPanel slug={slug} />
 
           <div className="stack gap">

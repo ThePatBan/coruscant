@@ -585,6 +585,7 @@ def create_app(
     def delete_watchlist(watchlist_id: str, email: str = Depends(current_email)) -> dict[str, bool]:
         if not _watchlists().delete_watchlist(email, watchlist_id):
             raise HTTPException(status_code=404, detail="watchlist not found")
+        _audit(email, "watchlist.delete", watchlist_id)
         return {"ok": True}
 
     @app.post("/watchlists/{watchlist_id}/evaluate", dependencies=protected)
@@ -627,6 +628,7 @@ def create_app(
     def delete_portfolio(portfolio_id: str, email: str = Depends(current_email)) -> dict[str, bool]:
         if not _portfolios().delete_portfolio(email, portfolio_id):
             raise HTTPException(status_code=404, detail="portfolio not found")
+        _audit(email, "portfolio.delete", portfolio_id)
         return {"ok": True}
 
     @app.get("/portfolios/{portfolio_id}/briefing", response_model=PortfolioBriefing, dependencies=protected)
@@ -673,8 +675,9 @@ def create_app(
 
     @app.post("/workspaces", response_model=Workspace, dependencies=protected)
     def create_workspace(body: WorkspaceCreate, email: str = Depends(current_email)) -> Workspace:
+        members = [m.strip().lower() for m in body.members if m.strip()]
         workspace = _workspaces().create_workspace(
-            email, body.name, body.members, created_at=datetime.now(tz=timezone.utc).isoformat()
+            email, body.name, members, created_at=datetime.now(tz=timezone.utc).isoformat()
         )
         _audit(email, "workspace.create", workspace.name)
         return workspace
@@ -722,14 +725,17 @@ def create_app(
     def add_workspace_member(
         workspace_id: str, body: MemberAdd, email: str = Depends(current_email)
     ) -> dict[str, bool]:
-        if not _workspaces().add_member(email, workspace_id, body.email.strip().lower()):
+        member = body.email.strip().lower()
+        if not _workspaces().add_member(email, workspace_id, member):
             raise HTTPException(status_code=403, detail="only the owner can add members")
+        _audit(email, "workspace.member.add", f"{workspace_id}:{member}")
         return {"ok": True}
 
     @app.delete("/workspaces/{workspace_id}", dependencies=protected)
     def delete_workspace(workspace_id: str, email: str = Depends(current_email)) -> dict[str, bool]:
         if not _workspaces().delete_workspace(email, workspace_id):
             raise HTTPException(status_code=404, detail="workspace not found")
+        _audit(email, "workspace.delete", workspace_id)
         return {"ok": True}
 
     # ---- API keys (programmatic / ecosystem access) ------------------------

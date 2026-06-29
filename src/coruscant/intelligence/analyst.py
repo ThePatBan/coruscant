@@ -10,13 +10,15 @@ interface (ADR-0004) without changing callers.
 
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel, Field
 
 from coruscant.intelligence.models import ChangeSet, Claim, ExtractedEvent
+from coruscant.intelligence.text import normalize_statement
 
-# Category -> (concern headline, severity, base confidence). Severity/confidence
-# are deliberately bounded below certainty.
-_CONCERN_RULES: dict[str, tuple[str, str, float]] = {
+# Category -> (concern headline, severity, base confidence) for a risk lens.
+_RISK_RULES: dict[str, tuple[str, str, float]] = {
     "guidance": ("Forward guidance changed", "high", 0.72),
     "executive": ("Leadership change", "medium", 0.6),
     "regulatory": ("Regulatory exposure", "high", 0.72),
@@ -27,8 +29,18 @@ _CONCERN_RULES: dict[str, tuple[str, str, float]] = {
     "m&a": ("M&A activity", "medium", 0.58),
     "product": ("Product / roadmap shift", "low", 0.5),
 }
+# Opportunity lens — only categories that read as upside.
+_OPPORTUNITY_RULES: dict[str, tuple[str, str, float]] = {
+    "opportunity": ("Growth opportunity", "medium", 0.55),
+    "product": ("Product / roadmap momentum", "medium", 0.55),
+    "m&a": ("Strategic M&A", "medium", 0.55),
+    "capital_allocation": ("Capital returns", "low", 0.5),
+}
 _SEVERITY_RANK = {"high": 0, "medium": 1, "low": 2}
 _MAX_CONFIDENCE = 0.85  # never claim certainty
+# Only unambiguous opportunity cues — "grow"/"bull"/"positive" match risk-framed
+# questions ("growing risks", "bulletin") and are intentionally excluded.
+_OPPORTUNITY_RE = re.compile(r"\b(opportunit\w*|upside|bullish|tailwind\w*|catalyst\w*)\b")
 
 
 class AnalysisStep(BaseModel):
@@ -61,11 +73,7 @@ class AnalysisReport(BaseModel):
 
 
 def _focus_of(question: str) -> str:
-    lowered = question.lower()
-    opportunity_cues = ("opportunit", "upside", "grow", "bull", "positive", "catalyst")
-    if any(cue in lowered for cue in opportunity_cues):
-        return "opportunity"
-    return "risk"
+    return "opportunity" if _OPPORTUNITY_RE.search(question.lower()) else "risk"
 
 
 class ReferenceAnalyst:
@@ -80,108 +88,126 @@ class ReferenceAnalyst:
         country_exposures: list[tuple[str, str]],
     ) -> AnalysisReport:
         focus = _focus_of(question)
+        rules = _OPPORTUNITY_RULES if focus == "opportunity" else _RISK_RULES
         material = [cs for cs in change_sets if cs.material]
+
+        concerns: list[AnalysisConcern] = []
+        seen: set[tuple[str, str]] = set()
+
+        def consider(category: str, statement: str, evidence: Claim, rationale: str, *, bonus: float) -> None:
+            rule = rules.get(category)
+            if rule is None:
+                return
+            key = (category, normalize_statement(statement))
+            if key in seen:
+                return
+            seen.add(key)
+            title, severity, base = rule
+            concerns.append(
+                AnalysisConcern(
+                    title=title,
+                    category=category,
+                    severity=severity,
+                    confidence=round(min(_MAX_CONFIDENCE, base + bonus), 2),
+                    rationale=rationale,
+                    evidence=[evidence],
+                )
+            )
+
+        # Reason over material changes (the strongest "what changed" signal).
+        for change_set in material:
+            for change in change_set.changes:
+                consider(
+                    change.category,
+                    change.statement,
+                    change.evidence,
+                    f"{change.kind.capitalize()} in {change_set.source_type}: {change.statement}",
+                    bonus=0.05 if change.kind == "added" else 0.0,
+                )
+
+        # Reason over extracted events (standalone signals without a diff).
+        for event in events:
+            claim = Claim(
+                text=event.description,
+                source_uri=event.source_uri,
+                section_title=event.section_title,
+                canonical_id=event.canonical_id,
+                category=event.category,
+            )
+            consider(
+                event.category,
+                event.description,
+                claim,
+                f"Event ({event.source_type}): {event.description}",
+                bonus=0.0,
+            )
+
+        # Geopolitical / supply exposure from the entity graph (risk lens only).
+        if focus == "risk":
+            countries = sorted({country for country, _ in country_exposures})
+            for country in countries:
+                suppliers = sorted({s for c, s in country_exposures if c == country})
+                concerns.append(
+                    AnalysisConcern(
+                        title=f"Geopolitical exposure to {country}",
+                        category="supply_chain",
+                        severity="medium",
+                        confidence=0.55,
+                        rationale=f"{company_name} depends on {', '.join(suppliers)} operating in "
+                        f"{country}, creating concentration/geopolitical exposure.",
+                        evidence=[
+                            Claim(
+                                text=f"{company_name} relies on {', '.join(suppliers)} in {country}.",
+                                source_uri="reference-entities",
+                                section_title="entity graph",
+                                category="supply_chain",
+                            )
+                        ],
+                    )
+                )
+
+        concerns.sort(key=lambda c: (_SEVERITY_RANK.get(c.severity, 9), -c.confidence))
+
         steps = [
             AnalysisStep(
                 label="Search",
                 detail=f"Gathered {len(change_sets)} disclosure comparisons and "
-                f"{len(events)} extracted events for {company_name}.",
+                f"{len(events)} events for {company_name}.",
             ),
             AnalysisStep(
                 label="Read",
-                detail=f"Read {len(material)} disclosures with material changes and "
-                f"{len(country_exposures)} supply-chain country exposures.",
+                detail=f"Read {len(material)} material-change disclosures, {len(events)} events, "
+                f"and {len(country_exposures)} supply-chain exposures.",
             ),
             AnalysisStep(
                 label="Reason",
-                detail="Classified each change and event by materiality category and "
-                "weighted it by source.",
+                detail="Classified each change and event by materiality category and weighted it "
+                "by source.",
             ),
             AnalysisStep(
                 label="Compare",
                 detail="Each change is a diff of the current disclosure against the prior one.",
             ),
-        ]
-
-        concerns: list[AnalysisConcern] = []
-        seen: set[tuple[str, str]] = set()
-
-        # Reason over material changes (the strongest "what changed" signal).
-        for change_set in material:
-            for change in change_set.changes:
-                rule = _CONCERN_RULES.get(change.category)
-                if rule is None:
-                    continue
-                key = (change.category, change.statement[:60])
-                if key in seen:
-                    continue
-                seen.add(key)
-                title, severity, base = rule
-                confidence = min(_MAX_CONFIDENCE, base + (0.05 if change.kind == "added" else 0.0))
-                concerns.append(
-                    AnalysisConcern(
-                        title=title,
-                        category=change.category,
-                        severity=severity,
-                        confidence=round(confidence, 2),
-                        rationale=f"{change.kind.capitalize()} in {change_set.source_type}: "
-                        f"{change.statement}",
-                        evidence=[change.evidence],
-                    )
-                )
-
-        # Geopolitical / supply exposure from the entity graph.
-        countries = sorted({country for country, _ in country_exposures})
-        for country in countries:
-            suppliers = sorted({s for c, s in country_exposures if c == country})
-            concerns.append(
-                AnalysisConcern(
-                    title=f"Geopolitical exposure to {country}",
-                    category="supply_chain",
-                    severity="medium",
-                    confidence=0.55,
-                    rationale=f"{company_name} depends on {', '.join(suppliers)} operating in "
-                    f"{country}, creating concentration/geopolitical exposure.",
-                    evidence=[
-                        Claim(
-                            text=f"{company_name} relies on {', '.join(suppliers)} in {country}.",
-                            source_uri="reference-entities",
-                            section_title="entity graph",
-                            category="supply_chain",
-                        )
-                    ],
-                )
-            )
-
-        concerns.sort(key=lambda c: (_SEVERITY_RANK.get(c.severity, 9), -c.confidence))
-
-        steps.append(
             AnalysisStep(
-                label="Cite",
-                detail=f"Attached source evidence to all {len(concerns)} concerns.",
-            )
-        )
-        steps.append(AnalysisStep(label="Answer", detail="Synthesized the assessment below."))
-
-        headline = self._headline(company_name, question, focus, concerns)
+                label="Cite", detail=f"Attached source evidence to all {len(concerns)} concerns."
+            ),
+            AnalysisStep(label="Answer", detail="Synthesized the assessment below."),
+        ]
         return AnalysisReport(
             company_slug=company_slug,
             company_name=company_name,
             question=question,
             focus=focus,
-            headline=headline,
+            headline=self._headline(company_name, focus, concerns),
             steps=steps,
             concerns=concerns,
         )
 
-    def _headline(
-        self, company_name: str, question: str, focus: str, concerns: list[AnalysisConcern]
-    ) -> str:
+    def _headline(self, company_name: str, focus: str, concerns: list[AnalysisConcern]) -> str:
         if not concerns:
             return f"No material {focus} signals found for {company_name} in the available evidence."
         high = sum(1 for c in concerns if c.severity == "high")
-        lead = concerns[0].title.lower()
         return (
-            f"{company_name}: {len(concerns)} evidence-backed concern(s) "
-            f"({high} high-severity), led by {lead}."
+            f"{company_name}: {len(concerns)} evidence-backed {focus} signal(s) "
+            f"({high} high-severity), led by {concerns[0].title.lower()}."
         )

@@ -80,39 +80,42 @@ class ReferenceSignalEngine:
                 [guidance[0].evidence],
             )
 
-        # Emerging risk — added risk / regulatory / litigation changes.
+        # Emerging risk — added risk/regulatory/litigation changes AND events.
         risk_changes = [c for c in material_changes if c.category in {"risk", "regulatory", "litigation"} and c.kind == "added"]
-        if risk_changes:
+        risk_events = [e for e in events if e.category in {"risk", "regulatory", "litigation"}]
+        total_risk = len(risk_changes) + len(risk_events)
+        if total_risk:
+            evidence = [c.evidence for c in risk_changes[:2]]
+            evidence += [
+                Claim(
+                    text=e.description,
+                    source_uri=e.source_uri,
+                    section_title=e.section_title,
+                    canonical_id=e.canonical_id,
+                    category=e.category,
+                )
+                for e in risk_events[:1]
+            ]
             add(
                 "emerging_risk",
                 "Emerging risk",
                 "elevated",
-                0.55 + 0.05 * min(3, len(risk_changes)),
-                f"{len(risk_changes)} new risk/regulatory/legal disclosure(s) versus the prior period.",
-                [c.evidence for c in risk_changes[:3]],
+                0.55 + 0.05 * min(3, total_risk),
+                f"{total_risk} new risk/regulatory/legal signal(s) versus the prior period.",
+                evidence[:3],
             )
 
-        # Supply-chain stress — supply_chain changes and/or concentration.
+        # Supply-chain stress — only on actual supplier-specific changes
+        # (raw country concentration is captured by the geopolitical signal).
         sc_changes = [c for c in material_changes if c.category == "supply_chain"]
-        if sc_changes or country_exposures:
-            evidence = [c.evidence for c in sc_changes[:2]]
-            countries = sorted({c for c, _ in country_exposures})
-            if countries and not evidence:
-                evidence = [
-                    Claim(
-                        text=f"{company_name} relies on suppliers in {', '.join(countries)}.",
-                        source_uri="reference-entities",
-                        section_title="entity graph",
-                        category="supply_chain",
-                    )
-                ]
+        if sc_changes:
             add(
                 "supply_chain_stress",
                 "Supply-chain stress",
                 "elevated",
-                0.5 + 0.05 * len(countries) + (0.1 if sc_changes else 0.0),
-                "Supplier-related changes and/or country concentration in the supply chain.",
-                evidence,
+                0.6,
+                "Supplier-related changes versus the prior disclosure.",
+                [c.evidence for c in sc_changes[:2]],
             )
 
         # Hiring — presence of job postings.

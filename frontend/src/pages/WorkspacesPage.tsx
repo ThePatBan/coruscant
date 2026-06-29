@@ -1,5 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
-import { api, type Workspace } from "../api";
+import { ApiError, api, type Workspace } from "../api";
 import { Empty, Loading } from "../components";
 
 const ITEM_TYPES = ["note", "thesis", "bookmark", "collection", "comment"];
@@ -11,35 +11,54 @@ export function WorkspacesPage() {
   const [members, setMembers] = useState("");
   const [item, setItem] = useState({ type: "note", title: "", body: "" });
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const guard = useCallback(async (fn: () => Promise<unknown>) => {
+    setError(null);
+    try {
+      await fn();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Something went wrong");
+    }
+  }, []);
 
   const reload = useCallback(async () => {
-    setWorkspaces(await api.workspaces());
-    setLoading(false);
+    setError(null);
+    try {
+      setWorkspaces(await api.workspaces());
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to load workspaces");
+    } finally {
+      setLoading(false);
+    }
   }, []);
   useEffect(() => {
     void reload();
   }, [reload]);
 
-  async function open(id: string) {
-    setActive(await api.workspace(id));
-  }
+  const open = (id: string) => guard(async () => setActive(await api.workspace(id)));
 
   async function create(e: FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
     const emails = members.split(",").map((m) => m.trim().toLowerCase()).filter(Boolean);
-    await api.createWorkspace(name.trim(), emails);
-    setName("Research");
-    setMembers("");
-    await reload();
+    await guard(async () => {
+      await api.createWorkspace(name.trim(), emails);
+      setName("Research");
+      setMembers("");
+      await reload();
+    });
   }
 
   async function addItem(e: FormEvent) {
     e.preventDefault();
     if (!active || !item.title.trim()) return;
-    await api.addWorkspaceItem(active.id, item);
-    setItem({ type: "note", title: "", body: "" });
-    await open(active.id);
+    const activeId = active.id;
+    await guard(async () => {
+      await api.addWorkspaceItem(activeId, item);
+      setItem({ type: "note", title: "", body: "" });
+      setActive(await api.workspace(activeId));
+    });
   }
 
   return (
@@ -53,6 +72,7 @@ export function WorkspacesPage() {
       </div>
 
       {loading ? <Loading label="Loading workspaces" /> : null}
+      {error ? <div className="errbox">{error}</div> : null}
 
       <div className="grid cols-2">
         <form className="card stack gap" onSubmit={create}>

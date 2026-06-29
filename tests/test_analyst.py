@@ -63,6 +63,43 @@ def test_analyst_produces_cited_confidence_banded_concerns() -> None:
     assert "Apple" in report.headline
 
 
+def test_analyst_reasons_over_standalone_events() -> None:
+    from coruscant.intelligence.models import ExtractedEvent
+
+    events = [
+        ExtractedEvent(
+            canonical_id="e1",
+            company_slug="apple",
+            source_type="court_filings",
+            category="litigation",
+            title="Lawsuit filed",
+            description="A lawsuit names the company as a party.",
+            occurred_at="2025-03-22",
+            source_uri="reference://court_filings/apple/2025",
+            section_title="Claims",
+        )
+    ]
+    report = ReferenceAnalyst().analyze(
+        company_slug="apple",
+        company_name="Apple",
+        question="Any worries about Apple?",
+        change_sets=[],  # no diffs — the concern must come from the event
+        events=events,
+        country_exposures=[],
+    )
+    litigation = next((c for c in report.concerns if c.category == "litigation"), None)
+    assert litigation is not None
+    assert litigation.evidence[0].source_uri == "reference://court_filings/apple/2025"
+
+
+def test_focus_detection_is_word_boundary_aware() -> None:
+    from coruscant.intelligence.analyst import _focus_of
+
+    assert _focus_of("What are the growing risks and downside for Apple?") == "risk"
+    assert _focus_of("Is there a bulletin about risks?") == "risk"
+    assert _focus_of("What is the growth opportunity?") == "opportunity"
+
+
 def test_analyst_detects_opportunity_focus() -> None:
     report = ReferenceAnalyst().analyze(
         company_slug="apple",

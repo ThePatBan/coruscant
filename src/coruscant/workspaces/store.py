@@ -109,17 +109,21 @@ class SqliteWorkspaceStore:
 
     def list_workspaces(self, email: str) -> list[Workspace]:
         with Session(self.engine) as session:
+            # Membership covers ownership (the owner is added as a member), so a
+            # single membership-scoped query avoids a full-table scan.
             member_ids = set(
                 session.scalars(
                     select(MemberRow.workspace_id).where(MemberRow.email == email)
                 ).all()
             )
-            rows = session.scalars(select(WorkspaceRow).order_by(WorkspaceRow.created_at)).all()
-            return [
-                self._to_workspace(session, r, with_items=False)
-                for r in rows
-                if r.owner_email == email or r.id in member_ids
-            ]
+            if not member_ids:
+                return []
+            rows = session.scalars(
+                select(WorkspaceRow)
+                .where(WorkspaceRow.id.in_(member_ids))
+                .order_by(WorkspaceRow.created_at)
+            ).all()
+            return [self._to_workspace(session, r, with_items=False) for r in rows]
 
     def get_workspace(self, email: str, workspace_id: str) -> Workspace | None:
         with Session(self.engine) as session:
