@@ -20,7 +20,24 @@ instead of repeated re-engineering.
 > "done" until the foundation it sits on satisfies M1. M1 hardens the core that all
 > of it depends on.
 
-## Current milestone: M1 — Foundation Hardening
+## Status
+
+All five milestones are implemented and gated (each landed only with its exit
+criteria met, tests green, and lint/types clean):
+
+- **M1 — Foundation Hardening** ✅ — typed errors + no silent failures, dead-letter
+  queue, deterministic section IDs, durable provenance-first graph, frozen API.
+- **M2 — Source Platform** ✅ — common `Provenance` schema on every document,
+  ingestion scheduler (cadence + due calc), shared connector framework.
+- **M3 — Intelligence Layer** ✅ — every output carries evidence + bounded
+  confidence + provenance and is reproducible.
+- **M4 — Analyst Experience** ✅ — saved searches + document comparison on top of
+  watchlists/timeline/notes/alerts; daily-workflow smoke test.
+- **M5 — Scale & Commercialization** ✅ — organizations + plans/billing + usage
+  analytics + backups + production deployment automation (RBAC/audit/monitoring/
+  API shipped earlier). Per-resource tenant isolation is the documented next step.
+
+## M1 — Foundation Hardening (details)
 
 ### Objectives
 - **Architecture** — freeze the MVP API surface; separate "core platform" from
