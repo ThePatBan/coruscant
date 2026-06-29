@@ -38,6 +38,8 @@ from coruscant.knowledge_graph.persistence import load_graph, save_graph
 from coruscant.enterprise.api_keys import SqliteApiKeyStore
 from coruscant.enterprise.audit import SqliteAuditStore
 from coruscant.infrastructure.dead_letter import SqliteDeadLetterStore
+from coruscant.infrastructure.schedule_store import SqliteScheduleStore
+from coruscant.ingestion.scheduler import due_sources
 from coruscant.portfolio.store import SqlitePortfolioStore
 from coruscant.search.hybrid import HybridRetrievalEngine
 from coruscant.watchlists.store import SqliteWatchlistStore
@@ -87,6 +89,20 @@ def build_api_key_store(settings: Settings | None = None) -> SqliteApiKeyStore:
 def build_dead_letter_store(settings: Settings | None = None) -> SqliteDeadLetterStore:
     settings = settings or get_settings()
     return SqliteDeadLetterStore(settings.database_url)
+
+
+def build_schedule_store(settings: Settings | None = None) -> SqliteScheduleStore:
+    settings = settings or get_settings()
+    return SqliteScheduleStore(settings.database_url)
+
+
+def due_source_types(settings: Settings | None = None, now: datetime | None = None) -> list[str]:
+    """Source types whose cadence has elapsed (scheduler decision)."""
+
+    settings = settings or get_settings()
+    moment = now or datetime.now(tz=timezone.utc)
+    last_runs = build_schedule_store(settings).last_runs()
+    return due_sources(default_registry().definitions(), last_runs, moment)
 
 
 logger = logging.getLogger(__name__)
@@ -167,10 +183,12 @@ def run_ingestion(settings: Settings | None = None) -> IngestionReport:
     sources = load_sources(settings.config_dir)
     report = orchestrator.run(companies, sources)
     save_graph(graph_store, settings.graph_snapshot_path)
-    status = RunStatus.from_report(
-        report, completed_at=datetime.now(tz=timezone.utc).isoformat()
-    )
-    save_status(status, settings.status_path)
+    completed_at = datetime.now(tz=timezone.utc).isoformat()
+    save_status(RunStatus.from_report(report, completed_at=completed_at), settings.status_path)
+    # Record last successful run per source so the scheduler can compute due-ness.
+    schedule = build_schedule_store(settings)
+    for source_type in report.source_types:
+        schedule.record_run(source_type, completed_at)
     return report
 
 

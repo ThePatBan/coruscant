@@ -274,6 +274,7 @@ class IngestionOrchestrator:
             retrieval_engine=self.engine,
             embedding_index=self.engine,
             catalog=self.catalog,
+            authority=definition.authority,
         )
         result = pipeline.run()
         normalized = result.normalized_document

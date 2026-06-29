@@ -5,7 +5,13 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from coruscant.common.types import GraphEdge, GraphNode, NormalizedDocument, SourceDocument
+from coruscant.common.types import (
+    GraphEdge,
+    GraphNode,
+    NormalizedDocument,
+    Provenance,
+    SourceDocument,
+)
 from coruscant.connectors.base import FetchRequest, SourceConnector
 from coruscant.infrastructure.repositories import (
     NormalizedDocumentRepository,
@@ -110,6 +116,7 @@ class GenericIngestionPipeline(IngestionPipeline):
         retrieval_engine: DocumentIndex | None = None,
         embedding_index: EmbeddingIndex | None = None,
         catalog: DocumentCatalog | None = None,
+        authority: float = 0.6,
     ) -> None:
         self.connector = connector
         self.request = request
@@ -121,6 +128,7 @@ class GenericIngestionPipeline(IngestionPipeline):
         self.retrieval_engine = retrieval_engine
         self.embedding_index = embedding_index
         self.catalog = catalog
+        self.authority = authority
         self._source_type = request.source_name
         self._nodes: list[GraphNode] = []
         self._edges: list[GraphEdge] = []
@@ -134,7 +142,17 @@ class GenericIngestionPipeline(IngestionPipeline):
         self.raw_repository.save(document)
 
     def normalize(self, document: SourceDocument) -> NormalizedDocument:
-        return self.normalizer(document)
+        normalized = self.normalizer(document)
+        # Attach the common provenance record (M2): one shared schema for every
+        # source, regardless of connector.
+        normalized.provenance = Provenance(
+            source_type=document.source_type,
+            source_uri=document.source_uri,
+            retrieved_at=document.fetched_at.isoformat(),
+            authority=self.authority,
+            publisher=document.metadata.get("publisher"),
+        )
+        return normalized
 
     def extract_entities(self, document: NormalizedDocument) -> NormalizedDocument:
         # Reference normalizers already attach entities; resolution happens in the projector.

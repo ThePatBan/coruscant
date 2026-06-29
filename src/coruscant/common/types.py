@@ -35,6 +35,22 @@ class SourceDocument(BaseModel):
         return sha256(self.source_uri.encode("utf-8")).hexdigest()
 
 
+class Provenance(BaseModel):
+    """Common provenance record attached to every normalized document.
+
+    A single shared schema across all sources (M2) so retrieval, intelligence,
+    and the UI can reason about where a document came from and how authoritative
+    the source is, uniformly.
+    """
+
+    source_type: str
+    source_uri: str
+    retrieved_at: str
+    authority: float = 0.6
+    publisher: str | None = None
+    license: str | None = None
+
+
 class NormalizedDocument(BaseModel):
     document_type: str
     source_uri: str
@@ -45,6 +61,7 @@ class NormalizedDocument(BaseModel):
     sections: list[dict[str, Any]] = Field(default_factory=list)
     exhibits: list[dict[str, Any]] = Field(default_factory=list)
     entities: list[dict[str, Any]] = Field(default_factory=list)
+    provenance: Provenance | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

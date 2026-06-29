@@ -9,7 +9,14 @@ from __future__ import annotations
 
 import argparse
 
-from coruscant.apps.runtime import load_engine, load_graph_store, run_ingestion, seed_demo_user
+from coruscant.apps.runtime import (
+    build_schedule_store,
+    due_source_types,
+    load_engine,
+    load_graph_store,
+    run_ingestion,
+    seed_demo_user,
+)
 from coruscant.common.config import get_settings, load_companies
 from coruscant.common.logging import configure_logging
 from coruscant.ingestion.registry import default_registry
@@ -54,6 +61,18 @@ def cmd_ingest(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_schedule(_: argparse.Namespace) -> int:
+    settings = get_settings()
+    last = build_schedule_store(settings).last_runs()
+    due = set(due_source_types(settings))
+    for definition in default_registry().definitions():
+        marker = "DUE" if definition.source_type in due else "ok "
+        last_run = last.get(definition.source_type, "never")
+        print(f"  [{marker}] {definition.source_type:20} cadence={definition.cadence_days}d  last={last_run}")
+    print(f"{len(due)} source(s) due for ingestion.")
+    return 0
+
+
 def cmd_query(args: argparse.Namespace) -> int:
     engine = load_engine()
     if len(engine) == 0:
@@ -92,6 +111,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("companies", help="List configured companies").set_defaults(func=cmd_companies)
     sub.add_parser("sources", help="List registered ingestion sources").set_defaults(func=cmd_sources)
     sub.add_parser("ingest", help="Run the full ingestion lifecycle").set_defaults(func=cmd_ingest)
+    sub.add_parser("schedule", help="Show which sources are due for ingestion").set_defaults(func=cmd_schedule)
 
     query = sub.add_parser("query", help="Answer a query against the ingested corpus")
     query.add_argument("query", help="Natural language query")

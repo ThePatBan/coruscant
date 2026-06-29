@@ -65,6 +65,8 @@ class SourceDefinition:
     # Inherent source authority (0..1): official/regulatory filings rank above
     # commentary. Feeds the reliability score (see intelligence.reliability).
     authority: float = 0.6
+    # How often the scheduler considers this source due for re-ingestion (days).
+    cadence_days: int = 7
 
     @property
     def is_periodic(self) -> bool:
@@ -107,6 +109,7 @@ _DEFAULT_DEFINITIONS: tuple[SourceDefinition, ...] = (
         normalizer=normalize_edgar_filing,
         periods=(("FY2024 10-K", "2024-01-31"), ("FY2025 10-K", "2025-01-31")),
         authority=0.98,
+        cadence_days=1,
     ),
     SourceDefinition(
         source_type="global_regulators",
@@ -206,6 +209,7 @@ _DEFAULT_DEFINITIONS: tuple[SourceDefinition, ...] = (
         normalizer=normalize_news,
         periods=(("Apr 2025", "2025-04-02"),),
         authority=0.5,
+        cadence_days=1,
     ),
     SourceDefinition(
         source_type="job_postings",
