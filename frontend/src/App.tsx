@@ -8,16 +8,22 @@ import { CompanyDetailPage } from "./pages/CompanyDetailPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { DocumentsPage } from "./pages/DocumentsPage";
 import { DocumentDetailPage } from "./pages/DocumentDetailPage";
+import { GraphPage } from "./pages/GraphPage";
 import { LandingPage } from "./pages/LandingPage";
 import { LoginPage } from "./pages/LoginPage";
+import { MonitoringPage } from "./pages/MonitoringPage";
 import { SourcesPage } from "./pages/SourcesPage";
+import { WatchlistsPage } from "./pages/WatchlistsPage";
 
 const NAV = [
   { to: "/dashboard", label: "Dashboard", icon: "◧" },
   { to: "/search", label: "Search", icon: "⌕" },
   { to: "/companies", label: "Companies", icon: "▤" },
+  { to: "/graph", label: "Entity graph", icon: "◬" },
+  { to: "/watchlists", label: "Watchlists", icon: "🔔" },
   { to: "/documents", label: "Documents", icon: "▦" },
   { to: "/sources", label: "Sources", icon: "⌥" },
+  { to: "/monitoring", label: "Monitoring", icon: "◉" },
 ];
 
 const CRUMBS: Array<[RegExp, string]> = [
@@ -25,9 +31,12 @@ const CRUMBS: Array<[RegExp, string]> = [
   [/^\/search/, "Search the evidence"],
   [/^\/companies\/.+/, "Company"],
   [/^\/companies$/, "Companies"],
+  [/^\/graph/, "Entity graph"],
+  [/^\/watchlists/, "Watchlists"],
   [/^\/documents\/.+/, "Document"],
   [/^\/documents$/, "Documents"],
   [/^\/sources$/, "Sources"],
+  [/^\/monitoring/, "Source monitoring"],
 ];
 
 function HealthPills() {
@@ -126,9 +135,12 @@ export default function App() {
         <Route path="/search" element={<AskPage />} />
         <Route path="/companies" element={<CompaniesPage />} />
         <Route path="/companies/:slug" element={<CompanyDetailPage />} />
+        <Route path="/graph" element={<GraphPage />} />
+        <Route path="/watchlists" element={<WatchlistsPage />} />
         <Route path="/documents" element={<DocumentsPage />} />
         <Route path="/documents/:id" element={<DocumentDetailPage />} />
         <Route path="/sources" element={<SourcesPage />} />
+        <Route path="/monitoring" element={<MonitoringPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

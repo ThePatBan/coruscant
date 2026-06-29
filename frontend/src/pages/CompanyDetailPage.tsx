@@ -53,19 +53,19 @@ export function CompanyDetailPage() {
   const { slug = "" } = useParams();
   const { data, error, loading } = useAsync(
     async () => {
-      const [companies, documents, graph, timeline, changes] = await Promise.all([
+      const [companies, documents, timeline, changes, profile] = await Promise.all([
         api.companies(),
         api.documents({ company: slug }),
-        api.companyGraph(slug),
         api.companyTimeline(slug),
         api.companyChanges(slug),
+        api.entity("Company", slug).catch(() => null),
       ]);
       return {
         company: companies.find((c) => c.slug === slug) ?? null,
         documents,
-        graph,
         timeline,
         changes: changes.filter((c) => c.material),
+        relationships: profile?.relationships.filter((r) => r.relation !== "mentions") ?? [],
       };
     },
     [slug],
@@ -104,6 +104,27 @@ export function CompanyDetailPage() {
               data.changes.map((cs) => <ChangePanel changeSet={cs} key={cs.current_canonical_id} />)
             )}
           </div>
+
+          {data.relationships.length > 0 ? (
+            <div className="stack gap">
+              <div className="row-between">
+                <h2>Relationships</h2>
+                <Link to="/graph" className="faint" style={{ fontSize: 13 }}>
+                  Explore the graph →
+                </Link>
+              </div>
+              <div className="card stack gap-sm">
+                {data.relationships.map((r, i) => (
+                  <div className="wrap" key={i} style={{ gap: 8 }}>
+                    <span className="cat" data-c={r.relation}>{r.relation.replace(/_/g, " ")}</span>
+                    <span className="faint">{r.direction === "out" ? "→" : "←"}</span>
+                    <span className="badge">{r.other.kind}</span>
+                    <span>{r.other.name}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           <div className="grid cols-2">
             <div className="stack gap">

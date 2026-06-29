@@ -157,6 +157,92 @@ export interface Dashboard {
   recent_opportunities: TimelineEvent[];
 }
 
+export interface SourceReliability {
+  source_type: string;
+  label: string;
+  authority: number;
+  document_count: number;
+  structure_score: number;
+  completeness_score: number;
+  success_rate: number;
+  score: number;
+  tier: string;
+  latest_published: string | null;
+}
+
+export interface EntityRef {
+  kind: string;
+  key: string;
+  name: string;
+}
+
+export interface Relationship {
+  relation: string;
+  direction: "out" | "in";
+  other: EntityRef;
+}
+
+export interface EntityProfile {
+  entity: EntityRef;
+  properties: Record<string, unknown>;
+  relationships: Relationship[];
+  mentioned_in: string[];
+}
+
+export interface ExposurePath {
+  company: EntityRef;
+  via: EntityRef;
+  relation: string;
+}
+
+export interface ExposureResult {
+  country: string;
+  direct: EntityRef[];
+  exposed: ExposurePath[];
+}
+
+export interface CoExecutiveGroup {
+  company: EntityRef;
+  people: EntityRef[];
+}
+
+export interface BridgePerson {
+  person: EntityRef;
+  companies: EntityRef[];
+}
+
+export interface CoExecutiveResult {
+  shared_company_groups: CoExecutiveGroup[];
+  multi_company_people: BridgePerson[];
+}
+
+export interface WatchItem {
+  type: string;
+  value: string;
+}
+
+export interface Watchlist {
+  id: string;
+  name: string;
+  items: WatchItem[];
+  created_at: string;
+}
+
+export interface Notification {
+  id: string;
+  watchlist_id: string;
+  watch_type: string;
+  watch_value: string;
+  kind: string;
+  title: string;
+  detail: string;
+  category: string | null;
+  source_uri: string | null;
+  canonical_id: string | null;
+  created_at: string;
+  read: boolean;
+}
+
 export interface AuthToken {
   token: string;
   email: string;
@@ -223,6 +309,27 @@ export const api = {
     get<TimelineEvent[]>(`/companies/${encodeURIComponent(slug)}/timeline`),
   companyChanges: (slug: string) =>
     get<ChangeSet[]>(`/companies/${encodeURIComponent(slug)}/changes`),
+  // sources & graph
+  monitoring: () => get<SourceReliability[]>("/monitoring"),
+  entities: (kind?: string) =>
+    get<EntityRef[]>(`/entities${kind ? `?kind=${encodeURIComponent(kind)}` : ""}`),
+  entity: (kind: string, key: string) =>
+    get<EntityProfile>(`/entities/${encodeURIComponent(kind)}/${encodeURIComponent(key)}`),
+  exposure: (country: string) =>
+    get<ExposureResult>(`/graph/exposure?country=${encodeURIComponent(country)}`),
+  coExecutives: () => get<CoExecutiveResult>("/graph/co-executives"),
+  // watchlists
+  watchlists: () => get<Watchlist[]>("/watchlists"),
+  createWatchlist: (name: string, items: WatchItem[]) =>
+    post<{ watchlist: Watchlist; notifications_created: number }>("/watchlists", { name, items }),
+  deleteWatchlist: (id: string) =>
+    request<{ ok: boolean }>(`/watchlists/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  evaluateWatchlist: (id: string) =>
+    post<{ notifications_created: number }>(`/watchlists/${encodeURIComponent(id)}/evaluate`, {}),
+  notifications: (unreadOnly = false) =>
+    get<Notification[]>(`/notifications${unreadOnly ? "?unread_only=true" : ""}`),
+  markRead: (id: string) =>
+    post<{ ok: boolean }>(`/notifications/${encodeURIComponent(id)}/read`, {}),
   // auth
   login: (email: string, password: string) => post<AuthToken>("/auth/login", { email, password }),
   register: (email: string, password: string) =>
