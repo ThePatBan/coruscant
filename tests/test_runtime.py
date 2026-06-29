@@ -20,17 +20,18 @@ def test_run_ingestion_end_to_end(tmp_path: Path) -> None:
 
     report = run_ingestion(settings)
 
-    # 6 companies × (3 periodic sources × 2 periods + 4 episodic × 1) = 60 documents.
-    assert report.document_count == 60
+    # 6 companies × (4 periodic sources × 2 periods + 9 episodic × 1) = 102 documents.
+    assert report.document_count == 102
     assert len(report.companies) == 6
-    assert len(report.source_types) == 7
+    assert len(report.source_types) == 13
     assert not report.errors
     assert settings.graph_snapshot_path.exists()
 
     # Intelligence ran for every document; change detection for every periodic combo.
-    assert report.summary_count == 60
+    assert report.summary_count == 102
     assert report.event_count > 0
-    assert report.change_set_count == 18  # 6 companies × 3 periodic sources
+    assert report.change_set_count == 24  # 6 companies × 4 periodic sources
+    # Three periodic sources vary content across periods → 6 × 3 = 18 material.
     assert report.material_change_count == 18
 
 
@@ -41,7 +42,7 @@ def test_loaders_rebuild_corpus_from_persisted_state(tmp_path: Path) -> None:
     engine = load_engine(settings)
     graph = load_graph_store(settings)
 
-    assert len(engine) == 60
+    assert len(engine) == 102
     assert graph.get_node("Company", "apple") is not None
     answer = engine.retrieve("Apple risk factors", top_k=1)
     assert answer and answer[0].metadata["company_slug"] == "apple"

@@ -71,9 +71,9 @@ def test_orchestrator_runs_company_by_source_matrix(tmp_path: Path) -> None:
 def test_orchestrator_defaults_to_all_registered_sources(tmp_path: Path) -> None:
     orchestrator, _, _, _, _ = _orchestrator(tmp_path)
     report = orchestrator.run([COMPANIES[0]], sources=None)
-    # one company × (3 periodic × 2 + 4 episodic × 1) = 10 documents.
-    assert report.document_count == 10
-    assert report.change_set_count == 3  # three periodic sources
+    # one company × (4 periodic × 2 + 9 episodic × 1) = 17 documents.
+    assert report.document_count == 17
+    assert report.change_set_count == 4  # four periodic sources
 
 
 def test_orchestrator_records_unknown_source_error(tmp_path: Path) -> None:

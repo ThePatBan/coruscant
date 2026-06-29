@@ -1,0 +1,62 @@
+# Curated reference entity knowledge base (provenance: reference-entities).
+#
+# Like the reference connectors, this is sample data that lets the entity graph
+# and relationship queries run offline and deterministically. Each company's
+# people, suppliers, competitors, partners, countries, products, technologies,
+# and agencies are projected into the knowledge graph with provenance, and linked
+# to the company's ingested documents where the names appear.
+companies:
+  apple:
+    people:
+      - { name: Tim Cook, role: CEO, previously: [IBM, Compaq] }
+      - { name: Luca Maestri, role: CFO, previously: [General Motors] }
+    suppliers:
+      - { name: TSMC, country: Taiwan }
+      - { name: Foxconn, country: China }
+    competitors: [Microsoft, Samsung]
+    countries: [United States]
+    products: [iPhone, Mac]
+    technologies: [Semiconductors]
+  microsoft:
+    people:
+      - { name: Satya Nadella, role: CEO, previously: [Sun Microsystems] }
+      - { name: Amy Hood, role: CFO }
+    suppliers:
+      - { name: TSMC, country: Taiwan }
+    partners: [OpenAI]
+    competitors: [Apple, Google]
+    countries: [United States]
+    products: [Azure, Windows]
+    technologies: [Artificial Intelligence, Cloud Computing, Semiconductors]
+  tesla:
+    people:
+      - { name: Elon Musk, role: CEO }
+      - { name: Vaibhav Taneja, role: CFO }
+    suppliers:
+      - { name: Panasonic, country: Japan }
+      - { name: CATL, country: China }
+    competitors: [BYD]
+    countries: [United States, China]
+    products: [Model 3]
+    technologies: [Batteries, Artificial Intelligence]
+  spacex:
+    people:
+      - { name: Elon Musk, role: CEO }
+      - { name: Gwynne Shotwell, role: President }
+    customers: [NASA]
+    agencies: [US Government, NASA]
+    countries: [United States]
+    products: [Falcon 9, Starlink]
+    technologies: [Rockets]
+  cargill:
+    people:
+      - { name: Brian Sikes, role: CEO }
+    countries: [United States]
+    products: [Agricultural Commodities]
+    technologies: [Supply Chain]
+  exxonmobil:
+    people:
+      - { name: Darren Woods, role: CEO }
+    countries: [United States]
+    products: [Petroleum]
+    technologies: [Carbon Capture]

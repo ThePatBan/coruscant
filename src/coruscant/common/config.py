@@ -22,6 +22,29 @@ class SourceSetting(BaseModel):
     period: str | None = None
 
 
+class PersonConfig(BaseModel):
+    name: str
+    role: str | None = None
+    previously: list[str] = Field(default_factory=list)
+
+
+class SupplierConfig(BaseModel):
+    name: str
+    country: str | None = None
+
+
+class CompanyEntities(BaseModel):
+    people: list[PersonConfig] = Field(default_factory=list)
+    suppliers: list[SupplierConfig] = Field(default_factory=list)
+    customers: list[str] = Field(default_factory=list)
+    competitors: list[str] = Field(default_factory=list)
+    partners: list[str] = Field(default_factory=list)
+    countries: list[str] = Field(default_factory=list)
+    products: list[str] = Field(default_factory=list)
+    technologies: list[str] = Field(default_factory=list)
+    agencies: list[str] = Field(default_factory=list)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CORUSCANT_", env_file=".env", extra="ignore")
 
@@ -74,3 +97,11 @@ def load_sources(config_dir: Path | None = None) -> list[SourceSetting]:
     data = yaml.safe_load(path.read_text()) if path.exists() else {}
     sources = data.get("sources", []) if isinstance(data, dict) else []
     return [SourceSetting.model_validate(source) for source in sources]
+
+
+def load_entities(config_dir: Path | None = None) -> dict[str, CompanyEntities]:
+    base = config_dir or get_settings().config_dir
+    path = base / "entities.yml"
+    data = yaml.safe_load(path.read_text()) if path.exists() else {}
+    companies = data.get("companies", {}) if isinstance(data, dict) else {}
+    return {slug: CompanyEntities.model_validate(value) for slug, value in companies.items()}

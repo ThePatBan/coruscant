@@ -56,8 +56,13 @@ def test_companies_and_sources() -> None:
         companies = client.get("/companies").json()
         assert {c["slug"] for c in companies} >= {"apple", "tesla"}
         sources = client.get("/sources").json()
-        assert len(sources) == 7
-        assert {s["source_type"] for s in sources} >= {"sec_edgar", "news", "patents"}
+        assert len(sources) == 13
+        assert {s["source_type"] for s in sources} >= {
+            "sec_edgar",
+            "global_regulators",
+            "sanctions",
+            "court_filings",
+        }
 
 
 def test_documents_listing_and_detail() -> None:

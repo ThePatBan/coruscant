@@ -15,8 +15,10 @@ from coruscant.apps.runtime import (
     load_engine,
     load_graph_store,
     load_run_status,
+    source_monitoring,
 )
 from coruscant.infrastructure.status import RunStatus
+from coruscant.intelligence.reliability import SourceReliability
 from coruscant.auth.service import AuthError, AuthService
 from coruscant.auth.store import StoredUser
 from coruscant.common.config import get_settings, load_companies
@@ -27,6 +29,16 @@ from coruscant.intelligence.models import ChangeSet
 from coruscant.intelligence.models import DocumentSummary as AISummary
 from coruscant.intelligence.models import ExtractedEvent
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
+from coruscant.knowledge_graph.queries import (
+    CoExecutiveResult,
+    EntityProfile,
+    EntityRef,
+    ExposureResult,
+    co_executives,
+    entity_profile,
+    exposure_to_country,
+    list_entities,
+)
 from coruscant.search.hybrid import HybridRetrievalEngine
 from coruscant.search.reference import TemplateReasoningLayer
 
@@ -391,6 +403,41 @@ def create_app(
         ]
         return GraphResponse(company_slug=slug, found=True, neighbors=neighbors)
 
+    # ---- Entity graph / relationship intelligence --------------------------
+
+    @app.get("/entities", response_model=list[EntityRef], dependencies=protected)
+    def entities(kind: str | None = None) -> list[EntityRef]:
+        graph = state.graph
+        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+            return []
+        return list_entities(graph, kind)
+
+    @app.get("/entities/{kind}/{key}", response_model=EntityProfile, dependencies=protected)
+    def entity(kind: str, key: str) -> EntityProfile:
+        graph = state.graph
+        profile = (
+            entity_profile(graph, kind, key)
+            if isinstance(graph, InMemoryKnowledgeGraphStore)
+            else None
+        )
+        if profile is None:
+            raise HTTPException(status_code=404, detail="entity not found")
+        return profile
+
+    @app.get("/graph/exposure", response_model=ExposureResult, dependencies=protected)
+    def exposure(country: str) -> ExposureResult:
+        graph = state.graph
+        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+            return ExposureResult(country=country)
+        return exposure_to_country(graph, country)
+
+    @app.get("/graph/co-executives", response_model=CoExecutiveResult, dependencies=protected)
+    def graph_co_executives() -> CoExecutiveResult:
+        graph = state.graph
+        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+            return CoExecutiveResult()
+        return co_executives(graph)
+
     # ---- Intelligence ------------------------------------------------------
 
     @app.get("/documents/{canonical_id}/summary", response_model=AISummary, dependencies=protected)
@@ -415,6 +462,10 @@ def create_app(
     @app.get("/status", response_model=RunStatus | None, dependencies=protected)
     def status() -> RunStatus | None:
         return load_run_status(settings)
+
+    @app.get("/monitoring", response_model=list[SourceReliability], dependencies=protected)
+    def monitoring() -> list[SourceReliability]:
+        return source_monitoring(settings)
 
     @app.get("/dashboard", response_model=DashboardResponse, dependencies=protected)
     def dashboard() -> DashboardResponse:

@@ -12,7 +12,13 @@ import secrets
 
 from coruscant.auth.service import AuthService
 from coruscant.auth.store import SqliteUserStore
-from coruscant.common.config import Settings, get_settings, load_companies, load_sources
+from coruscant.common.config import (
+    Settings,
+    get_settings,
+    load_companies,
+    load_entities,
+    load_sources,
+)
 from coruscant.infrastructure.catalog import SqliteDocumentCatalog
 from coruscant.infrastructure.intelligence_store import SqliteIntelligenceStore
 from coruscant.infrastructure.status import RunStatus, load_status, save_status
@@ -21,6 +27,12 @@ from coruscant.infrastructure.repositories import (
     FileSystemRawDocumentRepository,
 )
 from coruscant.ingestion.orchestrator import IngestionOrchestrator, IngestionReport
+from coruscant.ingestion.registry import default_registry
+from coruscant.intelligence.reliability import (
+    SourceReliability,
+    errors_for_source,
+    score_source,
+)
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 from coruscant.knowledge_graph.persistence import load_graph, save_graph
 from coruscant.search.hybrid import HybridRetrievalEngine
@@ -111,6 +123,7 @@ def run_ingestion(settings: Settings | None = None) -> IngestionReport:
         graph_store=graph_store,
         engine=HybridRetrievalEngine(),
         intelligence_store=build_intelligence_store(settings),
+        entities=load_entities(settings.config_dir),
         max_attempts=settings.ingest_max_attempts,
     )
     companies = load_companies(settings.config_dir)
@@ -127,6 +140,26 @@ def run_ingestion(settings: Settings | None = None) -> IngestionReport:
 def load_run_status(settings: Settings | None = None) -> RunStatus | None:
     settings = settings or get_settings()
     return load_status(settings.status_path)
+
+
+def source_monitoring(settings: Settings | None = None) -> list[SourceReliability]:
+    """Per-source reliability and counts, assembled from the catalog + last run."""
+
+    settings = settings or get_settings()
+    catalog = build_catalog(settings)
+    status = load_status(settings.status_path)
+    errors = status.errors if status else []
+    reports = [
+        score_source(
+            source_type=definition.source_type,
+            label=definition.label,
+            authority=definition.authority,
+            documents=catalog.list_documents(source_type=definition.source_type),
+            error_count=errors_for_source(definition.source_type, errors),
+        )
+        for definition in default_registry().definitions()
+    ]
+    return sorted(reports, key=lambda r: r.score, reverse=True)
 
 
 def load_engine(settings: Settings | None = None) -> HybridRetrievalEngine:

@@ -44,10 +44,26 @@ class InMemoryKnowledgeGraphStore(KnowledgeGraphStore):
             if edge.source_kind == kind and edge.source_key == key
         ]
 
+    def incoming(self, kind: str, key: str) -> list[GraphEdge]:
+        return [
+            edge
+            for edge in self.edges
+            if edge.target_kind == kind and edge.target_key == key
+        ]
+
+    def edges_by_relation(self, relation: str) -> list[GraphEdge]:
+        return [edge for edge in self.edges if edge.relation == relation]
+
     def neighbors(self, kind: str, key: str) -> list[tuple[GraphEdge, GraphNode | None]]:
         return [
             (edge, self.nodes.get((edge.target_kind, edge.target_key)))
             for edge in self.outgoing(kind, key)
+        ]
+
+    def neighbors_in(self, kind: str, key: str) -> list[tuple[GraphEdge, GraphNode | None]]:
+        return [
+            (edge, self.nodes.get((edge.source_kind, edge.source_key)))
+            for edge in self.incoming(kind, key)
         ]
 
     # -- serialization ---------------------------------------------------------

@@ -6,12 +6,18 @@ from coruscant.ingestion.registry import SourceRegistry, UnknownSourceError, def
 
 EXPECTED_SOURCES = {
     "sec_edgar",
+    "global_regulators",
+    "court_filings",
+    "sanctions",
+    "government_contracts",
+    "procurement_notices",
     "investor_relations",
     "earnings_call",
-    "press_release",
-    "job_postings",
-    "news",
+    "esg_reports",
     "patents",
+    "press_release",
+    "news",
+    "job_postings",
 }
 
 
@@ -19,6 +25,11 @@ def test_default_registry_has_all_in_scope_sources() -> None:
     registry = default_registry()
     assert set(registry.source_types()) == EXPECTED_SOURCES
     assert len(registry.definitions()) == len(EXPECTED_SOURCES)
+
+
+def test_every_source_has_an_authority_score() -> None:
+    for definition in default_registry().definitions():
+        assert 0.0 <= definition.authority <= 1.0
 
 
 def test_registry_get_and_has() -> None:

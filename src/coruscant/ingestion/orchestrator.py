@@ -13,9 +13,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import logging
 
-from coruscant.common.config import CompanyConfig, SourceSetting
+from coruscant.common.config import CompanyConfig, CompanyEntities, SourceSetting
 from coruscant.common.types import NormalizedDocument
 from coruscant.connectors.base import FetchRequest
+from coruscant.knowledge_graph.entities import (
+    entity_names_for,
+    link_document_mentions,
+    project_company_entities,
+)
 from coruscant.infrastructure.catalog import SqliteDocumentCatalog
 from coruscant.infrastructure.intelligence_store import SqliteIntelligenceStore
 from coruscant.infrastructure.repositories import (
@@ -86,6 +91,7 @@ class IngestionOrchestrator:
         engine: HybridRetrievalEngine | None = None,
         registry: SourceRegistry | None = None,
         intelligence_store: SqliteIntelligenceStore | None = None,
+        entities: dict[str, CompanyEntities] | None = None,
         max_attempts: int = 1,
     ) -> None:
         self.raw_repository = raw_repository
@@ -95,7 +101,9 @@ class IngestionOrchestrator:
         self.engine = engine if engine is not None else HybridRetrievalEngine()
         self.registry = registry if registry is not None else default_registry()
         self.intelligence_store = intelligence_store
+        self.entities = entities or {}
         self.max_attempts = max(1, max_attempts)
+        self._names_by_company: dict[str, dict[str, tuple[str, str]]] = {}
         self.projector = ReferenceGraphProjector()
         self.summarizer = ReferenceSummarizer()
         self.event_extractor = ReferenceEventExtractor()
@@ -112,6 +120,21 @@ class IngestionOrchestrator:
         sources: list[SourceSetting] | None = None,
     ) -> IngestionReport:
         report = IngestionReport()
+        # Project the curated entity knowledge base into the graph up front so the
+        # relationship layer exists; documents then link to the entities they mention.
+        self._names_by_company = {}
+        for company in companies:
+            company_entities = self.entities.get(company.slug)
+            if company_entities is not None:
+                project_company_entities(
+                    self.graph_store,
+                    company_slug=company.slug,
+                    company_name=company.name,
+                    entities=company_entities,
+                )
+                self._names_by_company[company.slug] = entity_names_for(
+                    company.name, company_entities
+                )
         for source in self._resolve_sources(sources):
             if not self.registry.has(source.type):
                 report.errors.append(f"unknown source: {source.type}")
@@ -142,6 +165,9 @@ class IngestionOrchestrator:
                 continue
             report.items.append(item)
             documents.append(normalized)
+            names = self._names_by_company.get(company.slug)
+            if names:
+                link_document_mentions(self.graph_store, normalized, names)
             self._run_intelligence(normalized, company.slug, source_type, report)
 
         if self.intelligence_store is not None and len(documents) >= 2:
