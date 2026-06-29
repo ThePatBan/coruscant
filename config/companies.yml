@@ -1,0 +1,31 @@
+companies:
+  - slug: apple
+    name: Apple
+    aliases: ["AAPL", "Apple Inc."]
+    industry: Technology
+    country: United States
+  - slug: microsoft
+    name: Microsoft
+    aliases: ["MSFT", "Microsoft Corporation"]
+    industry: Technology
+    country: United States
+  - slug: tesla
+    name: Tesla
+    aliases: ["TSLA", "Tesla, Inc."]
+    industry: Automotive
+    country: United States
+  - slug: exxonmobil
+    name: ExxonMobil
+    aliases: ["XOM", "Exxon Mobil Corporation"]
+    industry: Energy
+    country: United States
+  - slug: cargill
+    name: Cargill
+    aliases: ["Cargill, Incorporated"]
+    industry: Agriculture
+    country: United States
+  - slug: spacex
+    name: SpaceX
+    aliases: ["Space Exploration Technologies Corp."]
+    industry: Aerospace
+    country: United States

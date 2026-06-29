@@ -1,36 +1,88 @@
 # Coruscant
 
-Coruscant exists to help every investor understand how geopolitical, economic, climate, and supply-chain events propagate into financial outcomes through explainable reasoning built on public information.
+Coruscant is an AI-powered financial and corporate intelligence platform built on **traceable evidence** rather than scraped summaries. It continuously ingests public company information, understands **what materially changed** since the last disclosure, and presents it through a clean interface — with the source evidence behind every statement.
 
-This repository is intentionally documentation-first. The software comes after the operating model, ontology, and reasoning standards are defined.
+> Never sacrifice traceability for intelligence. Every insight links back to the exact source text that supports it.
 
-No code is merged unless the documentation explaining why it exists is merged with it.
+## What it does
 
-Repository work should be tracked through issues, PRs, and ADRs rather than informal notes.
+- **Change detection ("what changed?")** — diffs each new disclosure against the prior one and surfaces categorized, evidence-backed material changes (new/removed risks, guidance moves, executive changes, regulatory developments).
+- **AI summaries** — overview, key points, risks, opportunities, management commentary, financial highlights, and events for every document. Each line is lifted verbatim from the source and cited.
+- **Event timeline** — chronological, categorized events extracted per company.
+- **Natural-language search** — across SEC filings, investor relations, transcripts, press releases, job postings, news, and patents, with evidence attached.
+- **Knowledge graph** — companies, documents, and sections with provenance.
+- **Authentication** — email/password accounts, sessions, protected routes.
 
-## Repository Principles
+The intelligence layer is **deterministic and extractive by default** (fully auditable, runs offline) behind `Protocol` ports, with a **Claude-ready adapter seam** — see [ADR-0004](docs/adr/ADR-0004-intelligence-layer.md).
 
-- Explain rather than predict.
-- Make every conclusion traceable to evidence.
-- Keep reasoning alongside implementation.
-- Prefer modular, maintainable systems over novelty.
-- Keep the knowledge model explicit.
-- Avoid unnecessary frameworks and hidden behavior.
+## Run the full product (Docker)
 
-## Repository Structure
+```bash
+docker compose up --build
+# then open http://localhost:8080
+```
 
-- `docs/` - Core product, governance, and operating documentation.
-- `backend/` - Backend application boundary and future service implementation.
-- `frontend/` - Frontend application boundary and future interface implementation.
-- `graph/` - Knowledge graph modeling, schema, and reasoning support.
-- `ingestion/` - Source acquisition, parsing, normalization, and evidence capture.
-- `llm/` - Model interfaces, prompts, evaluation, and local LLM experiments.
-- `infrastructure/` - Docker, deployment, and environment definitions.
-- `experiments/` - Isolated prototypes, research, and disposable investigations.
-- `scripts/` - Operational and maintenance scripts.
-- `tests/` - Automated verification and quality checks.
-- `docker/` - Docker assets and container-related configuration.
+This brings up three services sharing a data volume: `ingest` (one-shot lifecycle run that also seeds a demo account), `api` (FastAPI, health-gated), and `web` (nginx serving the SPA and reverse-proxying `/api`).
 
-## Status
+**Demo login:** `demo@coruscant.local` / `coruscant-demo` (pre-filled on the login screen).
 
-This repository currently contains the foundation for documentation, architecture, and governance only. No application code is included yet.
+Coverage: Apple, Microsoft, Tesla, SpaceX, Cargill, ExxonMobil.
+
+## Run locally (without Docker)
+
+```bash
+make setup                 # editable install with dev dependencies
+make test                  # 77 tests
+coruscant ingest           # run the lifecycle + seed the demo user
+coruscant query "Apple risk factors and guidance"
+make api                   # serve the API (coruscant serve)
+cd frontend && npm install && npm run dev   # SPA on :5173, proxying /api -> :8000
+```
+
+## Architecture
+
+```
+React SPA (nginx)  ──/api──▶  FastAPI  ──▶  hybrid search · knowledge graph · intelligence
+        │                        │                 ▲
+   auth (JWT)              auth · intelligence      │
+                                 ▼                  │
+   worker / `coruscant ingest` ──▶ orchestrator ──▶ connectors → normalize → graph → embed → index
+                                       │                              → summarize → events → change-detect
+                                       ▼
+                       SQLite (catalog + intelligence + users) · graph snapshot · raw/normalized artifacts
+```
+
+- `src/coruscant/connectors` — source connectors + normalizers (SEC live + reference; reference connectors for the other six sources)
+- `src/coruscant/ingestion` — registry, generic pipeline, orchestrator (multi-period)
+- `src/coruscant/intelligence` — summarizer, event extractor, change detector (cited)
+- `src/coruscant/search` — embeddings, vector index, hybrid retrieval
+- `src/coruscant/knowledge_graph` — projection, query, snapshot
+- `src/coruscant/infrastructure` — filesystem repos, SQLite catalog + intelligence store, run status
+- `src/coruscant/auth` — password hashing, signed tokens, user store, auth service
+- `src/coruscant/apps` — API, CLI, worker, shared runtime
+- `frontend/` — React + TypeScript SPA
+
+See [docs/Architecture](docs/Architecture/) and the ADRs in [docs/adr](docs/adr/).
+
+## API
+
+Public: `GET /health`, `POST /auth/register`, `POST /auth/login`, `POST /auth/reset/{request,confirm}`.
+Authenticated (bearer token): `GET /auth/me`, `/companies`, `/sources`, `/documents`, `/documents/{id}`,
+`/documents/{id}/summary`, `/companies/{slug}/timeline`, `/companies/{slug}/changes`,
+`/graph/company/{slug}`, `POST /retrieve`, `GET /answer`, `GET /dashboard`, `GET /status`.
+
+## Roadmap
+
+Development follows five engineering milestones with hard exit gates — foundations
+first, so every future connector and capability inherits a robust base. See
+[docs/roadmap/Milestones.md](docs/roadmap/Milestones.md). The current milestone is
+**M1 — Foundation Hardening** (reliability, deterministic parsing, durable
+provenance-first graph, frozen API surface); the API contract is in
+[docs/api/Contract.md](docs/api/Contract.md).
+
+## Design rules
+
+- Raw data remains immutable; normalized facts are separate from raw documents.
+- Provenance is required for every extracted claim and every AI statement.
+- Source-specific behavior lives in connectors/config; all sources share one lifecycle.
+- New sources are added by registering a `SourceDefinition`, not by changing core code.

@@ -1,8 +1,69 @@
+# Coruscant local stack:
+#   ingest  one-shot lifecycle run that populates the shared data volume
+#   api     FastAPI service that loads the persisted corpus on startup
+#   web     nginx serving the built SPA and reverse-proxying /api -> api
+#
+# Usage:  docker compose up --build      then open http://localhost:8080
 services:
-  docs:
-    image: python:3.11-slim
-    working_dir: /workspace
-    command: ["python", "-c", "print('Coruscant foundation only. No application services yet.')"]
+  ingest:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    image: coruscant-api:local
+    command: ["coruscant", "ingest"]
+    environment:
+      CORUSCANT_DATA_DIR: /data
+      CORUSCANT_DATABASE_URL: sqlite:////data/coruscant.db
+      CORUSCANT_CONFIG_DIR: /app/config
+      # Demo account is an explicit opt-in for this local stack only.
+      CORUSCANT_SEED_DEMO_USER: "true"
+      CORUSCANT_DEMO_PASSWORD: coruscant-demo
     volumes:
-      - ./:/workspace
+      - coruscant-data:/data
+    restart: "no"
 
+  api:
+    image: coruscant-api:local
+    command: ["uvicorn", "coruscant.apps.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      CORUSCANT_DATA_DIR: /data
+      CORUSCANT_DATABASE_URL: sqlite:////data/coruscant.db
+      CORUSCANT_CONFIG_DIR: /app/config
+      # Supply a strong secret for stable, secure tokens; falls back to an
+      # ephemeral per-process secret if unset (never a committed constant).
+      CORUSCANT_SECRET_KEY: ${CORUSCANT_SECRET_KEY:-}
+      # Restrict CORS to the web origin (the API port is also published directly).
+      CORUSCANT_CORS_ORIGINS: '["http://localhost:8080","http://localhost:5173"]'
+    volumes:
+      - coruscant-data:/data
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    depends_on:
+      ingest:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: coruscant-web:local
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  coruscant-data:

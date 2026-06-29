@@ -1,0 +1,32 @@
+# Enabled ingestion sources for the platform.
+#
+# Each entry maps to a registered SourceDefinition (see
+# coruscant.ingestion.registry). Toggle `enabled` to turn a pipeline on or off
+# without code changes.
+sources:
+  - type: sec_edgar
+    enabled: true
+  - type: global_regulators
+    enabled: true
+  - type: court_filings
+    enabled: true
+  - type: sanctions
+    enabled: true
+  - type: government_contracts
+    enabled: true
+  - type: procurement_notices
+    enabled: true
+  - type: investor_relations
+    enabled: true
+  - type: earnings_call
+    enabled: true
+  - type: esg_reports
+    enabled: true
+  - type: patents
+    enabled: true
+  - type: press_release
+    enabled: true
+  - type: news
+    enabled: true
+  - type: job_postings
+    enabled: true

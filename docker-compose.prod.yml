@@ -1,0 +1,23 @@
+# Production overrides: `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`
+#
+# Hardens the local stack for a real deployment: a required secret, no demo
+# account, the API not published directly (only the web tier is exposed), and
+# always-restart policies.
+services:
+  ingest:
+    environment:
+      CORUSCANT_SECRET_KEY: ${CORUSCANT_SECRET_KEY:?set a strong secret}
+      CORUSCANT_SEED_DEMO_USER: "false"
+    restart: "no"
+
+  api:
+    environment:
+      CORUSCANT_SECRET_KEY: ${CORUSCANT_SECRET_KEY:?set a strong secret}
+      CORUSCANT_CORS_ORIGINS: ${CORUSCANT_CORS_ORIGINS:-["https://app.example.com"]}
+    ports: !reset []  # do not publish the API directly; reach it via the web proxy
+    restart: always
+
+  web:
+    ports:
+      - "${CORUSCANT_WEB_PORT:-8080}:80"
+    restart: always
