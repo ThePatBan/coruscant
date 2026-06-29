@@ -89,6 +89,48 @@ def test_entity_profile_includes_relationships_and_mentions() -> None:
     assert any(r.relation == "relies_on_supplier" and r.other.name == "TSMC" for r in apple.relationships)
 
 
+def test_external_reference_does_not_clobber_tracked_company() -> None:
+    # Apple lists Microsoft as a competitor; Microsoft is itself tracked. The
+    # tracked node must keep its authoritative properties regardless of order.
+    for order in (("apple", "microsoft"), ("microsoft", "apple")):
+        store = InMemoryKnowledgeGraphStore()
+        defs = {
+            "apple": CompanyEntities(competitors=["Microsoft"]),
+            "microsoft": CompanyEntities(people=[PersonConfig(name="Satya Nadella", role="CEO")]),
+        }
+        names = {"apple": "Apple", "microsoft": "Microsoft"}
+        for slug in order:
+            project_company_entities(
+                store, company_slug=slug, company_name=names[slug], entities=defs[slug]
+            )
+        node = store.get_node("Company", "microsoft")
+        assert node is not None
+        assert node.properties.get("name") == "Microsoft"
+        assert node.properties.get("source") == "tracked"
+        assert node.properties.get("is_external") is None
+
+
+def test_mention_edge_kind_matches_projected_document_node() -> None:
+    from coruscant.knowledge_graph.reference import document_node_kind
+
+    store = InMemoryKnowledgeGraphStore()
+    project_company_entities(
+        store, company_slug="apple", company_name="Apple", entities=CompanyEntities()
+    )
+    document = NormalizedDocument(
+        document_type="filing",
+        source_uri="reference://sec_edgar/apple/2025",
+        canonical_id="docF",
+        title="Apple 10-K",
+        sections=[{"title": "Risk", "content": "Apple disclosed risks."}],
+    )
+    link_document_mentions(store, document, entity_names_for("Apple", CompanyEntities()))
+    mentions = [e for e in store.edges if e.relation == "mentions"]
+    assert mentions
+    # Edge source kind matches the kind the document node is projected as ("Filing").
+    assert all(e.source_kind == document_node_kind("filing") for e in mentions)
+
+
 def test_list_entities_by_kind() -> None:
     store = _seed()
     people = list_entities(store, "Person")

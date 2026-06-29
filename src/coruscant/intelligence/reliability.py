@@ -54,7 +54,8 @@ def score_source(
         latest = None
 
     attempts = count + error_count
-    success_rate = (count / attempts) if attempts else 1.0
+    # No attempts -> unknown, not perfect (don't reward a source that ingested nothing).
+    success_rate = (count / attempts) if attempts else 0.0
 
     raw = 0.5 * authority + 0.2 * structure + 0.15 * completeness + 0.15 * success_rate
     score = round(100 * raw)
@@ -73,10 +74,20 @@ def score_source(
 
 
 def errors_for_source(source_type: str, errors: list[str]) -> int:
-    """Count run errors attributed to a source (errors are 'slug:source:label: ...')."""
+    """Count run errors attributed to a source.
 
-    return sum(
-        1
-        for e in errors
-        if f":{source_type}:" in e or e == f"unknown source: {source_type}"
-    )
+    Errors are formatted as ``"{slug}:{source_type}:{label}: {exc}"`` or
+    ``"unknown source: {source_type}"``; match the structured field, not a raw
+    substring of the (free-form) exception text.
+    """
+
+    count = 0
+    for error in errors:
+        if error.startswith("unknown source:"):
+            if error.split(":", 1)[1].strip() == source_type:
+                count += 1
+            continue
+        parts = error.split(":")
+        if len(parts) >= 2 and parts[1] == source_type:
+            count += 1
+    return count

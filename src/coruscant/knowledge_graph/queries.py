@@ -23,6 +23,7 @@ class Relationship(BaseModel):
     relation: str
     direction: str  # "out" | "in"
     other: EntityRef
+    source: str | None = None  # provenance of the edge (e.g. "reference-entities")
 
 
 class EntityProfile(BaseModel):
@@ -36,6 +37,7 @@ class ExposurePath(BaseModel):
     company: EntityRef
     via: EntityRef  # the supplier/operator in the country
     relation: str
+    source: str | None = None  # provenance of the inferred exposure
 
 
 class ExposureResult(BaseModel):
@@ -72,6 +74,11 @@ def _ref(store: InMemoryKnowledgeGraphStore, kind: str, key: str) -> EntityRef:
     return EntityRef(kind=kind, key=key, name=_name(store, kind, key))
 
 
+def _source_of(properties: dict[str, object]) -> str | None:
+    value = properties.get("source")
+    return value if isinstance(value, str) else None
+
+
 def entity_profile(store: InMemoryKnowledgeGraphStore, kind: str, key: str) -> EntityProfile | None:
     node = store.get_node(kind, key)
     if node is None:
@@ -86,18 +93,19 @@ def entity_profile(store: InMemoryKnowledgeGraphStore, kind: str, key: str) -> E
                 relation=edge.relation,
                 direction="out",
                 other=_ref(store, edge.target_kind, edge.target_key),
+                source=_source_of(edge.properties),
             )
         )
     for edge in store.incoming(kind, key):
         if edge.relation == "mentions":
-            if edge.source_kind == "Document":
-                mentioned_in.append(edge.source_key)
+            mentioned_in.append(edge.source_key)
             continue
         relationships.append(
             Relationship(
                 relation=edge.relation,
                 direction="in",
                 other=_ref(store, edge.source_kind, edge.source_key),
+                source=_source_of(edge.properties),
             )
         )
     return EntityProfile(
@@ -134,6 +142,7 @@ def exposure_to_country(store: InMemoryKnowledgeGraphStore, country: str) -> Exp
                         company=_ref(store, in_edge.source_kind, in_edge.source_key),
                         via=operator,
                         relation="relies_on_supplier",
+                        source=_source_of(in_edge.properties) or "reference-entities",
                     )
                 )
     return result

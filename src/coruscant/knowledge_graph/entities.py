@@ -16,7 +16,8 @@ import re
 
 from coruscant.common.config import CompanyEntities
 from coruscant.common.types import GraphEdge, GraphNode, NormalizedDocument
-from coruscant.knowledge_graph.store import KnowledgeGraphStore
+from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
+from coruscant.knowledge_graph.reference import document_node_kind
 
 _PROVENANCE = "reference-entities"
 
@@ -24,6 +25,14 @@ _PROVENANCE = "reference-entities"
 def entity_key(name: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
     return slug or "entity"
+
+
+def _ensure(store: InMemoryKnowledgeGraphStore, node: GraphNode) -> None:
+    """Create a node only if absent so external references never clobber the
+    authoritative properties of an already-projected (e.g. tracked) node."""
+
+    if store.get_node(node.kind, node.key) is None:
+        store.upsert_node(node)
 
 
 def _node(kind: str, name: str, **props: object) -> GraphNode:
@@ -55,19 +64,26 @@ def _edge(
 
 
 def project_company_entities(
-    store: KnowledgeGraphStore,
+    store: InMemoryKnowledgeGraphStore,
     *,
     company_slug: str,
     company_name: str,
     entities: CompanyEntities,
 ) -> None:
-    """Upsert all entity nodes/edges for one company into the store."""
+    """Project all entity nodes/edges for one company into the store.
 
-    store.upsert_node(GraphNode(kind="Company", key=company_slug, properties={"name": company_name}))
+    The tracked-company node is authoritative (always upserted); every external
+    reference node is created only if absent, so cross-references between tracked
+    companies (a competitor that is itself tracked) never clobber each other.
+    """
+
+    store.upsert_node(
+        GraphNode(kind="Company", key=company_slug, properties={"name": company_name, "source": "tracked"})
+    )
 
     def link(relation: str, kind: str, name: str, **node_props: object) -> str:
         node = _node(kind, name, **node_props)
-        store.upsert_node(node)
+        _ensure(store, node)
         store.upsert_edge(
             _edge("Company", company_slug, relation, kind, node.key, company_slug=company_slug)
         )
@@ -75,7 +91,7 @@ def project_company_entities(
 
     for person in entities.people:
         person_key = _node("Person", person.name).key
-        store.upsert_node(_node("Person", person.name, role=person.role))
+        _ensure(store, _node("Person", person.name, role=person.role))
         store.upsert_edge(
             _edge(
                 "Company",
@@ -88,7 +104,7 @@ def project_company_entities(
             )
         )
         for prior in person.previously:
-            store.upsert_node(_node("Company", prior, is_external=True))
+            _ensure(store, _node("Company", prior, is_external=True))
             store.upsert_edge(
                 _edge(
                     "Person",
@@ -103,7 +119,7 @@ def project_company_entities(
     for supplier in entities.suppliers:
         supplier_key = link("relies_on_supplier", "Company", supplier.name, is_supplier=True)
         if supplier.country:
-            store.upsert_node(_node("Country", supplier.country))
+            _ensure(store, _node("Country", supplier.country))
             store.upsert_edge(
                 _edge(
                     "Company",
@@ -126,7 +142,7 @@ def project_company_entities(
     for product in entities.products:
         product_key = link("produces", "Product", product)
         for technology in entities.technologies:
-            store.upsert_node(_node("Technology", technology))
+            _ensure(store, _node("Technology", technology))
             store.upsert_edge(
                 _edge(
                     "Product",
@@ -167,25 +183,34 @@ def entity_names_for(company_name: str, entities: CompanyEntities) -> dict[str, 
 
 
 def link_document_mentions(
-    store: KnowledgeGraphStore,
+    store: InMemoryKnowledgeGraphStore,
     document: NormalizedDocument,
     names: dict[str, tuple[str, str]],
 ) -> int:
-    """Add Document -mentions-> Entity edges for entity names found in the text."""
+    """Add <Document> -mentions-> Entity edges for entity names found in the text.
+
+    Uses word-boundary matching (not raw substring) so short names don't false
+    match, and labels the source node with the document's actual graph kind so
+    the edge is consistent with the projected document node.
+    """
 
     haystack = " ".join(str(s.get("content") or "") for s in document.sections).lower()
     haystack += " " + (document.title or "").lower()
+    doc_kind = document_node_kind(document.document_type)
     linked = 0
     for mention, (kind, name) in names.items():
-        if mention and mention in haystack:
+        if not mention:
+            continue
+        if re.search(rf"\b{re.escape(mention)}\b", haystack):
             store.upsert_edge(
                 GraphEdge(
-                    source_kind="Document",
+                    source_kind=doc_kind,
                     source_key=document.canonical_id,
                     relation="mentions",
                     target_kind=kind,
                     target_key=entity_key(name),
                     properties={
+                        "source": "document-mention",
                         "source_uri": document.source_uri,
                         "entity_name": name,
                     },

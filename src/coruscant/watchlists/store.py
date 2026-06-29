@@ -147,11 +147,13 @@ class SqliteWatchlistStore:
             session.commit()
         return added
 
-    def list_notifications(self, user_email: str, *, unread_only: bool = False) -> list[Notification]:
+    def list_notifications(
+        self, user_email: str, *, unread_only: bool = False, limit: int = 200
+    ) -> list[Notification]:
         statement = select(NotificationRow).where(NotificationRow.user_email == user_email)
         if unread_only:
             statement = statement.where(NotificationRow.read.is_(False))
-        statement = statement.order_by(NotificationRow.created_at.desc())
+        statement = statement.order_by(NotificationRow.created_at.desc()).limit(max(1, limit))
         with Session(self.engine) as session:
             return [
                 Notification(

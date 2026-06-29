@@ -1,16 +1,22 @@
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, type Notification, type Watchlist, type WatchItem } from "../api";
+import { ApiError, api, type Notification, type Watchlist, type WatchItem } from "../api";
 import { Cat, Empty } from "../components";
 
 const WATCH_TYPES = ["company", "country", "industry", "executive", "keyword", "supply_chain"];
+
+interface EditorItem extends WatchItem {
+  uid: number;
+}
 
 export function WatchlistsPage() {
   const [watchlists, setWatchlists] = useState<Watchlist[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [name, setName] = useState("My watchlist");
-  const [items, setItems] = useState<WatchItem[]>([{ type: "country", value: "Taiwan" }]);
+  const uid = useRef(1);
+  const [items, setItems] = useState<EditorItem[]>([{ uid: 0, type: "country", value: "Taiwan" }]);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     const [wl, notes] = await Promise.all([api.watchlists(), api.notifications()]);
@@ -18,37 +24,39 @@ export function WatchlistsPage() {
     setNotifications(notes);
   }, []);
 
+  const guard = useCallback(
+    async (fn: () => Promise<unknown>) => {
+      setError(null);
+      try {
+        await fn();
+        await reload();
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : "Something went wrong");
+      }
+    },
+    [reload],
+  );
+
   useEffect(() => {
-    void reload();
-  }, [reload]);
+    void guard(async () => undefined);
+  }, [guard]);
 
   async function create(e: FormEvent) {
     e.preventDefault();
-    const valid = items.filter((i) => i.value.trim());
+    const valid = items.filter((i) => i.value.trim()).map((i) => ({ type: i.type, value: i.value }));
     if (!name.trim() || valid.length === 0) return;
     setBusy(true);
-    try {
+    await guard(async () => {
       await api.createWatchlist(name.trim(), valid);
       setName("My watchlist");
-      setItems([{ type: "country", value: "Taiwan" }]);
-      await reload();
-    } finally {
-      setBusy(false);
-    }
+      setItems([{ uid: uid.current++, type: "country", value: "Taiwan" }]);
+    });
+    setBusy(false);
   }
 
-  async function remove(id: string) {
-    await api.deleteWatchlist(id);
-    await reload();
-  }
-  async function evaluate(id: string) {
-    await api.evaluateWatchlist(id);
-    await reload();
-  }
-  async function markRead(id: string) {
-    await api.markRead(id);
-    await reload();
-  }
+  const remove = (id: string) => guard(() => api.deleteWatchlist(id));
+  const evaluate = (id: string) => guard(() => api.evaluateWatchlist(id));
+  const markRead = (id: string) => guard(() => api.markRead(id));
 
   const unread = notifications.filter((n) => !n.read).length;
 
@@ -70,7 +78,7 @@ export function WatchlistsPage() {
             <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
           </div>
           {items.map((item, i) => (
-            <div className="wrap" key={i} style={{ gap: 8 }}>
+            <div className="wrap" key={item.uid} style={{ gap: 8 }}>
               <select
                 className="input"
                 value={item.type}
@@ -98,9 +106,10 @@ export function WatchlistsPage() {
               ) : null}
             </div>
           ))}
-          <button type="button" className="btn ghost" style={{ alignSelf: "start" }} onClick={() => setItems([...items, { type: "keyword", value: "" }])}>
+          <button type="button" className="btn ghost" style={{ alignSelf: "start" }} onClick={() => setItems([...items, { uid: uid.current++, type: "keyword", value: "" }])}>
             + add condition
           </button>
+          {error ? <div className="errbox">{error}</div> : null}
           <button className="btn" type="submit" disabled={busy}>
             {busy ? <span className="spinner" style={{ width: 14, height: 14 }} /> : "Create & evaluate"}
           </button>

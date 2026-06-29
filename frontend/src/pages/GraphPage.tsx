@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, type EntityProfile, type ExposureResult } from "../api";
 import { Empty, Loading } from "../components";
@@ -110,6 +110,9 @@ function EntityExplorer() {
   const list = useAsync(() => api.entities(kind), [kind]);
   const [selected, setSelected] = useState<EntityProfile | null>(null);
   const [loadingProfile, setLoadingProfile] = useState(false);
+
+  // Clear the stale profile when the entity kind changes.
+  useEffect(() => setSelected(null), [kind]);
 
   async function open(k: string, key: string) {
     setLoadingProfile(true);

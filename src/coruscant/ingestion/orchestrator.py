@@ -120,9 +120,23 @@ class IngestionOrchestrator:
         sources: list[SourceSetting] | None = None,
     ) -> IngestionReport:
         report = IngestionReport()
-        # Project the curated entity knowledge base into the graph up front so the
-        # relationship layer exists; documents then link to the entities they mention.
-        self._names_by_company = {}
+        # Gazetteer names are needed during ingestion for mention-linking; the
+        # entity KB itself is projected after ingestion so the tracked-company
+        # nodes are authoritative (the per-document projector also writes Company
+        # nodes, and the last writer wins).
+        self._names_by_company = {
+            company.slug: entity_names_for(company.name, self.entities[company.slug])
+            for company in companies
+            if company.slug in self.entities
+        }
+        for source in self._resolve_sources(sources):
+            if not self.registry.has(source.type):
+                report.errors.append(f"unknown source: {source.type}")
+                logger.warning("Skipping unknown source %s", source.type)
+                continue
+            definition = self.registry.get(source.type)
+            for company in companies:
+                self._ingest_company_source(company, source.type, definition, report)
         for company in companies:
             company_entities = self.entities.get(company.slug)
             if company_entities is not None:
@@ -132,17 +146,6 @@ class IngestionOrchestrator:
                     company_name=company.name,
                     entities=company_entities,
                 )
-                self._names_by_company[company.slug] = entity_names_for(
-                    company.name, company_entities
-                )
-        for source in self._resolve_sources(sources):
-            if not self.registry.has(source.type):
-                report.errors.append(f"unknown source: {source.type}")
-                logger.warning("Skipping unknown source %s", source.type)
-                continue
-            definition = self.registry.get(source.type)
-            for company in companies:
-                self._ingest_company_source(company, source.type, definition, report)
         return report
 
     def _ingest_company_source(
