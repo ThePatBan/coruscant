@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -12,11 +13,15 @@ from pydantic import BaseModel, Field
 from coruscant.apps.runtime import (
     build_auth_service,
     build_intelligence_store,
+    build_watchlist_store,
     load_engine,
     load_graph_store,
     load_run_status,
     source_monitoring,
 )
+from coruscant.watchlists.matcher import match_watch_items
+from coruscant.watchlists.models import WATCH_TYPES, Notification, Watchlist, WatchItem
+from coruscant.watchlists.store import SqliteWatchlistStore
 from coruscant.infrastructure.status import RunStatus
 from coruscant.intelligence.reliability import SourceReliability
 from coruscant.auth.service import AuthError, AuthService
@@ -172,12 +177,23 @@ class ResetConfirm(BaseModel):
     password: str
 
 
+class WatchlistCreate(BaseModel):
+    name: str
+    items: list[WatchItem] = Field(default_factory=list)
+
+
+class WatchlistCreated(BaseModel):
+    watchlist: Watchlist
+    notifications_created: int
+
+
 @dataclass
 class _AppState:
     engine: Any
     graph: InMemoryKnowledgeGraphStore
     intelligence: SqliteIntelligenceStore | None = None
     auth: AuthService | None = None
+    watchlists: SqliteWatchlistStore | None = None
 
 
 def _all_documents(engine: Any) -> list[NormalizedDocument]:
@@ -207,6 +223,7 @@ def create_app(
     *,
     intelligence_store: SqliteIntelligenceStore | None = None,
     auth_service: AuthService | None = None,
+    watchlist_store: SqliteWatchlistStore | None = None,
     require_auth: bool = True,
     expose_reset_token: bool = False,
     load_from_storage: bool = False,
@@ -219,6 +236,7 @@ def create_app(
         graph=graph_store if graph_store is not None else InMemoryKnowledgeGraphStore(),
         intelligence=intelligence_store,
         auth=auth_service,
+        watchlists=watchlist_store,
     )
 
     @asynccontextmanager
@@ -228,6 +246,7 @@ def create_app(
             state.graph = load_graph_store(settings)
             state.intelligence = build_intelligence_store(settings)
             state.auth = build_auth_service(settings)
+            state.watchlists = build_watchlist_store(settings)
         yield
 
     app = FastAPI(title="Coruscant API", version="0.1.0", lifespan=lifespan)
@@ -252,10 +271,34 @@ def create_app(
 
     protected = [Depends(require_user)]
 
+    def current_email(user: StoredUser | None = Depends(require_user)) -> str:
+        # When auth is enforced, user is a StoredUser; when disabled (tests) all
+        # callers share a single anonymous scope.
+        return user.email if user is not None else "anonymous@local"
+
     def _auth() -> AuthService:
         if state.auth is None:
             raise HTTPException(status_code=503, detail="authentication is not configured")
         return state.auth
+
+    def _watchlists() -> SqliteWatchlistStore:
+        if state.watchlists is None:
+            raise HTTPException(status_code=503, detail="watchlists are not configured")
+        return state.watchlists
+
+    def _evaluate_watchlist(email: str, watchlist: Watchlist) -> int:
+        if state.intelligence is None:
+            return 0
+        graph = state.graph if isinstance(state.graph, InMemoryKnowledgeGraphStore) else None
+        notifications = match_watch_items(
+            watchlist.items,
+            events=state.intelligence.list_events(),
+            change_sets=state.intelligence.list_change_sets(),
+            companies=load_companies(settings.config_dir),
+            graph=graph,
+            now_iso=datetime.now(tz=timezone.utc).isoformat(),
+        )
+        return _watchlists().add_notifications(email, watchlist.id, notifications)
 
     # ---- Authentication ----------------------------------------------------
 
@@ -437,6 +480,47 @@ def create_app(
         if not isinstance(graph, InMemoryKnowledgeGraphStore):
             return CoExecutiveResult()
         return co_executives(graph)
+
+    # ---- Watchlists & notifications ----------------------------------------
+
+    @app.post("/watchlists", response_model=WatchlistCreated, dependencies=protected)
+    def create_watchlist(body: WatchlistCreate, email: str = Depends(current_email)) -> WatchlistCreated:
+        store = _watchlists()
+        for item in body.items:
+            if item.type not in WATCH_TYPES:
+                raise HTTPException(status_code=400, detail=f"unknown watch type: {item.type}")
+        watchlist = store.create_watchlist(
+            email, body.name, body.items, created_at=datetime.now(tz=timezone.utc).isoformat()
+        )
+        created = _evaluate_watchlist(email, watchlist)
+        return WatchlistCreated(watchlist=watchlist, notifications_created=created)
+
+    @app.get("/watchlists", response_model=list[Watchlist], dependencies=protected)
+    def list_watchlists(email: str = Depends(current_email)) -> list[Watchlist]:
+        return _watchlists().list_watchlists(email)
+
+    @app.delete("/watchlists/{watchlist_id}", dependencies=protected)
+    def delete_watchlist(watchlist_id: str, email: str = Depends(current_email)) -> dict[str, bool]:
+        if not _watchlists().delete_watchlist(email, watchlist_id):
+            raise HTTPException(status_code=404, detail="watchlist not found")
+        return {"ok": True}
+
+    @app.post("/watchlists/{watchlist_id}/evaluate", dependencies=protected)
+    def evaluate_watchlist(watchlist_id: str, email: str = Depends(current_email)) -> dict[str, int]:
+        watchlist = _watchlists().get_watchlist(email, watchlist_id)
+        if watchlist is None:
+            raise HTTPException(status_code=404, detail="watchlist not found")
+        return {"notifications_created": _evaluate_watchlist(email, watchlist)}
+
+    @app.get("/notifications", response_model=list[Notification], dependencies=protected)
+    def notifications(unread_only: bool = False, email: str = Depends(current_email)) -> list[Notification]:
+        return _watchlists().list_notifications(email, unread_only=unread_only)
+
+    @app.post("/notifications/{notification_id}/read", dependencies=protected)
+    def read_notification(notification_id: str, email: str = Depends(current_email)) -> dict[str, bool]:
+        if not _watchlists().mark_read(email, notification_id):
+            raise HTTPException(status_code=404, detail="notification not found")
+        return {"ok": True}
 
     # ---- Intelligence ------------------------------------------------------
 

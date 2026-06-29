@@ -36,6 +36,7 @@ from coruscant.intelligence.reliability import (
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 from coruscant.knowledge_graph.persistence import load_graph, save_graph
 from coruscant.search.hybrid import HybridRetrievalEngine
+from coruscant.watchlists.store import SqliteWatchlistStore
 
 
 def build_catalog(settings: Settings | None = None) -> SqliteDocumentCatalog:
@@ -51,6 +52,11 @@ def build_intelligence_store(settings: Settings | None = None) -> SqliteIntellig
 def build_user_store(settings: Settings | None = None) -> SqliteUserStore:
     settings = settings or get_settings()
     return SqliteUserStore(settings.database_url)
+
+
+def build_watchlist_store(settings: Settings | None = None) -> SqliteWatchlistStore:
+    settings = settings or get_settings()
+    return SqliteWatchlistStore(settings.database_url)
 
 
 logger = logging.getLogger(__name__)
