@@ -35,9 +35,12 @@ from coruscant.intelligence.reliability import (
 )
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 from coruscant.knowledge_graph.persistence import load_graph, save_graph
+from coruscant.enterprise.api_keys import SqliteApiKeyStore
+from coruscant.enterprise.audit import SqliteAuditStore
 from coruscant.portfolio.store import SqlitePortfolioStore
 from coruscant.search.hybrid import HybridRetrievalEngine
 from coruscant.watchlists.store import SqliteWatchlistStore
+from coruscant.workspaces.store import SqliteWorkspaceStore
 
 
 def build_catalog(settings: Settings | None = None) -> SqliteDocumentCatalog:
@@ -63,6 +66,21 @@ def build_watchlist_store(settings: Settings | None = None) -> SqliteWatchlistSt
 def build_portfolio_store(settings: Settings | None = None) -> SqlitePortfolioStore:
     settings = settings or get_settings()
     return SqlitePortfolioStore(settings.database_url)
+
+
+def build_workspace_store(settings: Settings | None = None) -> SqliteWorkspaceStore:
+    settings = settings or get_settings()
+    return SqliteWorkspaceStore(settings.database_url)
+
+
+def build_audit_store(settings: Settings | None = None) -> SqliteAuditStore:
+    settings = settings or get_settings()
+    return SqliteAuditStore(settings.database_url)
+
+
+def build_api_key_store(settings: Settings | None = None) -> SqliteApiKeyStore:
+    settings = settings or get_settings()
+    return SqliteApiKeyStore(settings.database_url)
 
 
 logger = logging.getLogger(__name__)
@@ -117,7 +135,7 @@ def seed_demo_user(settings: Settings | None = None) -> bool:
     if service.store.get(settings.demo_email) is not None:
         return False
     try:
-        service.register(settings.demo_email, settings.demo_password)
+        service.register(settings.demo_email, settings.demo_password, role="admin")
     except AuthError:
         return False
     return True

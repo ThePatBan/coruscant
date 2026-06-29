@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import secrets
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -11,17 +12,24 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from coruscant.apps.runtime import (
+    build_api_key_store,
+    build_audit_store,
     build_auth_service,
     build_intelligence_store,
     build_portfolio_store,
     build_watchlist_store,
+    build_workspace_store,
     load_engine,
     load_graph_store,
     load_run_status,
     source_monitoring,
 )
+from coruscant.enterprise.api_keys import ApiKey, ApiKeyCreated, SqliteApiKeyStore
+from coruscant.enterprise.audit import AuditEntry, SqliteAuditStore
 from coruscant.portfolio.models import Holding, Portfolio, PortfolioBriefing
 from coruscant.portfolio.store import SqlitePortfolioStore
+from coruscant.workspaces.models import ITEM_TYPES, Workspace, WorkspaceItem
+from coruscant.workspaces.store import SqliteWorkspaceStore
 from coruscant.watchlists.matcher import match_watch_items
 from coruscant.watchlists.models import WATCH_TYPES, Notification, Watchlist, WatchItem
 from coruscant.watchlists.store import SqliteWatchlistStore
@@ -165,6 +173,7 @@ class TokenResponse(BaseModel):
 class UserOut(BaseModel):
     email: str
     created_at: str | None = None
+    role: str = "analyst"
 
 
 class ResetRequest(BaseModel):
@@ -192,6 +201,26 @@ class PortfolioCreate(BaseModel):
     holdings: list[Holding] = Field(default_factory=list)
 
 
+class WorkspaceCreate(BaseModel):
+    name: str
+    members: list[str] = Field(default_factory=list)
+
+
+class WorkspaceItemCreate(BaseModel):
+    type: str
+    title: str
+    body: str = ""
+    ref: str | None = None
+
+
+class MemberAdd(BaseModel):
+    email: str
+
+
+class ApiKeyCreate(BaseModel):
+    name: str
+
+
 class WatchlistCreate(BaseModel):
     name: str
     items: list[WatchItem] = Field(default_factory=list)
@@ -210,6 +239,9 @@ class _AppState:
     auth: AuthService | None = None
     watchlists: SqliteWatchlistStore | None = None
     portfolios: SqlitePortfolioStore | None = None
+    workspaces: SqliteWorkspaceStore | None = None
+    audit: SqliteAuditStore | None = None
+    api_keys: SqliteApiKeyStore | None = None
 
 
 def _all_documents(engine: Any) -> list[NormalizedDocument]:
@@ -241,6 +273,9 @@ def create_app(
     auth_service: AuthService | None = None,
     watchlist_store: SqliteWatchlistStore | None = None,
     portfolio_store: SqlitePortfolioStore | None = None,
+    workspace_store: SqliteWorkspaceStore | None = None,
+    audit_store: SqliteAuditStore | None = None,
+    api_key_store: SqliteApiKeyStore | None = None,
     require_auth: bool = True,
     expose_reset_token: bool = False,
     load_from_storage: bool = False,
@@ -255,6 +290,9 @@ def create_app(
         auth=auth_service,
         watchlists=watchlist_store,
         portfolios=portfolio_store,
+        workspaces=workspace_store,
+        audit=audit_store,
+        api_keys=api_key_store,
     )
 
     @asynccontextmanager
@@ -266,6 +304,9 @@ def create_app(
             state.auth = build_auth_service(settings)
             state.watchlists = build_watchlist_store(settings)
             state.portfolios = build_portfolio_store(settings)
+            state.workspaces = build_workspace_store(settings)
+            state.audit = build_audit_store(settings)
+            state.api_keys = build_api_key_store(settings)
         yield
 
     app = FastAPI(title="Coruscant API", version="0.1.0", lifespan=lifespan)
@@ -285,6 +326,13 @@ def create_app(
         token = header[7:].strip() if header[:7].lower() == "bearer " else ""
         user = state.auth.user_from_token(token) if state.auth and token else None
         if user is None:
+            # Programmatic / third-party access via an API key (X-API-Key).
+            api_key = request.headers.get("X-API-Key", "")
+            if api_key and state.api_keys is not None and state.auth is not None:
+                owner = state.api_keys.resolve(api_key)
+                if owner:
+                    user = state.auth.store.get(owner)
+        if user is None:
             raise HTTPException(status_code=401, detail="authentication required")
         return user
 
@@ -294,6 +342,22 @@ def create_app(
         # When auth is enforced, user is a StoredUser; when disabled (tests) all
         # callers share a single anonymous scope.
         return user.email if user is not None else "anonymous@local"
+
+    def require_admin(request: Request) -> StoredUser:
+        user = require_user(request)
+        if not enforce_auth:
+            return user or StoredUser(
+                email="anonymous@local", password_hash="", created_at="", role="admin"
+            )
+        if user is None or user.role != "admin":
+            raise HTTPException(status_code=403, detail="admin role required")
+        return user
+
+    def _audit(email: str, action: str, detail: str = "") -> None:
+        if state.audit is not None:
+            state.audit.record(
+                email, action, detail, created_at=datetime.now(tz=timezone.utc).isoformat()
+            )
 
     def _auth() -> AuthService:
         if state.auth is None:
@@ -337,22 +401,20 @@ def create_app(
             token = service.authenticate(body.email, body.password)
         except AuthError as exc:
             raise HTTPException(status_code=401, detail=str(exc)) from exc
-        return TokenResponse(token=token, email=body.email.strip().lower())
+        email = body.email.strip().lower()
+        _audit(email, "login", "password login")
+        return TokenResponse(token=token, email=email)
 
     @app.post("/auth/logout")
     def logout() -> dict[str, bool]:
         # Tokens are stateless; the client discards the token on logout.
         return {"ok": True}
 
-    @app.get("/auth/me", response_model=UserOut, dependencies=protected)
-    def me(request: Request) -> UserOut:
-        service = _auth()
-        header = request.headers.get("Authorization", "")
-        token = header[7:].strip() if header[:7].lower() == "bearer " else ""
-        user = service.user_from_token(token)
+    @app.get("/auth/me", response_model=UserOut)
+    def me(user: StoredUser | None = Depends(require_user)) -> UserOut:
         if user is None:
             raise HTTPException(status_code=401, detail="authentication required")
-        return UserOut(email=user.email, created_at=user.created_at)
+        return UserOut(email=user.email, created_at=user.created_at, role=user.role)
 
     @app.post("/auth/reset/request", response_model=ResetIssued)
     def reset_request(body: ResetRequest) -> ResetIssued:
@@ -512,6 +574,7 @@ def create_app(
             email, body.name, body.items, created_at=datetime.now(tz=timezone.utc).isoformat()
         )
         created = _evaluate_watchlist(email, watchlist)
+        _audit(email, "watchlist.create", body.name)
         return WatchlistCreated(watchlist=watchlist, notifications_created=created)
 
     @app.get("/watchlists", response_model=list[Watchlist], dependencies=protected)
@@ -550,9 +613,11 @@ def create_app(
 
     @app.post("/portfolios", response_model=Portfolio, dependencies=protected)
     def create_portfolio(body: PortfolioCreate, email: str = Depends(current_email)) -> Portfolio:
-        return _portfolios().create_portfolio(
+        portfolio = _portfolios().create_portfolio(
             email, body.name, body.holdings, created_at=datetime.now(tz=timezone.utc).isoformat()
         )
+        _audit(email, "portfolio.create", body.name)
+        return portfolio
 
     @app.get("/portfolios", response_model=list[Portfolio], dependencies=protected)
     def list_portfolios(email: str = Depends(current_email)) -> list[Portfolio]:
@@ -598,6 +663,104 @@ def create_app(
             recent_events=events[:15],
             companies_with_changes=len(changed),
         )
+
+    # ---- Workspaces (team collaboration) -----------------------------------
+
+    def _workspaces() -> SqliteWorkspaceStore:
+        if state.workspaces is None:
+            raise HTTPException(status_code=503, detail="workspaces are not configured")
+        return state.workspaces
+
+    @app.post("/workspaces", response_model=Workspace, dependencies=protected)
+    def create_workspace(body: WorkspaceCreate, email: str = Depends(current_email)) -> Workspace:
+        workspace = _workspaces().create_workspace(
+            email, body.name, body.members, created_at=datetime.now(tz=timezone.utc).isoformat()
+        )
+        _audit(email, "workspace.create", workspace.name)
+        return workspace
+
+    @app.get("/workspaces", response_model=list[Workspace], dependencies=protected)
+    def list_workspaces(email: str = Depends(current_email)) -> list[Workspace]:
+        return _workspaces().list_workspaces(email)
+
+    @app.get("/workspaces/{workspace_id}", response_model=Workspace, dependencies=protected)
+    def get_workspace(workspace_id: str, email: str = Depends(current_email)) -> Workspace:
+        workspace = _workspaces().get_workspace(email, workspace_id)
+        if workspace is None:
+            raise HTTPException(status_code=404, detail="workspace not found")
+        return workspace
+
+    @app.post("/workspaces/{workspace_id}/items", response_model=WorkspaceItem, dependencies=protected)
+    def add_workspace_item(
+        workspace_id: str, body: WorkspaceItemCreate, email: str = Depends(current_email)
+    ) -> WorkspaceItem:
+        if body.type not in ITEM_TYPES:
+            raise HTTPException(status_code=400, detail=f"unknown item type: {body.type}")
+        item = WorkspaceItem(
+            id=secrets.token_hex(8),
+            type=body.type,
+            title=body.title,
+            body=body.body,
+            ref=body.ref,
+            author_email=email,
+            created_at=datetime.now(tz=timezone.utc).isoformat(),
+        )
+        stored = _workspaces().add_item(email, workspace_id, item)
+        if stored is None:
+            raise HTTPException(status_code=404, detail="workspace not found")
+        return stored
+
+    @app.delete("/workspaces/{workspace_id}/items/{item_id}", dependencies=protected)
+    def delete_workspace_item(
+        workspace_id: str, item_id: str, email: str = Depends(current_email)
+    ) -> dict[str, bool]:
+        if not _workspaces().delete_item(email, workspace_id, item_id):
+            raise HTTPException(status_code=404, detail="item not found")
+        return {"ok": True}
+
+    @app.post("/workspaces/{workspace_id}/members", dependencies=protected)
+    def add_workspace_member(
+        workspace_id: str, body: MemberAdd, email: str = Depends(current_email)
+    ) -> dict[str, bool]:
+        if not _workspaces().add_member(email, workspace_id, body.email.strip().lower()):
+            raise HTTPException(status_code=403, detail="only the owner can add members")
+        return {"ok": True}
+
+    @app.delete("/workspaces/{workspace_id}", dependencies=protected)
+    def delete_workspace(workspace_id: str, email: str = Depends(current_email)) -> dict[str, bool]:
+        if not _workspaces().delete_workspace(email, workspace_id):
+            raise HTTPException(status_code=404, detail="workspace not found")
+        return {"ok": True}
+
+    # ---- API keys (programmatic / ecosystem access) ------------------------
+
+    def _api_keys() -> SqliteApiKeyStore:
+        if state.api_keys is None:
+            raise HTTPException(status_code=503, detail="api keys are not configured")
+        return state.api_keys
+
+    @app.post("/api-keys", response_model=ApiKeyCreated, dependencies=protected)
+    def create_api_key(body: ApiKeyCreate, email: str = Depends(current_email)) -> ApiKeyCreated:
+        created = _api_keys().create(email, body.name, created_at=datetime.now(tz=timezone.utc).isoformat())
+        _audit(email, "api_key.create", body.name)
+        return created
+
+    @app.get("/api-keys", response_model=list[ApiKey], dependencies=protected)
+    def list_api_keys(email: str = Depends(current_email)) -> list[ApiKey]:
+        return _api_keys().list_keys(email)
+
+    @app.delete("/api-keys/{key_id}", dependencies=protected)
+    def revoke_api_key(key_id: str, email: str = Depends(current_email)) -> dict[str, bool]:
+        if not _api_keys().revoke(email, key_id):
+            raise HTTPException(status_code=404, detail="api key not found")
+        _audit(email, "api_key.revoke", key_id)
+        return {"ok": True}
+
+    # ---- Admin (RBAC) ------------------------------------------------------
+
+    @app.get("/admin/audit", response_model=list[AuditEntry])
+    def admin_audit(_: StoredUser = Depends(require_admin), limit: int = 200) -> list[AuditEntry]:
+        return state.audit.list_entries(limit=limit) if state.audit else []
 
     # ---- Intelligence ------------------------------------------------------
 

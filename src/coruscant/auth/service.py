@@ -36,7 +36,7 @@ class AuthService:
     token_ttl_seconds: int = 86_400
     reset_ttl_seconds: int = 3_600
 
-    def register(self, email: str, password: str) -> StoredUser:
+    def register(self, email: str, password: str, *, role: str = "analyst") -> StoredUser:
         email = _normalize_email(email)
         if not _EMAIL_RE.match(email):
             raise AuthError("invalid email")
@@ -44,7 +44,7 @@ class AuthService:
             raise AuthError(f"password must be at least {MIN_PASSWORD_LENGTH} characters")
         try:
             return self.store.create_user(
-                email, hash_password(password), created_at=_now_iso()
+                email, hash_password(password), created_at=_now_iso(), role=role
             )
         except UserExistsError as exc:
             raise AuthError("an account with that email already exists") from exc

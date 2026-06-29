@@ -19,6 +19,7 @@ class UserRow(Base):
     email: Mapped[str] = mapped_column(String, primary_key=True)
     password_hash: Mapped[str] = mapped_column(String)
     created_at: Mapped[str] = mapped_column(String)
+    role: Mapped[str] = mapped_column(String, default="analyst")
     reset_token: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     reset_expires: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
@@ -28,6 +29,7 @@ class StoredUser:
     email: str
     password_hash: str
     created_at: str
+    role: str = "analyst"
     reset_token: str | None = None
     reset_expires: int | None = None
 
@@ -49,6 +51,7 @@ def _to_user(row: UserRow) -> StoredUser:
         email=row.email,
         password_hash=row.password_hash,
         created_at=row.created_at,
+        role=row.role,
         reset_token=row.reset_token,
         reset_expires=row.reset_expires,
     )
@@ -60,11 +63,13 @@ class SqliteUserStore:
         self.engine = create_engine(database_url, future=True)
         Base.metadata.create_all(self.engine)
 
-    def create_user(self, email: str, password_hash: str, *, created_at: str) -> StoredUser:
+    def create_user(
+        self, email: str, password_hash: str, *, created_at: str, role: str = "analyst"
+    ) -> StoredUser:
         with Session(self.engine) as session:
             if session.get(UserRow, email) is not None:
                 raise UserExistsError(email)
-            row = UserRow(email=email, password_hash=password_hash, created_at=created_at)
+            row = UserRow(email=email, password_hash=password_hash, created_at=created_at, role=role)
             session.add(row)
             session.commit()
             return _to_user(row)
