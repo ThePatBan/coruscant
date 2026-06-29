@@ -67,6 +67,14 @@ def test_saved_searches_crud(client: TestClient) -> None:
     assert client.get("/saved-searches").json() == []
 
 
+def test_document_detail_exposes_provenance(client: TestClient) -> None:
+    docs = client.get("/documents", params={"company": "apple", "source_type": "sec_edgar"}).json()
+    detail = client.get(f"/documents/{docs[0]['canonical_id']}").json()
+    assert detail["provenance"] is not None
+    assert detail["provenance"]["source_type"] == "sec_edgar"
+    assert detail["provenance"]["authority"] == 0.98
+
+
 def test_document_comparison(client: TestClient) -> None:
     docs = client.get("/documents", params={"company": "apple", "source_type": "sec_edgar"}).json()
     by_date = {d["published_at"]: d["canonical_id"] for d in docs}

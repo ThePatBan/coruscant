@@ -47,7 +47,7 @@ from coruscant.intelligence.reliability import SourceReliability
 from coruscant.auth.service import AuthError, AuthService
 from coruscant.auth.store import StoredUser
 from coruscant.common.config import get_settings, load_companies
-from coruscant.common.types import SCHEMA_VERSION, NormalizedDocument
+from coruscant.common.types import SCHEMA_VERSION, NormalizedDocument, Provenance
 from coruscant.infrastructure.intelligence_store import SqliteIntelligenceStore
 from coruscant.ingestion.registry import default_registry
 from coruscant.intelligence.analyst import AnalysisReport, ReferenceAnalyst
@@ -142,6 +142,7 @@ class DocumentDetail(DocumentSummary):
     sections: list[dict[str, Any]] = Field(default_factory=list)
     entities: list[dict[str, Any]] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    provenance: Provenance | None = None
 
 
 class GraphNeighbor(BaseModel):
@@ -542,6 +543,7 @@ def create_app(
                     sections=document.sections,
                     entities=document.entities,
                     metadata=document.metadata,
+                    provenance=document.provenance,
                 )
         raise HTTPException(status_code=404, detail="document not found")
 

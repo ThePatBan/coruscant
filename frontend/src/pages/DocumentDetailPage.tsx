@@ -127,6 +127,33 @@ export function DocumentDetailPage() {
             </div>
           )}
 
+          {data.provenance ? (
+            <div className="card stack gap-sm">
+              <div className="row-between">
+                <h2>Provenance</h2>
+                <span className="badge" title="Source authority weighting (0–1)">
+                  authority {(data.provenance.authority * 100).toFixed(0)}%
+                </span>
+              </div>
+              <div className="wrap">
+                <span className="pill accent">{data.provenance.source_type}</span>
+                {data.provenance.publisher ? (
+                  <span className="pill">
+                    <span className="faint">publisher</span>&nbsp;{data.provenance.publisher}
+                  </span>
+                ) : null}
+                <span className="pill">
+                  <span className="faint">retrieved</span>&nbsp;{data.provenance.retrieved_at.slice(0, 10)}
+                </span>
+                {data.provenance.license ? (
+                  <span className="pill">
+                    <span className="faint">license</span>&nbsp;{data.provenance.license}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
           {summary.data ? <SummaryPanel summary={summary.data} /> : null}
 
           <div className="stack gap">

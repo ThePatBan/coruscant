@@ -48,10 +48,20 @@ export interface DocumentSummary {
   published_at: string | null;
 }
 
+export interface Provenance {
+  source_type: string;
+  source_uri: string;
+  retrieved_at: string;
+  authority: number;
+  publisher: string | null;
+  license: string | null;
+}
+
 export interface DocumentDetail extends DocumentSummary {
   sections: Array<Record<string, unknown>>;
   entities: Array<Record<string, unknown>>;
   metadata: Record<string, unknown>;
+  provenance: Provenance | null;
 }
 
 export interface EvidenceItem {
