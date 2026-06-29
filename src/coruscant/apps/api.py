@@ -903,8 +903,12 @@ def create_app(
         org = _orgs().get_org(email, org_id)
         if org is None:
             raise HTTPException(status_code=404, detail="organization not found")
+        if org.owner_email != email:  # billing (members, usage, plan) is owner-only
+            raise HTTPException(status_code=403, detail="only the owner can view billing")
         plan = PLANS.get(org.plan, PLANS["free"])
-        usage = state.usage.summary(org.members) if state.usage else UsageSummary()
+        # Quotas are per-day; count usage since today's UTC midnight, not all time.
+        since = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT00:00:00+00:00")
+        usage = state.usage.summary(org.members, since_iso=since) if state.usage else UsageSummary()
         return BillingSummary(
             organization_id=org.id,
             plan=plan,

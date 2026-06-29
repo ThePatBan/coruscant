@@ -47,6 +47,14 @@ def test_is_due_logic() -> None:
     assert is_due("not-a-date", 1, now) is True  # corrupt -> re-run
 
 
+def test_is_due_tolerates_naive_timestamps() -> None:
+    # A naive stored timestamp or a naive `now` must not raise TypeError.
+    naive_now = datetime(2026, 1, 10)  # noqa: DTZ001 - intentionally naive
+    assert is_due("2026-01-01T00:00:00", 1, naive_now) is True  # both naive
+    assert is_due("2026-01-01T00:00:00", 1, datetime(2026, 1, 10, tzinfo=UTC)) is True  # naive last
+    assert is_due("2026-01-09T00:00:00+00:00", 1, naive_now) is True  # naive now, aware last
+
+
 def test_due_sources_uses_cadence_and_last_run() -> None:
     now = datetime(2026, 1, 10, tzinfo=UTC)
     definitions = default_registry().definitions()

@@ -14,6 +14,7 @@ import re
 
 from pydantic import BaseModel, Field
 
+from coruscant.intelligence.confidence import MAX_CONFIDENCE
 from coruscant.intelligence.models import ChangeSet, Claim, ExtractedEvent
 from coruscant.intelligence.text import normalize_statement
 
@@ -37,7 +38,7 @@ _OPPORTUNITY_RULES: dict[str, tuple[str, str, float]] = {
     "capital_allocation": ("Capital returns", "low", 0.5),
 }
 _SEVERITY_RANK = {"high": 0, "medium": 1, "low": 2}
-_MAX_CONFIDENCE = 0.85  # never claim certainty
+_MAX_CONFIDENCE = MAX_CONFIDENCE  # platform-wide ceiling; never claim certainty
 # Only unambiguous opportunity cues — "grow"/"bull"/"positive" match risk-framed
 # questions ("growing risks", "bulletin") and are intentionally excluded.
 _OPPORTUNITY_RE = re.compile(r"\b(opportunit\w*|upside|bullish|tailwind\w*|catalyst\w*)\b")

@@ -126,14 +126,13 @@ class SqliteUsageStore:
             session.add(UsageRow(email=email, action=action, created_at=created_at))
             session.commit()
 
-    def summary(self, emails: list[str]) -> UsageSummary:
+    def summary(self, emails: list[str], *, since_iso: str | None = None) -> UsageSummary:
         if not emails:
             return UsageSummary()
+        statement = select(UsageRow.action, func.count()).where(UsageRow.email.in_(emails))
+        if since_iso is not None:
+            statement = statement.where(UsageRow.created_at >= since_iso)
         with Session(self.engine) as session:
-            rows = session.execute(
-                select(UsageRow.action, func.count())
-                .where(UsageRow.email.in_(emails))
-                .group_by(UsageRow.action)
-            ).all()
+            rows = session.execute(statement.group_by(UsageRow.action)).all()
         actions = {action: int(count) for action, count in rows}
         return UsageSummary(actions=actions, total=sum(actions.values()))

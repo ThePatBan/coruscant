@@ -7,7 +7,7 @@ what is due rather than re-pulling everything every tick.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from coruscant.ingestion.registry import SourceDefinition
 
@@ -19,6 +19,12 @@ def is_due(last_run_iso: str | None, cadence_days: int, now: datetime) -> bool:
         last = datetime.fromisoformat(last_run_iso)
     except ValueError:
         return True
+    # Normalise both sides to UTC-aware so the subtraction never raises TypeError
+    # on a naive timestamp (e.g. one written by an external tool).
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
     return (now - last) >= timedelta(days=cadence_days)
 
 
