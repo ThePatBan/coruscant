@@ -1,24 +1,30 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import date, datetime, timezone
 from hashlib import sha256
 from html import unescape
 from html.parser import HTMLParser
 import re
 from typing import Any
+from urllib.error import URLError
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
+from coruscant.common.errors import FetchError
 from coruscant.common.types import (
     DocumentExhibit,
     DocumentSection,
     EvidenceSpan,
     NormalizedDocument,
     SourceDocument,
+    section_id,
 )
 from coruscant.connectors.base import FetchRequest, SourceConnector
 from coruscant.connectors.common import developments_text
+
+logger = logging.getLogger(__name__)
 
 
 class _TextStripper(HTMLParser):
@@ -100,10 +106,15 @@ class EdgarHttpConnector(SourceConnector):
         self.user_agent = user_agent
 
     def fetch(self, request: FetchRequest) -> SourceDocument:
-        req = Request(request.source_uri, headers={"User-Agent": self.user_agent})
-        with urlopen(req, timeout=30) as response:
-            content_type = response.headers.get("content-type")
-            payload = response.read().decode("utf-8", errors="replace")
+        # A failure to fetch the primary filing is a hard, explicit error so the
+        # orchestrator records it (dead-letter + run report) — never swallowed.
+        try:
+            req = Request(request.source_uri, headers={"User-Agent": self.user_agent})
+            with urlopen(req, timeout=30) as response:
+                content_type = response.headers.get("content-type")
+                payload = response.read().decode("utf-8", errors="replace")
+        except (URLError, OSError) as exc:
+            raise FetchError(f"failed to fetch SEC filing {request.source_uri}: {exc}") from exc
         index_data = self._maybe_load_index_json(request.source_uri)
         primary_document_url = index_data.get("primary_document_url")
         primary_document_html = (
@@ -149,16 +160,20 @@ class EdgarHttpConnector(SourceConnector):
 
     def _maybe_load_index_json(self, source_uri: str) -> dict[str, object]:
         index_url = filing_index_url(source_uri)
+        # The index.json is an optional enrichment; on failure we log (observable)
+        # and continue with the primary payload rather than failing the fetch.
         try:
             req = Request(index_url, headers={"User-Agent": self.user_agent})
             with urlopen(req, timeout=30) as response:
                 payload = response.read().decode("utf-8", errors="replace")
-        except Exception:
+        except (URLError, OSError) as exc:
+            logger.warning("EDGAR index.json unavailable for %s: %s", index_url, exc)
             return {}
 
         try:
             data = json.loads(payload)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            logger.warning("EDGAR index.json malformed for %s: %s", index_url, exc)
             return {}
 
         metadata = _parse_index_metadata(data)
@@ -172,11 +187,13 @@ class EdgarHttpConnector(SourceConnector):
         }
 
     def _fetch_primary_document(self, primary_document_url: str) -> str | None:
+        # Best-effort: on failure we log and fall back to the index payload.
         try:
             req = Request(primary_document_url, headers={"User-Agent": self.user_agent})
             with urlopen(req, timeout=30) as response:
                 return response.read().decode("utf-8", errors="replace")
-        except Exception:
+        except (URLError, OSError) as exc:
+            logger.warning("EDGAR primary document fetch failed for %s: %s", primary_document_url, exc)
             return None
 
 
@@ -185,7 +202,7 @@ def normalize_edgar_filing(document: SourceDocument) -> NormalizedDocument:
     parser.feed(document.raw_content)
     text = parser.text()
     canonical_id = sha256(document.source_uri.encode("utf-8")).hexdigest()
-    sections = _split_sections(document, text or document.raw_content)
+    sections = _split_sections(document, text or document.raw_content, canonical_id)
     exhibits = _extract_exhibits(document)
     indexed_exhibits = document.metadata.get("indexed_exhibits")
     if isinstance(indexed_exhibits, list):
@@ -212,7 +229,7 @@ def normalize_edgar_filing(document: SourceDocument) -> NormalizedDocument:
     )
 
 
-def _split_sections(document: SourceDocument, text: str) -> list[dict[str, object]]:
+def _split_sections(document: SourceDocument, text: str, canonical_id: str) -> list[dict[str, object]]:
     form_type = str(document.metadata.get("form_type") or document.source_name or "").upper()
     section_matches = list(_find_section_matches(text, form_type=form_type))
     if not section_matches:
@@ -222,6 +239,7 @@ def _split_sections(document: SourceDocument, text: str) -> list[dict[str, objec
                 title="Raw Filing",
                 content=content,
                 order=1,
+                id=section_id(canonical_id, 1),
                 evidence=[_evidence(document.source_uri, "Raw Filing", content)],
             ).model_dump()
         ]
@@ -234,11 +252,13 @@ def _split_sections(document: SourceDocument, text: str) -> list[dict[str, objec
         if not content:
             continue
         title = match.group(0).strip()
+        order = len(sections) + 1
         sections.append(
             DocumentSection(
                 title=title,
                 content=content,
-                order=len(sections) + 1,
+                order=order,
+                id=section_id(canonical_id, order),
                 anchor=_slugify(title),
                 evidence=[
                     _evidence(document.source_uri, title, content),
@@ -253,6 +273,7 @@ def _split_sections(document: SourceDocument, text: str) -> list[dict[str, objec
                 title="Raw Filing",
                 content=content,
                 order=1,
+                id=section_id(canonical_id, 1),
                 anchor="raw-filing",
                 evidence=[_evidence(document.source_uri, "Raw Filing", content)],
             ).model_dump()

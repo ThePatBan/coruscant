@@ -11,6 +11,7 @@ an :class:`IngestionReport`.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import logging
 
 from coruscant.common.config import CompanyConfig, CompanyEntities, SourceSetting
@@ -22,6 +23,7 @@ from coruscant.knowledge_graph.entities import (
     project_company_entities,
 )
 from coruscant.infrastructure.catalog import SqliteDocumentCatalog
+from coruscant.infrastructure.dead_letter import SqliteDeadLetterStore
 from coruscant.infrastructure.intelligence_store import SqliteIntelligenceStore
 from coruscant.infrastructure.repositories import (
     NormalizedDocumentRepository,
@@ -92,6 +94,7 @@ class IngestionOrchestrator:
         registry: SourceRegistry | None = None,
         intelligence_store: SqliteIntelligenceStore | None = None,
         entities: dict[str, CompanyEntities] | None = None,
+        dead_letter_store: SqliteDeadLetterStore | None = None,
         max_attempts: int = 1,
     ) -> None:
         self.raw_repository = raw_repository
@@ -102,6 +105,7 @@ class IngestionOrchestrator:
         self.registry = registry if registry is not None else default_registry()
         self.intelligence_store = intelligence_store
         self.entities = entities or {}
+        self.dead_letter_store = dead_letter_store
         self.max_attempts = max(1, max_attempts)
         self._names_by_company: dict[str, dict[str, tuple[str, str]]] = {}
         self.projector = ReferenceGraphProjector()
@@ -165,6 +169,15 @@ class IngestionOrchestrator:
                 message = f"{company.slug}:{source_type}:{label}: {exc}"
                 report.errors.append(message)
                 logger.error("Ingestion failed after %d attempts for %s", self.max_attempts, message)
+                if self.dead_letter_store is not None:
+                    self.dead_letter_store.record(
+                        company_slug=company.slug,
+                        source_type=source_type,
+                        period=label,
+                        attempts=self.max_attempts,
+                        error=str(exc),
+                        created_at=datetime.now(tz=timezone.utc).isoformat(),
+                    )
                 continue
             report.items.append(item)
             documents.append(normalized)

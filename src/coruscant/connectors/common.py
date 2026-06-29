@@ -19,6 +19,7 @@ from coruscant.common.types import (
     EvidenceSpan,
     NormalizedDocument,
     SourceDocument,
+    section_id,
 )
 
 EXCERPT_LIMIT = 280
@@ -151,6 +152,7 @@ def normalize_reference_document(
                 title=title,
                 content=content,
                 order=order,
+                id=section_id(canonical_id, order),
                 anchor=slugify(title),
                 evidence=[make_evidence(document.source_uri, title, content)],
             ).model_dump()

@@ -37,6 +37,7 @@ from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 from coruscant.knowledge_graph.persistence import load_graph, save_graph
 from coruscant.enterprise.api_keys import SqliteApiKeyStore
 from coruscant.enterprise.audit import SqliteAuditStore
+from coruscant.infrastructure.dead_letter import SqliteDeadLetterStore
 from coruscant.portfolio.store import SqlitePortfolioStore
 from coruscant.search.hybrid import HybridRetrievalEngine
 from coruscant.watchlists.store import SqliteWatchlistStore
@@ -81,6 +82,11 @@ def build_audit_store(settings: Settings | None = None) -> SqliteAuditStore:
 def build_api_key_store(settings: Settings | None = None) -> SqliteApiKeyStore:
     settings = settings or get_settings()
     return SqliteApiKeyStore(settings.database_url)
+
+
+def build_dead_letter_store(settings: Settings | None = None) -> SqliteDeadLetterStore:
+    settings = settings or get_settings()
+    return SqliteDeadLetterStore(settings.database_url)
 
 
 logger = logging.getLogger(__name__)
@@ -154,6 +160,7 @@ def run_ingestion(settings: Settings | None = None) -> IngestionReport:
         engine=HybridRetrievalEngine(),
         intelligence_store=build_intelligence_store(settings),
         entities=load_entities(settings.config_dir),
+        dead_letter_store=build_dead_letter_store(settings),
         max_attempts=settings.ingest_max_attempts,
     )
     companies = load_companies(settings.config_dir)

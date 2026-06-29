@@ -15,6 +15,7 @@ from coruscant.apps.runtime import (
     build_api_key_store,
     build_audit_store,
     build_auth_service,
+    build_dead_letter_store,
     build_intelligence_store,
     build_portfolio_store,
     build_watchlist_store,
@@ -26,6 +27,7 @@ from coruscant.apps.runtime import (
 )
 from coruscant.enterprise.api_keys import ApiKey, ApiKeyCreated, SqliteApiKeyStore
 from coruscant.enterprise.audit import AuditEntry, SqliteAuditStore
+from coruscant.infrastructure.dead_letter import DeadLetterEntry, SqliteDeadLetterStore
 from coruscant.portfolio.models import Holding, Portfolio, PortfolioBriefing
 from coruscant.portfolio.store import SqlitePortfolioStore
 from coruscant.workspaces.models import ITEM_TYPES, Workspace, WorkspaceItem
@@ -38,7 +40,7 @@ from coruscant.intelligence.reliability import SourceReliability
 from coruscant.auth.service import AuthError, AuthService
 from coruscant.auth.store import StoredUser
 from coruscant.common.config import get_settings, load_companies
-from coruscant.common.types import NormalizedDocument
+from coruscant.common.types import SCHEMA_VERSION, NormalizedDocument
 from coruscant.infrastructure.intelligence_store import SqliteIntelligenceStore
 from coruscant.ingestion.registry import default_registry
 from coruscant.intelligence.analyst import AnalysisReport, ReferenceAnalyst
@@ -60,6 +62,9 @@ from coruscant.knowledge_graph.queries import (
 )
 from coruscant.search.hybrid import HybridRetrievalEngine
 from coruscant.search.reference import TemplateReasoningLayer
+
+
+API_VERSION = "1.0"  # frozen MVP API surface (ADR-0006); breaking changes bump this
 
 
 class RetrieveRequest(BaseModel):
@@ -98,6 +103,11 @@ class HealthResponse(BaseModel):
     status: str
     documents: int
     graph_nodes: int
+
+
+class VersionResponse(BaseModel):
+    api_version: str
+    schema_version: str
 
 
 class CompanyOut(BaseModel):
@@ -242,6 +252,7 @@ class _AppState:
     workspaces: SqliteWorkspaceStore | None = None
     audit: SqliteAuditStore | None = None
     api_keys: SqliteApiKeyStore | None = None
+    dead_letters: SqliteDeadLetterStore | None = None
 
 
 def _all_documents(engine: Any) -> list[NormalizedDocument]:
@@ -276,6 +287,7 @@ def create_app(
     workspace_store: SqliteWorkspaceStore | None = None,
     audit_store: SqliteAuditStore | None = None,
     api_key_store: SqliteApiKeyStore | None = None,
+    dead_letter_store: SqliteDeadLetterStore | None = None,
     require_auth: bool = True,
     expose_reset_token: bool = False,
     load_from_storage: bool = False,
@@ -293,6 +305,7 @@ def create_app(
         workspaces=workspace_store,
         audit=audit_store,
         api_keys=api_key_store,
+        dead_letters=dead_letter_store,
     )
 
     @asynccontextmanager
@@ -307,9 +320,10 @@ def create_app(
             state.workspaces = build_workspace_store(settings)
             state.audit = build_audit_store(settings)
             state.api_keys = build_api_key_store(settings)
+            state.dead_letters = build_dead_letter_store(settings)
         yield
 
-    app = FastAPI(title="Coruscant API", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Coruscant API", version=API_VERSION, lifespan=lifespan)
 
     app.add_middleware(
         CORSMiddleware,
@@ -437,6 +451,10 @@ def create_app(
         if not ok:
             raise HTTPException(status_code=400, detail="invalid or expired reset token")
         return {"ok": True}
+
+    @app.get("/version", response_model=VersionResponse)
+    def version() -> VersionResponse:
+        return VersionResponse(api_version=API_VERSION, schema_version=SCHEMA_VERSION)
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:
@@ -767,6 +785,10 @@ def create_app(
     @app.get("/admin/audit", response_model=list[AuditEntry])
     def admin_audit(_: StoredUser = Depends(require_admin), limit: int = 200) -> list[AuditEntry]:
         return state.audit.list_entries(limit=limit) if state.audit else []
+
+    @app.get("/admin/dead-letter", response_model=list[DeadLetterEntry])
+    def admin_dead_letter(_: StoredUser = Depends(require_admin), limit: int = 200) -> list[DeadLetterEntry]:
+        return state.dead_letters.list_entries(limit=limit) if state.dead_letters else []
 
     # ---- Intelligence ------------------------------------------------------
 

@@ -1,0 +1,3 @@
+This document has no recognizable item headings or structure.
+It is intentionally malformed to exercise the raw-filing fallback path.
+There are no "Item 1." style sections here at all.

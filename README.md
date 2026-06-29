@@ -71,6 +71,15 @@ Authenticated (bearer token): `GET /auth/me`, `/companies`, `/sources`, `/docume
 `/documents/{id}/summary`, `/companies/{slug}/timeline`, `/companies/{slug}/changes`,
 `/graph/company/{slug}`, `POST /retrieve`, `GET /answer`, `GET /dashboard`, `GET /status`.
 
+## Roadmap
+
+Development follows five engineering milestones with hard exit gates — foundations
+first, so every future connector and capability inherits a robust base. See
+[docs/roadmap/Milestones.md](docs/roadmap/Milestones.md). The current milestone is
+**M1 — Foundation Hardening** (reliability, deterministic parsing, durable
+provenance-first graph, frozen API surface); the API contract is in
+[docs/api/Contract.md](docs/api/Contract.md).
+
 ## Design rules
 
 - Raw data remains immutable; normalized facts are separate from raw documents.

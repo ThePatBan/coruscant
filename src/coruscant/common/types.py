@@ -6,6 +6,20 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+# Core domain-model schema version. Frozen at M1; evolve only via versioned,
+# documented migrations (see ADR-0006).
+SCHEMA_VERSION = "1.0"
+
+
+def section_id(canonical_id: str, order: int) -> str:
+    """Deterministic, stable identifier for a parsed section within a document.
+
+    Stable across re-parses of the same document (same canonical_id + order) and
+    unique even when two sections share a title.
+    """
+
+    return sha256(f"{canonical_id}:{order}".encode("utf-8")).hexdigest()[:16]
+
 
 class SourceDocument(BaseModel):
     source_type: str
@@ -54,6 +68,7 @@ class DocumentSection(BaseModel):
     title: str
     content: str
     order: int
+    id: str | None = None  # deterministic, stable section identifier
     anchor: str | None = None
     evidence: list[EvidenceSpan] = Field(default_factory=list)
 
