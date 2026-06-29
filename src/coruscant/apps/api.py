@@ -13,12 +13,15 @@ from pydantic import BaseModel, Field
 from coruscant.apps.runtime import (
     build_auth_service,
     build_intelligence_store,
+    build_portfolio_store,
     build_watchlist_store,
     load_engine,
     load_graph_store,
     load_run_status,
     source_monitoring,
 )
+from coruscant.portfolio.models import Holding, Portfolio, PortfolioBriefing
+from coruscant.portfolio.store import SqlitePortfolioStore
 from coruscant.watchlists.matcher import match_watch_items
 from coruscant.watchlists.models import WATCH_TYPES, Notification, Watchlist, WatchItem
 from coruscant.watchlists.store import SqliteWatchlistStore
@@ -30,6 +33,8 @@ from coruscant.common.config import get_settings, load_companies
 from coruscant.common.types import NormalizedDocument
 from coruscant.infrastructure.intelligence_store import SqliteIntelligenceStore
 from coruscant.ingestion.registry import default_registry
+from coruscant.intelligence.analyst import AnalysisReport, ReferenceAnalyst
+from coruscant.intelligence.signals import ReferenceSignalEngine, Signal
 from coruscant.intelligence.models import ChangeSet
 from coruscant.intelligence.models import DocumentSummary as AISummary
 from coruscant.intelligence.models import ExtractedEvent
@@ -40,6 +45,7 @@ from coruscant.knowledge_graph.queries import (
     EntityRef,
     ExposureResult,
     co_executives,
+    company_country_exposures,
     entity_profile,
     exposure_to_country,
     list_entities,
@@ -177,6 +183,15 @@ class ResetConfirm(BaseModel):
     password: str
 
 
+class AnalystRequest(BaseModel):
+    question: str
+
+
+class PortfolioCreate(BaseModel):
+    name: str
+    holdings: list[Holding] = Field(default_factory=list)
+
+
 class WatchlistCreate(BaseModel):
     name: str
     items: list[WatchItem] = Field(default_factory=list)
@@ -194,6 +209,7 @@ class _AppState:
     intelligence: SqliteIntelligenceStore | None = None
     auth: AuthService | None = None
     watchlists: SqliteWatchlistStore | None = None
+    portfolios: SqlitePortfolioStore | None = None
 
 
 def _all_documents(engine: Any) -> list[NormalizedDocument]:
@@ -224,6 +240,7 @@ def create_app(
     intelligence_store: SqliteIntelligenceStore | None = None,
     auth_service: AuthService | None = None,
     watchlist_store: SqliteWatchlistStore | None = None,
+    portfolio_store: SqlitePortfolioStore | None = None,
     require_auth: bool = True,
     expose_reset_token: bool = False,
     load_from_storage: bool = False,
@@ -237,6 +254,7 @@ def create_app(
         intelligence=intelligence_store,
         auth=auth_service,
         watchlists=watchlist_store,
+        portfolios=portfolio_store,
     )
 
     @asynccontextmanager
@@ -247,6 +265,7 @@ def create_app(
             state.intelligence = build_intelligence_store(settings)
             state.auth = build_auth_service(settings)
             state.watchlists = build_watchlist_store(settings)
+            state.portfolios = build_portfolio_store(settings)
         yield
 
     app = FastAPI(title="Coruscant API", version="0.1.0", lifespan=lifespan)
@@ -522,6 +541,64 @@ def create_app(
             raise HTTPException(status_code=404, detail="notification not found")
         return {"ok": True}
 
+    # ---- Portfolios --------------------------------------------------------
+
+    def _portfolios() -> SqlitePortfolioStore:
+        if state.portfolios is None:
+            raise HTTPException(status_code=503, detail="portfolios are not configured")
+        return state.portfolios
+
+    @app.post("/portfolios", response_model=Portfolio, dependencies=protected)
+    def create_portfolio(body: PortfolioCreate, email: str = Depends(current_email)) -> Portfolio:
+        return _portfolios().create_portfolio(
+            email, body.name, body.holdings, created_at=datetime.now(tz=timezone.utc).isoformat()
+        )
+
+    @app.get("/portfolios", response_model=list[Portfolio], dependencies=protected)
+    def list_portfolios(email: str = Depends(current_email)) -> list[Portfolio]:
+        return _portfolios().list_portfolios(email)
+
+    @app.delete("/portfolios/{portfolio_id}", dependencies=protected)
+    def delete_portfolio(portfolio_id: str, email: str = Depends(current_email)) -> dict[str, bool]:
+        if not _portfolios().delete_portfolio(email, portfolio_id):
+            raise HTTPException(status_code=404, detail="portfolio not found")
+        return {"ok": True}
+
+    @app.get("/portfolios/{portfolio_id}/briefing", response_model=PortfolioBriefing, dependencies=protected)
+    def portfolio_briefing(portfolio_id: str, email: str = Depends(current_email)) -> PortfolioBriefing:
+        portfolio = _portfolios().get_portfolio(email, portfolio_id)
+        if portfolio is None:
+            raise HTTPException(status_code=404, detail="portfolio not found")
+        material: list[ChangeSet] = []
+        events: list[ExtractedEvent] = []
+        changed: set[str] = set()
+        if state.intelligence is not None:
+            for holding in portfolio.holdings:
+                holding_changes = [
+                    cs
+                    for cs in state.intelligence.list_change_sets(company_slug=holding.company_slug)
+                    if cs.material
+                ]
+                if holding_changes:
+                    changed.add(holding.company_slug)
+                material.extend(holding_changes)
+                events.extend(state.intelligence.list_events(company_slug=holding.company_slug, limit=5))
+        events.sort(key=lambda e: e.occurred_at or "", reverse=True)
+        headline = (
+            f"{len(changed)} of your {len(portfolio.holdings)} holdings had material changes."
+            if portfolio.holdings
+            else "No holdings yet."
+        )
+        return PortfolioBriefing(
+            portfolio_id=portfolio.id,
+            name=portfolio.name,
+            holdings=portfolio.holdings,
+            headline=headline,
+            material_changes=material,
+            recent_events=events[:15],
+            companies_with_changes=len(changed),
+        )
+
     # ---- Intelligence ------------------------------------------------------
 
     @app.get("/documents/{canonical_id}/summary", response_model=AISummary, dependencies=protected)
@@ -550,6 +627,47 @@ def create_app(
     @app.get("/monitoring", response_model=list[SourceReliability], dependencies=protected)
     def monitoring() -> list[SourceReliability]:
         return source_monitoring(settings)
+
+    @app.post("/analyst/{slug}", response_model=AnalysisReport, dependencies=protected)
+    def analyst(slug: str, body: AnalystRequest) -> AnalysisReport:
+        company = next((c for c in load_companies(settings.config_dir) if c.slug == slug), None)
+        name = company.name if company else slug
+        change_sets = state.intelligence.list_change_sets(company_slug=slug) if state.intelligence else []
+        events = state.intelligence.list_events(company_slug=slug) if state.intelligence else []
+        exposures = (
+            company_country_exposures(state.graph, slug)
+            if isinstance(state.graph, InMemoryKnowledgeGraphStore)
+            else []
+        )
+        return ReferenceAnalyst().analyze(
+            company_slug=slug,
+            company_name=name,
+            question=body.question,
+            change_sets=change_sets,
+            events=events,
+            country_exposures=exposures,
+        )
+
+    @app.get("/signals/{slug}", response_model=list[Signal], dependencies=protected)
+    def signals(slug: str) -> list[Signal]:
+        company = next((c for c in load_companies(settings.config_dir) if c.slug == slug), None)
+        name = company.name if company else slug
+        documents = [d for d in _all_documents(state.engine) if d.metadata.get("company_slug") == slug]
+        change_sets = state.intelligence.list_change_sets(company_slug=slug) if state.intelligence else []
+        events = state.intelligence.list_events(company_slug=slug) if state.intelligence else []
+        exposures = (
+            company_country_exposures(state.graph, slug)
+            if isinstance(state.graph, InMemoryKnowledgeGraphStore)
+            else []
+        )
+        return ReferenceSignalEngine().signals_for(
+            company_slug=slug,
+            company_name=name,
+            documents=documents,
+            change_sets=change_sets,
+            events=events,
+            country_exposures=exposures,
+        )
 
     @app.get("/dashboard", response_model=DashboardResponse, dependencies=protected)
     def dashboard() -> DashboardResponse:

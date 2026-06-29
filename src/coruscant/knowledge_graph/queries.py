@@ -148,6 +148,23 @@ def exposure_to_country(store: InMemoryKnowledgeGraphStore, country: str) -> Exp
     return result
 
 
+def company_country_exposures(
+    store: InMemoryKnowledgeGraphStore, company_key: str
+) -> list[tuple[str, str]]:
+    """(country name, supplier name) the company is exposed to via its suppliers."""
+
+    exposures: list[tuple[str, str]] = []
+    for edge in store.outgoing("Company", company_key):
+        if edge.relation != "relies_on_supplier":
+            continue
+        supplier_name = _name(store, edge.target_kind, edge.target_key)
+        for supplier_edge in store.outgoing(edge.target_kind, edge.target_key):
+            if supplier_edge.relation == "operates_in":
+                country = _name(store, supplier_edge.target_kind, supplier_edge.target_key)
+                exposures.append((country, supplier_name))
+    return exposures
+
+
 def co_executives(store: InMemoryKnowledgeGraphStore) -> CoExecutiveResult:
     # Build company -> people and person -> companies from employs / previously_at.
     company_people: dict[str, set[str]] = {}

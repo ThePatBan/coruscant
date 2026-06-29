@@ -164,6 +164,9 @@ def normalize_reference_document(
         or document.metadata.get("company_name")
         or document.source_name
     )
+    metadata = dict(document.metadata)
+    if document.source_name:
+        metadata.setdefault("source_name", document.source_name)
     return NormalizedDocument(
         document_type=document_type,
         source_uri=document.source_uri,
@@ -173,5 +176,5 @@ def normalize_reference_document(
         language=str(document.metadata.get("language", "en")),
         sections=sections,
         entities=reference_company_entities(document),
-        metadata=document.metadata,
+        metadata=metadata,
     )

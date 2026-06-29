@@ -190,6 +190,9 @@ def normalize_edgar_filing(document: SourceDocument) -> NormalizedDocument:
     indexed_exhibits = document.metadata.get("indexed_exhibits")
     if isinstance(indexed_exhibits, list):
         exhibits.extend(indexed_exhibits)
+    metadata = dict(document.metadata)
+    if document.source_name:
+        metadata.setdefault("source_name", document.source_name)
     return NormalizedDocument(
         document_type="filing",
         source_uri=document.source_uri,
@@ -205,7 +208,7 @@ def normalize_edgar_filing(document: SourceDocument) -> NormalizedDocument:
         sections=sections,
         exhibits=exhibits,
         entities=_extract_entities(document),
-        metadata=document.metadata,
+        metadata=metadata,
     )
 
 
