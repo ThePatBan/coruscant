@@ -73,18 +73,24 @@ from coruscant.knowledge_graph.queries import (
     EntityProfile,
     EntityRef,
     ExposureResult,
+    GicsSector,
     JurisdictionCount,
     JurisdictionExposure,
+    MarketTierCount,
+    MarketTierExposure,
     SectorCount,
     SectorExposure,
     co_executives,
     company_country_exposures,
     entity_profile,
     exposure_to_country,
+    gics_breakdown,
     jurisdiction_exposure,
     list_entities,
     list_jurisdictions,
+    list_market_tiers,
     list_sectors,
+    market_tier_exposure,
     sector_exposure,
 )
 from coruscant.search.hybrid import HybridRetrievalEngine
@@ -780,11 +786,40 @@ def create_app(
 
     @app.get("/graph/sector-exposure", response_model=SectorExposure, dependencies=protected)
     def sector_exposure_endpoint(sector: str) -> SectorExposure:
-        """Thematic event on `sector` (e.g. rare-earth controls -> semis) -> who is in it."""
+        """Thematic event on a GICS level `sector` (a sector like Information
+        Technology or a sub-industry like Semiconductors) -> who is in it."""
         graph = state.graph
         if not isinstance(graph, InMemoryKnowledgeGraphStore):
             return SectorExposure(sector=sector)
         return sector_exposure(graph, sector)
+
+    @app.get("/graph/gics-breakdown", response_model=list[GicsSector], dependencies=protected)
+    def gics_breakdown_endpoint() -> list[GicsSector]:
+        """The portfolio's GICS composition: sector -> sub-industry -> holdings."""
+        graph = state.graph
+        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+            return []
+        return gics_breakdown(graph)
+
+    @app.get("/graph/market-tiers", response_model=list[MarketTierCount], dependencies=protected)
+    def market_tiers() -> list[MarketTierCount]:
+        """The portfolio's MSCI Developed/Emerging/Frontier composition (pathway 4)."""
+        graph = state.graph
+        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+            return []
+        return list_market_tiers(graph)
+
+    @app.get(
+        "/graph/market-tier-exposure",
+        response_model=MarketTierExposure,
+        dependencies=protected,
+    )
+    def market_tier_exposure_endpoint(tier: str) -> MarketTierExposure:
+        """The holdings classified in MSCI market tier `tier` (DM/EM/FM)."""
+        graph = state.graph
+        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+            return MarketTierExposure(tier=tier, label="")
+        return market_tier_exposure(graph, tier)
 
     @app.get("/graph/co-executives", response_model=CoExecutiveResult, dependencies=protected)
     def graph_co_executives() -> CoExecutiveResult:

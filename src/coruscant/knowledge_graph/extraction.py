@@ -26,8 +26,15 @@ from coruscant.common.config import CompanyConfig
 from coruscant.common.types import GraphEdge, GraphNode, NormalizedDocument
 from coruscant.knowledge_graph.entities import entity_key
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
+from coruscant.knowledge_graph.taxonomy import (
+    company_gics,
+    country_msci_tier,
+    msci_tier_label,
+)
 
 _SECTOR_PROV = "sec-metadata"
+_GICS_PROV = "gics-curated"
+_MARKET_TIER_PROV = "msci-classification"
 _COMENTION_PROV = "sec-co-mention"
 _SUBSIDIARY_PROV = "sec-exhibit21"
 _OFFICER_PROV = "sec-10k-officers"
@@ -86,32 +93,69 @@ def project_company_nodes(store: InMemoryKnowledgeGraphStore, companies: list[Co
     the real name (and industry) so the graph reads as companies, not tickers.
     """
     for company in companies:
-        store.upsert_node(
-            GraphNode(
-                kind="Company",
-                key=company.slug,
-                properties={
-                    "name": company.name,
-                    "source": "tracked",
-                    "industry": company.industry,
-                    "cik": company.cik,
-                },
-            )
-        )
+        gics = company_gics(company.slug)
+        tier = country_msci_tier(company.country)
+        properties: dict[str, object] = {
+            "name": company.name,
+            "source": "tracked",
+            "industry": company.industry,
+            "cik": company.cik,
+        }
+        # Allocator-view attributes so the company node reads in GICS/MSCI terms
+        # (used by the Atlas and exposure surfaces) without losing the raw SIC. The
+        # 8-digit code is the canonical anchor for joining to MSCI sector indexes.
+        if gics is not None:
+            properties["gics_sector"] = gics.sector
+            properties["gics_sub_industry"] = gics.sub_industry
+            properties["gics_code"] = gics.code
+        if tier is not None:
+            properties["market_tier"] = tier
+        store.upsert_node(GraphNode(kind="Company", key=company.slug, properties=properties))
 
 
 def project_sector_edges(store: InMemoryKnowledgeGraphStore, companies: list[CompanyConfig]) -> int:
-    """Company -in_sector-> Industry, from each company's SIC classification."""
+    """Company -in_sector-> Industry, tagged with the full curated GICS path.
+
+    The target ``Industry`` node is the company's GICS *sub-industry* (the most
+    specific level); the full path — sector / industry group / industry /
+    sub-industry + the 8-digit code — rides both the node and the edge. That lets
+    the exposure engine match an event at *any* level (sector, group, industry or
+    sub-industry) off one edge. An uncurated company falls back to its raw SIC
+    ``industry`` so an edge is never dropped or a sector invented; the raw SIC
+    label always rides the edge as ``sic_industry`` for provenance.
+    """
     count = 0
     for company in companies:
-        industry = (company.industry or "").strip()
-        if not industry:
+        gics = company_gics(company.slug)
+        sic = (company.industry or "").strip()
+        if gics is not None:
+            node_name, prov, taxonomy = gics.sub_industry, _GICS_PROV, "GICS"
+            path: dict[str, object] = {
+                "code": gics.code,
+                "sector": gics.sector,
+                "industry_group": gics.industry_group,
+                "industry": gics.industry,
+                "sub_industry": gics.sub_industry,
+            }
+        elif sic:
+            # No curated GICS path: the raw SIC label is both the node and the
+            # (single-level) "sector" the headline query groups by.
+            node_name, prov, taxonomy = sic, _SECTOR_PROV, "SIC"
+            path = {"sector": sic}
+        else:
             continue
-        key = entity_key(industry)
+        key = entity_key(node_name)
         if store.get_node("Industry", key) is None:
             store.upsert_node(
-                GraphNode(kind="Industry", key=key, properties={"name": industry, "source": _SECTOR_PROV})
+                GraphNode(
+                    kind="Industry",
+                    key=key,
+                    properties={"name": node_name, "source": prov, "taxonomy": taxonomy, **path},
+                )
             )
+        properties: dict[str, object] = {"source": prov, "company_slug": company.slug, **path}
+        if sic:
+            properties["sic_industry"] = sic
         store.upsert_edge(
             GraphEdge(
                 source_kind="Company",
@@ -119,7 +163,46 @@ def project_sector_edges(store: InMemoryKnowledgeGraphStore, companies: list[Com
                 relation="in_sector",
                 target_kind="Industry",
                 target_key=key,
-                properties={"source": _SECTOR_PROV, "company_slug": company.slug, "industry": industry},
+                properties=properties,
+            )
+        )
+        count += 1
+    return count
+
+
+def project_market_tier_edges(store: InMemoryKnowledgeGraphStore, companies: list[CompanyConfig]) -> int:
+    """Company -in_market_tier-> MarketTier (MSCI Developed/Emerging/Frontier).
+
+    Keyed on the company's listing country; the evidence is the company's
+    domicile plus MSCI's public market classification. This is the substrate for
+    the market-tier exposure pathway ("you're 15% EM, heavy India")."""
+    count = 0
+    for company in companies:
+        tier = country_msci_tier(company.country)
+        if tier is None:
+            continue
+        key = entity_key(tier)  # "dm" / "em" / "fm"
+        if store.get_node("MarketTier", key) is None:
+            store.upsert_node(
+                GraphNode(
+                    kind="MarketTier",
+                    key=key,
+                    properties={"name": msci_tier_label(tier), "code": tier, "source": _MARKET_TIER_PROV},
+                )
+            )
+        store.upsert_edge(
+            GraphEdge(
+                source_kind="Company",
+                source_key=company.slug,
+                relation="in_market_tier",
+                target_kind="MarketTier",
+                target_key=key,
+                properties={
+                    "source": _MARKET_TIER_PROV,
+                    "company_slug": company.slug,
+                    "country": company.country,
+                    "tier": tier,
+                },
             )
         )
         count += 1
@@ -387,11 +470,13 @@ def extract_relationships(
     documents = load_normalized_documents(data_dir)
     project_company_nodes(store, companies)
     sector = project_sector_edges(store, companies)
+    market_tiers = project_market_tier_edges(store, companies)
     references = project_cross_company_references(store, companies, documents)
     subsidiaries = project_subsidiary_edges(store, companies, documents)
     people = project_people_edges(store, companies, documents)
     return {
         "in_sector": sector,
+        "market_tiers": market_tiers,
         "references": references,
         "subsidiaries": subsidiaries,
         "people": people,

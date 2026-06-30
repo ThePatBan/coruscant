@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+from coruscant.common.types import GraphEdge
 from coruscant.knowledge_graph.entities import entity_key
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 
@@ -84,12 +85,49 @@ class SectorCount(BaseModel):
 
 
 class SectorExposure(BaseModel):
-    """Thematic exposure: an event on a sector (e.g. rare-earth controls -> semis)
-    -> the companies in it. 'No exposure' is a first-class answer (you're agri)."""
+    """Thematic exposure: an event on a GICS level (a sector like Information
+    Technology, or a finer sub-industry like Semiconductors) -> the companies in
+    it. Matches at any level of the hierarchy. 'No exposure' is a first-class
+    answer (you're agri)."""
 
-    sector: str
+    sector: str  # the queried term, echoed back
+    matched_level: str | None = None  # "sector" | "industry_group" | "industry" | "sub_industry"
     direct: list[EntityRef] = []  # companies operating in the sector
     network: list[NetworkProximity] = []  # peers that name an exposed company
+
+
+class GicsSubIndustry(BaseModel):
+    sub_industry: str
+    industry: str
+    code: str | None = None
+    companies: list[EntityRef] = []
+
+
+class GicsSector(BaseModel):
+    """One GICS sector with its sub-industry breakdown — the portfolio's sector
+    composition, drillable to the holding level."""
+
+    sector: str
+    companies: int
+    sub_industries: list[GicsSubIndustry] = []
+
+
+class MarketTierCount(BaseModel):
+    """One MSCI market tier and how many holdings sit in it — the portfolio's
+    Developed/Emerging/Frontier composition (pathway 4)."""
+
+    tier: str  # MSCI code: "DM" | "EM" | "FM"
+    label: str  # "Developed market" etc.
+    companies: int
+
+
+class MarketTierExposure(BaseModel):
+    """The holdings in one MSCI market tier — clicking "EM" shows your EM book.
+    Like sector exposure, an empty result is a real answer (you hold no FM)."""
+
+    tier: str
+    label: str
+    direct: list[EntityRef] = []  # companies classified in this tier
 
 
 class CoExecutiveGroup(BaseModel):
@@ -144,7 +182,9 @@ def _detail_of(properties: dict[str, object]) -> str | None:
         role = properties.get("role")
         held = f"{shares:,} shares"
         return f"{role} · {held}" if isinstance(role, str) and role else held
-    for key in ("role", "jurisdiction"):
+    # For in_sector edges the target node is already the sub-industry, so the
+    # useful complementary fact is the parent GICS sector.
+    for key in ("role", "jurisdiction", "sector"):
         value = properties.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
@@ -287,12 +327,40 @@ def jurisdiction_exposure(
     return result
 
 
+_GICS_LEVELS = ("sector", "industry_group", "industry", "sub_industry")
+
+
+def _sector_of(store: InMemoryKnowledgeGraphStore, edge: GraphEdge) -> str:
+    """The GICS sector an `in_sector` edge rolls up to: the curated `sector`
+    property, falling back to the target node's name (the SIC fallback case)."""
+    sector = _str_prop(edge.properties, "sector")
+    if sector:
+        return sector.strip()
+    return _name(store, edge.target_kind, edge.target_key).strip()
+
+
+def _classification_terms(store: InMemoryKnowledgeGraphStore, edge: GraphEdge) -> set[str]:
+    """Every taxonomy term an `in_sector` edge can be matched against, lowercased:
+    each GICS level name, the 8-digit code, and the target node name (so an
+    uncurated SIC fallback still matches by its raw label)."""
+    terms: set[str] = set()
+    name = _name(store, edge.target_kind, edge.target_key)
+    if name:
+        terms.add(name.strip().lower())
+    for key in (*_GICS_LEVELS, "code"):
+        value = _str_prop(edge.properties, key)
+        if value:
+            terms.add(value.strip().lower())
+    return terms
+
+
 def list_sectors(store: InMemoryKnowledgeGraphStore) -> list[SectorCount]:
-    """Sectors with their company counts — the menu of thematic 'events'. Taxonomy-
-    agnostic: reads whatever `in_sector` points to (SIC today, GICS once re-tagged)."""
+    """GICS sectors with their company counts — the headline thematic menu. Reads
+    the curated `sector` off each `in_sector` edge (or the target node name for an
+    uncurated SIC fallback)."""
     companies_by_sector: dict[str, set[str]] = {}
     for edge in store.edges_by_relation("in_sector"):
-        sector = _name(store, edge.target_kind, edge.target_key).strip()
+        sector = _sector_of(store, edge)
         if sector:
             companies_by_sector.setdefault(sector, set()).add(edge.source_key)
     counts = [
@@ -302,17 +370,58 @@ def list_sectors(store: InMemoryKnowledgeGraphStore) -> list[SectorCount]:
     return sorted(counts, key=lambda c: (-c.companies, c.sector))
 
 
+def gics_breakdown(store: InMemoryKnowledgeGraphStore) -> list[GicsSector]:
+    """The portfolio's GICS composition as a sector -> sub-industry -> holdings
+    tree, drillable on the World tab. Ordered by company count, descending."""
+    # sector -> sub_industry -> (industry, code, {company keys})
+    tree: dict[str, dict[str, tuple[str, str | None, set[str]]]] = {}
+    for edge in store.edges_by_relation("in_sector"):
+        sector = _sector_of(store, edge)
+        if not sector:
+            continue
+        sub = _str_prop(edge.properties, "sub_industry") or _name(store, edge.target_kind, edge.target_key).strip()
+        industry = _str_prop(edge.properties, "industry") or sub
+        code = _str_prop(edge.properties, "code")
+        _, _, members = tree.setdefault(sector, {}).setdefault(sub, (industry, code, set()))
+        members.add(edge.source_key)
+
+    sectors: list[GicsSector] = []
+    for sector, subs in tree.items():
+        sub_models = [
+            GicsSubIndustry(
+                sub_industry=sub,
+                industry=industry,
+                code=code,
+                companies=[_ref(store, "Company", key) for key in sorted(members)],
+            )
+            for sub, (industry, code, members) in subs.items()
+        ]
+        sub_models.sort(key=lambda s: (-len(s.companies), s.sub_industry))
+        total = len({key for _, _, members in subs.values() for key in members})
+        sectors.append(GicsSector(sector=sector, companies=total, sub_industries=sub_models))
+    sectors.sort(key=lambda s: (-s.companies, s.sector))
+    return sectors
+
+
 def sector_exposure(store: InMemoryKnowledgeGraphStore, sector: str) -> SectorExposure:
-    """Thematic exposure to an event on `sector` (e.g. rare-earth controls -> semis):
-    the companies operating in it, plus peers that name them. An empty result is a
-    real answer — 'no exposure, you're agri' is the insight."""
+    """Thematic exposure to an event on a GICS level `sector` — a sector
+    (Information Technology), an industry group, an industry, or a sub-industry
+    (Semiconductors), matched at whatever level the term names. Returns the
+    companies in it plus peers that name them. An empty result is a real answer —
+    'no exposure, you're agri' is the insight."""
     target = sector.strip().lower()
     result = SectorExposure(sector=sector.strip())
 
     exposed: set[str] = set()
     for edge in store.edges_by_relation("in_sector"):
-        if _name(store, edge.target_kind, edge.target_key).strip().lower() == target:
+        if target in _classification_terms(store, edge):
             exposed.add(edge.source_key)
+            if result.matched_level is None:
+                for level in _GICS_LEVELS:
+                    value = _str_prop(edge.properties, level)
+                    if value and value.strip().lower() == target:
+                        result.matched_level = level
+                        break
     for company_key in sorted(exposed):
         result.direct.append(_ref(store, "Company", company_key))
 
@@ -331,6 +440,59 @@ def sector_exposure(store: InMemoryKnowledgeGraphStore, sector: str) -> SectorEx
                     source=_str_prop(edge.properties, "source_uri"),
                 )
             )
+    return result
+
+
+_TIER_ORDER = {"DM": 0, "EM": 1, "FM": 2}
+
+
+def _tier_code(store: InMemoryKnowledgeGraphStore, key: str) -> str:
+    node = store.get_node("MarketTier", key)
+    if node is not None:
+        code = node.properties.get("code")
+        if isinstance(code, str):
+            return code
+    return key.upper()
+
+
+def list_market_tiers(store: InMemoryKnowledgeGraphStore) -> list[MarketTierCount]:
+    """The portfolio's MSCI Developed/Emerging/Frontier composition, by company
+    count — the "you're X% EM" breakdown. Ordered DM -> EM -> FM."""
+    companies_by_tier: dict[str, set[str]] = {}
+    for edge in store.edges_by_relation("in_market_tier"):
+        companies_by_tier.setdefault(edge.target_key, set()).add(edge.source_key)
+    counts = [
+        MarketTierCount(
+            tier=_tier_code(store, tier_key),
+            label=_name(store, "MarketTier", tier_key),
+            companies=len(companies),
+        )
+        for tier_key, companies in companies_by_tier.items()
+    ]
+    return sorted(counts, key=lambda c: (_TIER_ORDER.get(c.tier, 9), c.tier))
+
+
+def market_tier_exposure(store: InMemoryKnowledgeGraphStore, tier: str) -> MarketTierExposure:
+    """The holdings classified in MSCI market tier `tier` (a code like "EM" or a
+    node key like "em"). An empty result is a real answer — no Frontier exposure
+    is itself the insight."""
+    target = tier.strip().lower()
+    # Resolve the tier node by its key ("em") or its code ("EM").
+    tier_key = None
+    for node in store.nodes_of_kind("MarketTier"):
+        code = node.properties.get("code")
+        if node.key == target or (isinstance(code, str) and code.lower() == target):
+            tier_key = node.key
+            break
+    result = MarketTierExposure(tier=tier.strip().upper(), label="")
+    if tier_key is None:
+        return result
+    result.tier = _tier_code(store, tier_key)
+    result.label = _name(store, "MarketTier", tier_key)
+    members = sorted(
+        {edge.source_key for edge in store.incoming("MarketTier", tier_key) if edge.relation == "in_market_tier"}
+    )
+    result.direct = [_ref(store, "Company", key) for key in members]
     return result
 
 

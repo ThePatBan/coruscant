@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from coruscant.common.config import CompanyEntities, PersonConfig, SupplierConfig
+from coruscant.common.config import CompanyConfig, CompanyEntities, PersonConfig, SupplierConfig
 from coruscant.common.types import NormalizedDocument
 from coruscant.knowledge_graph.entities import (
     entity_names_for,
@@ -8,15 +8,23 @@ from coruscant.knowledge_graph.entities import (
     project_company_entities,
 )
 from coruscant.common.types import GraphEdge, GraphNode
+from coruscant.knowledge_graph.extraction import (
+    project_company_nodes,
+    project_market_tier_edges,
+    project_sector_edges,
+)
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 from coruscant.knowledge_graph.queries import (
     co_executives,
     entity_profile,
     exposure_to_country,
+    gics_breakdown,
     jurisdiction_exposure,
     list_entities,
     list_jurisdictions,
+    list_market_tiers,
     list_sectors,
+    market_tier_exposure,
     sector_exposure,
 )
 
@@ -187,3 +195,79 @@ def test_sector_exposure_and_no_exposure_is_an_answer() -> None:
     assert {n.company.name for n in semis.network} == {"3M"}  # names the exposed company
     # An agri portfolio: a sector we don't touch returns empty — itself the insight.
     assert sector_exposure(store, "Agricultural Production").direct == []
+
+
+def _taxonomy_store() -> InMemoryKnowledgeGraphStore:
+    """Two mapped companies (Apple/US, Infosys/India) and one uncurated company
+    with only a raw SIC industry, run through the real projectors."""
+    store = InMemoryKnowledgeGraphStore()
+    companies = [
+        CompanyConfig(slug="aapl", name="Apple Inc.", industry="Electronic Computers", country="United States"),
+        CompanyConfig(slug="infy", name="Infosys Ltd", industry="Services-Computer Programming", country="India"),
+        CompanyConfig(slug="zzz", name="Zeta Mining Co", industry="Metal Mining", country="Narnia"),
+    ]
+    project_company_nodes(store, companies)
+    project_sector_edges(store, companies)
+    project_market_tier_edges(store, companies)
+    return store
+
+
+def test_sector_edges_retag_to_gics_with_sic_fallback() -> None:
+    store = _taxonomy_store()
+    # Apple + Infosys both curate to the GICS sector, replacing their raw SIC labels.
+    sectors = {s.sector: s.companies for s in list_sectors(store)}
+    assert sectors.get("Information Technology") == 2
+    assert "Electronic Computers" not in sectors
+    # The curated edge carries GICS provenance + the raw SIC for audit.
+    edge = next(e for e in store.edges_by_relation("in_sector") if e.source_key == "aapl")
+    assert edge.properties["source"] == "gics-curated"
+    assert edge.properties["sic_industry"] == "Electronic Computers"
+    assert store.get_node("Company", "aapl").properties["gics_sector"] == "Information Technology"
+    # An uncurated company falls back to its raw SIC sector (never dropped/invented).
+    assert sectors.get("Metal Mining") == 1
+    fallback = next(e for e in store.edges_by_relation("in_sector") if e.source_key == "zzz")
+    assert fallback.properties["source"] == "sec-metadata"
+
+
+def test_gics_hierarchy_exposure_at_any_level() -> None:
+    store = _taxonomy_store()
+    # Sector-level event hits both IT holdings...
+    it = sector_exposure(store, "Information Technology")
+    assert {c.key for c in it.direct} == {"aapl", "infy"}
+    assert it.matched_level == "sector"
+    # ...but a sub-industry event is specific: only Infosys is IT Consulting.
+    consult = sector_exposure(store, "IT Consulting & Other Services")
+    assert {c.key for c in consult.direct} == {"infy"}
+    assert consult.matched_level == "sub_industry"
+    # The 8-digit code resolves too (Apple's Technology Hardware code).
+    assert {c.key for c in sector_exposure(store, "45202030").direct} == {"aapl"}
+    # A level we don't hold is a real, empty answer.
+    assert sector_exposure(store, "Semiconductors").direct == []
+
+
+def test_gics_breakdown_tree() -> None:
+    store = _taxonomy_store()
+    tree = {s.sector: s for s in gics_breakdown(store)}
+    it = tree["Information Technology"]
+    assert it.companies == 2
+    subs = {s.sub_industry: [c.key for c in s.companies] for s in it.sub_industries}
+    assert subs["IT Consulting & Other Services"] == ["infy"]
+    assert subs["Technology Hardware, Storage & Peripherals"] == ["aapl"]
+    # The sub-industry carries its 8-digit code (the MSCI-index join key).
+    infy_sub = next(s for s in it.sub_industries if s.sub_industry == "IT Consulting & Other Services")
+    assert infy_sub.code == "45102010"
+
+
+def test_market_tier_projection_and_exposure() -> None:
+    store = _taxonomy_store()
+    # US + Narnia(unmapped→skipped)? Narnia has no MSCI tier, so only US (DM) + India (EM).
+    breakdown = [(t.tier, t.label, t.companies) for t in list_market_tiers(store)]
+    assert breakdown == [("DM", "Developed market", 1), ("EM", "Emerging market", 1)]
+    # Tier resolvable by code ("EM") regardless of case.
+    em = market_tier_exposure(store, "em")
+    assert em.tier == "EM" and {c.key for c in em.direct} == {"infy"}
+    assert store.get_node("Company", "infy").properties["market_tier"] == "EM"
+    # No Frontier exposure is a real answer.
+    assert market_tier_exposure(store, "FM").direct == []
+    # An unmapped country carries no tier edge.
+    assert store.get_node("Company", "zzz").properties.get("market_tier") is None

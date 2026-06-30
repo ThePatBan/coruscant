@@ -2670,11 +2670,182 @@ button.wp-tile.wp-cta:hover {
   font-size: 12px;
 }
 
+/* --- Portfolio composition (market tiers + GICS tree) --- */
+.portfolio-composition {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.pc-head .muted.small {
+  margin-top: 3px;
+  line-height: 1.5;
+  max-width: 70ch;
+}
+.pc-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* MSCI market-tier bar */
+.tier-bar {
+  display: flex;
+  height: 12px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+}
+.tier-seg {
+  height: 100%;
+  min-width: 2px;
+  transition: width 0.3s ease;
+}
+.tier-dm {
+  background: var(--accent);
+}
+.tier-em {
+  background: #f3b94d;
+}
+.tier-fm {
+  background: #b388ff;
+}
+.tier-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.tier-leg {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.tdot {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  display: inline-block;
+  background: var(--accent);
+}
+.tdot.tier-dm { background: var(--accent); }
+.tdot.tier-em { background: #f3b94d; }
+.tdot.tier-fm { background: #b388ff; }
+
+/* GICS sector → sub-industry tree */
+.gics-list,
+.gics-sublist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.gics-sublist {
+  margin: 2px 0 6px 22px;
+  border-left: 1px solid var(--border);
+  padding-left: 8px;
+}
+.gics-row,
+.gics-subrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 4px 6px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.gics-row:hover,
+.gics-subrow:hover {
+  background: var(--bg-hover);
+}
+.gics-row.active {
+  background: var(--accent-soft);
+}
+.gics-caret {
+  width: 12px;
+  color: var(--text-faint);
+  font-size: 10px;
+}
+.gics-name {
+  flex: 0 0 200px;
+  font-size: 13px;
+  font-weight: 550;
+}
+.gics-bar {
+  flex: 1;
+  height: 7px;
+  background: var(--bg-elev-2);
+  border-radius: 4px;
+  overflow: hidden;
+  min-width: 40px;
+}
+.gics-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+  border-radius: 4px;
+}
+.gics-count {
+  width: 22px;
+  text-align: right;
+  font-size: 13px;
+  font-weight: 600;
+}
+.gics-pct {
+  width: 40px;
+  text-align: right;
+  font-size: 12px;
+}
+.gics-subrow {
+  justify-content: space-between;
+  padding: 3px 6px;
+}
+.gics-subname {
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+.gics-subrow.active .gics-subname {
+  color: var(--text);
+}
+.gics-subcount {
+  font-size: 12px;
+}
+.gics-holdings {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 2px 6px 6px 6px;
+  line-height: 1.5;
+}
+.gics-code {
+  font-size: 11px;
+}
+
+/* Selected-country tier context line */
+.ci-tier {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 8px 10px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+
 @media (max-width: 900px) {
   .world-portfolio {
     grid-template-columns: repeat(2, 1fr);
   }
   .world-main {
     grid-template-columns: 1fr;
+  }
+  .gics-name {
+    flex-basis: 130px;
   }
 }
