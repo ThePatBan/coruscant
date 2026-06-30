@@ -107,3 +107,8 @@ class SqliteUserStore:
         with Session(self.engine) as session:
             total = session.scalar(select(func.count()).select_from(UserRow))
             return int(total or 0)
+
+    def list_users(self) -> list[StoredUser]:
+        with Session(self.engine) as session:
+            rows = session.scalars(select(UserRow).order_by(UserRow.created_at)).all()
+            return [_to_user(row) for row in rows]
