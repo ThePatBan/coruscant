@@ -203,6 +203,8 @@ export interface Relationship {
   // Provenance of the edge, e.g. "reference-entities" (curated graph) or
   // "document-mention". Returned by the backend; surfaced as a provenance hint.
   source?: string | null;
+  // Human-readable edge fact: officer role (employs) / subsidiary jurisdiction.
+  detail?: string | null;
 }
 
 export interface EntityProfile {

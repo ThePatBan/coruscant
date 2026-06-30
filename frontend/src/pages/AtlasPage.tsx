@@ -625,11 +625,12 @@ function TableView({
               <h3>Key people</h3>
               <span className="pill">{people.length}</span>
             </div>
-            <div className="tbl-grid">
+            <div className="tbl-people">
               {people.map((r, i) => (
-                <span className="relchip tier-control" key={i}>
-                  {r.other.name}
-                </span>
+                <div className="tbl-person" key={i}>
+                  <span className="tp-name">{r.other.name}</span>
+                  {r.detail ? <span className="tp-role">{r.detail}</span> : null}
+                </div>
               ))}
             </div>
           </section>
@@ -643,8 +644,9 @@ function TableView({
             </div>
             <div className="tbl-grid">
               {subsidiaries.map((r, i) => (
-                <span className="relchip tier-ownership" key={i}>
+                <span className="relchip tier-ownership" key={i} title={r.detail ?? undefined}>
                   {r.other.name}
+                  {r.detail ? <span className="relchip-sub"> · {r.detail}</span> : null}
                 </span>
               ))}
             </div>

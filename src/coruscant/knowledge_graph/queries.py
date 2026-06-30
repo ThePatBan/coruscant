@@ -24,6 +24,7 @@ class Relationship(BaseModel):
     direction: str  # "out" | "in"
     other: EntityRef
     source: str | None = None  # provenance of the edge (e.g. "reference-entities")
+    detail: str | None = None  # human-readable edge fact: officer role / subsidiary jurisdiction
 
 
 class EntityProfile(BaseModel):
@@ -79,6 +80,16 @@ def _source_of(properties: dict[str, object]) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _detail_of(properties: dict[str, object]) -> str | None:
+    """The most useful human-readable fact carried on the edge (officer role,
+    subsidiary jurisdiction). Stored on the edge but otherwise dropped by the API."""
+    for key in ("role", "jurisdiction"):
+        value = properties.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
 def entity_profile(store: InMemoryKnowledgeGraphStore, kind: str, key: str) -> EntityProfile | None:
     node = store.get_node(kind, key)
     if node is None:
@@ -94,6 +105,7 @@ def entity_profile(store: InMemoryKnowledgeGraphStore, kind: str, key: str) -> E
                 direction="out",
                 other=_ref(store, edge.target_kind, edge.target_key),
                 source=_source_of(edge.properties),
+                detail=_detail_of(edge.properties),
             )
         )
     for edge in store.incoming(kind, key):
@@ -106,6 +118,7 @@ def entity_profile(store: InMemoryKnowledgeGraphStore, kind: str, key: str) -> E
                 direction="in",
                 other=_ref(store, edge.source_kind, edge.source_key),
                 source=_source_of(edge.properties),
+                detail=_detail_of(edge.properties),
             )
         )
     return EntityProfile(
