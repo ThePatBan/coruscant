@@ -29,8 +29,14 @@ export function AtlasPage() {
   const [picking, setPicking] = useState(false);
   const [tableOpen, setTableOpen] = useState(false); // drill level 3: table/text view
   const stats = data ? graphStats(data.graph) : null;
-  const ukCount = data?.companies.filter((c) => c.country === "United Kingdom").length ?? 0;
-  const usCount = data?.companies.filter((c) => c.country === "United States").length ?? 0;
+  // Companies by country, for the transatlantic / global layer.
+  const FLAG: Record<string, string> = { "United States": "🇺🇸", "United Kingdom": "🇬🇧", India: "🇮🇳" };
+  const byCountry = new Map<string, number>();
+  for (const c of data?.companies ?? []) if (c.country) byCountry.set(c.country, (byCountry.get(c.country) ?? 0) + 1);
+  const countrySummary = [...byCountry.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([country, n]) => `${FLAG[country] ?? "🏳"} ${n}`)
+    .join(" · ");
 
   const clearPath = useCallback(() => {
     setPathFrom(null);
@@ -348,9 +354,9 @@ export function AtlasPage() {
               <span className="pill">{stats.companies} companies</span>
               <span className="pill">{stats.links} edges</span>
               <span className="pill">{stats.bridges} bridges</span>
-              {ukCount > 0 ? (
+              {byCountry.size > 1 ? (
                 <span className="pill" title="Companies by country">
-                  🇺🇸 {usCount} · 🇬🇧 {ukCount}
+                  {countrySummary}
                 </span>
               ) : null}
               {expansion.nodes.length > 0 ? (

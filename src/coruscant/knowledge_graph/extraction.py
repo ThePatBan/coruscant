@@ -59,6 +59,8 @@ _FALSE_COMENTIONS: set[tuple[str, str]] = {
     ("deo", "aapl"),  # Diageo: "Captain Morgan Sliced Apple" — the fruit/flavour, not Apple Inc.
     ("shel", "amzn"),  # Shell: "the Peruvian Amazon" — the rainforest, not Amazon.com
     ("bti", "mrk"),  # BAT: "Merck Group" = Merck KGaA (Germany), not Merck & Co (US)
+    ("hdb", "aapl"),  # HDFC Bank: a director's prior employer "Apple Industries Ltd" (India), not Apple Inc.
+    ("ytra", "aapl"),  # Yatra: shareholder "Apple Orange LLC" (a fund), not Apple Inc.
 }
 
 
