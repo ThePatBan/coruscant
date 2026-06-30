@@ -27,11 +27,21 @@ interface Atlas3DProps {
   companies: Company[];
   profiles: Map<string, EntityProfile>;
   selectedSlug?: string;
+  compareSlug?: string;
   onSelectCompany: (slug: string, name: string) => void;
+  onToggleCompare?: (slug: string, name: string) => void;
   onBackground: () => void;
 }
 
-export function Atlas3D({ companies, profiles, selectedSlug, onSelectCompany, onBackground }: Atlas3DProps) {
+export function Atlas3D({
+  companies,
+  profiles,
+  selectedSlug,
+  compareSlug,
+  onSelectCompany,
+  onToggleCompare,
+  onBackground,
+}: Atlas3DProps) {
   const data = useMemo(() => buildForceData(companies, profiles), [companies, profiles]);
   const fgRef = useRef<any>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -63,14 +73,25 @@ export function Atlas3D({ companies, profiles, selectedSlug, onSelectCompany, on
 
   // Click-to-isolate: the selected company's ego subgraph (it + its direct
   // neighbours — subsidiaries and co-mentioned peers). When set, everything else
-  // is hidden and the camera frames just this.
+  // is hidden and the camera frames just this. In compare mode (a second company
+  // selected) the focus is instead the OVERLAP: the two companies plus only the
+  // neighbours they share (a shared director, a shared peer) — the answer to
+  // "what do these two have in common".
   const focusSet = useMemo(() => {
     if (!selectedSlug) return null;
-    const id = `Company:${selectedSlug}`;
-    const set = new Set<string>([id]);
-    for (const nb of adjacency.get(id) ?? []) set.add(nb);
+    const idA = `Company:${selectedSlug}`;
+    if (compareSlug && compareSlug !== selectedSlug) {
+      const idB = `Company:${compareSlug}`;
+      const nA = adjacency.get(idA) ?? new Set<string>();
+      const nB = adjacency.get(idB) ?? new Set<string>();
+      const set = new Set<string>([idA, idB]);
+      for (const x of nA) if (nB.has(x)) set.add(x); // shared neighbours = the overlap
+      return set;
+    }
+    const set = new Set<string>([idA]);
+    for (const nb of adjacency.get(idA) ?? []) set.add(nb);
     return set;
-  }, [selectedSlug, adjacency]);
+  }, [selectedSlug, compareSlug, adjacency]);
 
   // Sector-clustering force + a gentler charge, plus auto-rotate. Deferred to the
   // graph's first engine tick (onEngineTick) so the internal d3 layout exists
@@ -161,13 +182,18 @@ export function Atlas3D({ companies, profiles, selectedSlug, onSelectCompany, on
     [adjacency, data],
   );
 
-  // Clicking a company selects it (opens the rail) and isolates its subgraph via
-  // the focusSet effect above; clicking a subsidiary jumps to its parent company.
+  // Clicking a company selects it (opens the rail) and isolates its subgraph;
+  // SHIFT-clicking a second company compares the two (their overlap). Clicking a
+  // subsidiary/person jumps to its parent company.
   const onClick = useCallback(
-    (node: any) => {
+    (node: any, event: any) => {
       if (!node) return;
       if (node.kind === "Company" && node.slug) {
-        onSelectCompany(node.slug, node.name);
+        if (event?.shiftKey && selectedSlug && node.slug !== selectedSlug) {
+          onToggleCompare?.(node.slug, node.name);
+        } else {
+          onSelectCompany(node.slug, node.name);
+        }
         return;
       }
       for (const nbId of adjacency.get(node.id) ?? []) {
@@ -181,7 +207,7 @@ export function Atlas3D({ companies, profiles, selectedSlug, onSelectCompany, on
         }
       }
     },
-    [onSelectCompany, adjacency, companies],
+    [onSelectCompany, onToggleCompare, selectedSlug, adjacency, companies],
   );
 
   const dimming = hiNodes.size > 0;

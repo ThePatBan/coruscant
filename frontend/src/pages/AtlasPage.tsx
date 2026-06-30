@@ -1,10 +1,10 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { api, type ChangeSet, type EntityProfile } from "../api";
+import { api, type ChangeSet, type Company, type EntityProfile, type Relationship } from "../api";
 import { Cat, Loading, RelationGroups, Skeleton } from "../components";
 import { graphStats, GraphIncompleteNote, type GEdge, type GNode, useRelGraph } from "../graph";
 import { useAsync } from "../hooks";
-import { isEntityRelation, kindGlyph, relationTier, relationVerb, TIERS } from "../relations";
+import { coarseSector, isEntityRelation, kindGlyph, relationTier, relationVerb, TIERS } from "../relations";
 import type { ChangeCount } from "../spatial";
 
 // Lazy-loaded so ThreeJS / react-force-graph-3d (a large bundle) is fetched only
@@ -20,6 +20,7 @@ export function AtlasPage() {
   const { data, loading } = useRelGraph();
   const [searchParams, setSearchParams] = useSearchParams();
   const [selected, setSelected] = useState<GNode | null>(null);
+  const [compareSlug, setCompareSlug] = useState<string | null>(null); // 2nd company for overlap compare
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [profiles, setProfiles] = useState<Map<string, EntityProfile>>(new Map());
   const [pending, setPending] = useState<Set<string>>(new Set());
@@ -85,19 +86,20 @@ export function AtlasPage() {
     if (selected) loadProfile(selected);
   }, [selected, loadProfile]);
 
-  // Escape unwinds one drill level: table → isolated graph → overview.
+  // Escape unwinds one drill level: table → compare → isolated graph → overview.
   useEffect(() => {
-    if (!selected && !picking && !pathFrom && !tableOpen) return;
+    if (!selected && !picking && !pathFrom && !tableOpen && !compareSlug) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       if (tableOpen) setTableOpen(false);
+      else if (compareSlug) setCompareSlug(null);
       else if (picking) clearPath();
       else if (pathFrom && pathTo) clearPath();
       else setSelected(null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, picking, pathFrom, pathTo, tableOpen, clearPath]);
+  }, [selected, picking, pathFrom, pathTo, tableOpen, compareSlug, clearPath]);
 
   // Clearing the selection (back to overview) also closes the table.
   useEffect(() => {
@@ -216,14 +218,32 @@ export function AtlasPage() {
   }, []);
   const onBackground = useCallback(() => {
     setSelected(null);
+    setCompareSlug(null);
     clearPath();
   }, [clearPath]);
 
+  // The second company to compare against `selected` (the overlap view).
+  const compareNode = useMemo(
+    () => (compareSlug ? (data?.graph.nodes.find((n) => n.tracked && n.key === compareSlug) ?? null) : null),
+    [compareSlug, data],
+  );
+  const onToggleCompare = useCallback(
+    (slug: string) => {
+      setCompareSlug((cur) => (cur === slug ? null : slug)); // shift-click again clears it
+    },
+    [],
+  );
+  // Load the compared company's profile (selection loads its own elsewhere).
+  useEffect(() => {
+    if (compareNode) loadProfile(compareNode);
+  }, [compareNode, loadProfile]);
+
   // ---- shareable view state: round-trip selection / path / expansions to the URL
-  const desired = useRef<{ sel?: string; from?: string; to?: string; exp: string[] } | null>(null);
+  const desired = useRef<{ sel?: string; cmp?: string; from?: string; to?: string; exp: string[] } | null>(null);
   if (desired.current === null) {
     desired.current = {
       sel: searchParams.get("sel") ?? undefined,
+      cmp: searchParams.get("cmp") ?? undefined,
       from: searchParams.get("from") ?? undefined,
       to: searchParams.get("to") ?? undefined,
       exp: (searchParams.get("exp") ?? "").split(",").filter(Boolean),
@@ -253,6 +273,7 @@ export function AtlasPage() {
       const n = nodeById.get(d.sel);
       if (n) setSelected(n);
     }
+    if (d.cmp && !compareSlug) setCompareSlug(d.cmp);
     if (d.from && d.to && !pathFrom) {
       const a = nodeById.get(d.from);
       const b = nodeById.get(d.to);
@@ -306,10 +327,11 @@ export function AtlasPage() {
       next.set("to", pathTo.id);
     } else if (selected) {
       next.set("sel", selected.id);
+      if (compareSlug) next.set("cmp", compareSlug);
     }
     if (expandedIds.size) next.set("exp", [...expandedIds].join(","));
     setSearchParams(next, { replace: true });
-  }, [selected, pathFrom, pathTo, expandedIds, setSearchParams]);
+  }, [selected, compareSlug, pathFrom, pathTo, expandedIds, setSearchParams]);
 
   return (
     <div className="atlas">
@@ -361,14 +383,22 @@ export function AtlasPage() {
               companies={data.companies}
               profiles={data.profiles}
               selectedSlug={selected?.key}
+              compareSlug={compareSlug ?? undefined}
               onSelectCompany={(slug) => {
                 clearPath();
+                setCompareSlug(null);
                 setSelected(data.graph.nodes.find((n) => n.tracked && n.key === slug) ?? null);
               }}
+              onToggleCompare={onToggleCompare}
               onBackground={onBackground}
             />
           </Suspense>
         )}
+        {selected && !compareNode && !tableOpen ? (
+          <div className="atlas-hint" role="note">
+            ⇧-click another company to compare
+          </div>
+        ) : null}
         {selected && !tableOpen ? (
           <button className="atlas-back" onClick={onBackground}>
             ← Overview
@@ -376,7 +406,7 @@ export function AtlasPage() {
         ) : null}
       </div>
 
-      {tableOpen && selected ? (
+      {tableOpen && selected && !compareNode ? (
         <TableView
           node={selected}
           profile={profiles.get(selected.id)}
@@ -386,7 +416,18 @@ export function AtlasPage() {
         />
       ) : null}
 
-      {pathFrom && pathTo ? (
+      {selected && compareNode ? (
+        <ComparePanel
+          a={selected}
+          b={compareNode}
+          profileA={profiles.get(selected.id)}
+          profileB={profiles.get(compareNode.id)}
+          loading={(pending.has(compareNode.id) && !profiles.has(compareNode.id)) || (pending.has(selected.id) && !profiles.has(selected.id))}
+          companies={data?.companies ?? []}
+          onClear={() => setCompareSlug(null)}
+          onClose={onBackground}
+        />
+      ) : pathFrom && pathTo ? (
         <PathPanel
           from={pathFrom}
           to={pathTo}
@@ -525,6 +566,139 @@ function PathPanel({
           </ol>
         </div>
       )}
+    </aside>
+  );
+}
+
+// Compare two companies → their specific overlap: shared leadership/board (the
+// board interlocks), shared co-mentioned peers, a direct co-mention, same sector.
+const GOV_RELS = new Set(["employs", "board_member"]);
+
+function ComparePanel({
+  a,
+  b,
+  profileA,
+  profileB,
+  loading,
+  companies,
+  onClear,
+  onClose,
+}: {
+  a: GNode;
+  b: GNode;
+  profileA?: EntityProfile;
+  profileB?: EntityProfile;
+  loading: boolean;
+  companies: Company[];
+  onClear: () => void;
+  onClose: () => void;
+}) {
+  // Shared leadership/board: a person both companies connect to (the interlock).
+  const govA = new Map<string, Relationship>();
+  for (const r of profileA?.relationships ?? []) {
+    if (GOV_RELS.has(r.relation) && r.other.kind === "Person" && !govA.has(r.other.key)) govA.set(r.other.key, r);
+  }
+  const sharedPeople: { name: string; key: string; roleA?: string | null; roleB?: string | null }[] = [];
+  const seenPerson = new Set<string>();
+  for (const r of profileB?.relationships ?? []) {
+    if (GOV_RELS.has(r.relation) && r.other.kind === "Person" && govA.has(r.other.key) && !seenPerson.has(r.other.key)) {
+      seenPerson.add(r.other.key);
+      sharedPeople.push({ name: r.other.name, key: r.other.key, roleA: govA.get(r.other.key)!.detail, roleB: r.detail });
+    }
+  }
+  // Shared co-mentioned peers (companies both name in their filings).
+  const refsA = new Set((profileA?.relationships ?? []).filter((r) => r.relation === "references").map((r) => r.other.key));
+  const sharedPeers = (profileB?.relationships ?? []).filter((r) => r.relation === "references" && refsA.has(r.other.key));
+  // A direct co-mention between the two.
+  const direct =
+    (profileA?.relationships ?? []).some((r) => r.relation === "references" && r.other.key === b.key) ||
+    (profileB?.relationships ?? []).some((r) => r.relation === "references" && r.other.key === a.key);
+  const sectorOf = (key: string) => {
+    const c = companies.find((co) => co.slug === key);
+    return c ? coarseSector(c.industry) : undefined;
+  };
+  const sectorA = sectorOf(a.key);
+  const sameSector = sectorA && sectorA === sectorOf(b.key) ? sectorA : null;
+  const nothing = !loading && sharedPeople.length === 0 && sharedPeers.length === 0 && !direct && !sameSector;
+
+  return (
+    <aside className="evidence-rail compare-rail" aria-label={`${a.name} compared with ${b.name}`}>
+      <div className="rail-head">
+        <span className="rail-kind">⇆ Compare</span>
+        <button className="rail-close" onClick={onClose} aria-label="Close (Esc)" title="Overview (Esc)">
+          ✕
+        </button>
+      </div>
+      <h2 className="compare-title">
+        <span>{a.name}</span>
+        <span className="compare-amp">∩</span>
+        <span>{b.name}</span>
+      </h2>
+
+      {loading ? (
+        <Skeleton />
+      ) : nothing ? (
+        <p className="faint compare-empty">
+          No shared leadership, peers, or sector — these two don't overlap directly. Their connection, if any, runs
+          through longer chains.
+        </p>
+      ) : (
+        <>
+          {direct ? (
+            <div className="compare-flag">
+              <span className="relchip tier-reference">{a.name}</span> and{" "}
+              <span className="relchip tier-reference">{b.name}</span> name each other in their filings.
+            </div>
+          ) : null}
+          {sameSector ? <div className="compare-flag">Both operate in {sameSector}.</div> : null}
+
+          {sharedPeople.length > 0 ? (
+            <section className="rail-section">
+              <div className="tbl-head">
+                <h3>Shared leadership &amp; board</h3>
+                <span className="pill">{sharedPeople.length}</span>
+              </div>
+              <div className="compare-people">
+                {sharedPeople.map((p) => (
+                  <div className="compare-person" key={p.key}>
+                    <span className="tp-name">{p.name}</span>
+                    <span className="compare-roles">
+                      <span className="cr">
+                        <em>{a.name}</em> {p.roleA ?? "—"}
+                      </span>
+                      <span className="cr">
+                        <em>{b.name}</em> {p.roleB ?? "—"}
+                      </span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          {sharedPeers.length > 0 ? (
+            <section className="rail-section">
+              <div className="tbl-head">
+                <h3>Both connected to</h3>
+                <span className="pill">{sharedPeers.length}</span>
+              </div>
+              <div className="tbl-grid">
+                {sharedPeers.map((r, i) => (
+                  <span className="relchip tier-reference" key={i}>
+                    {r.other.name}
+                  </span>
+                ))}
+              </div>
+            </section>
+          ) : null}
+        </>
+      )}
+
+      <div className="rail-actions">
+        <button className="btn ghost" onClick={onClear}>
+          ← Back to {a.name}
+        </button>
+      </div>
     </aside>
   );
 }
