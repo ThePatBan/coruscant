@@ -3,6 +3,7 @@ import { NavLink, Navigate, Outlet, Route, Routes, useLocation } from "react-rou
 import { api, NOTIFICATIONS_EVENT } from "./api";
 import { useAuth } from "./auth";
 import { useAsync } from "./hooks";
+import { AdminPage } from "./pages/AdminPage";
 import { AlertsPage } from "./pages/AlertsPage";
 import { AtlasPage } from "./pages/AtlasPage";
 import { AskPage } from "./pages/AskPage";
@@ -36,6 +37,7 @@ const NAV = [
   { to: "/compare", label: "Compare", icon: "⇄" },
   { to: "/sources", label: "Sources", icon: "⌥" },
   { to: "/monitoring", label: "Monitoring", icon: "◉" },
+  { to: "/admin", label: "Admin", icon: "⌘" },
   { to: "/settings", label: "Settings", icon: "⚙" },
 ];
 
@@ -55,6 +57,7 @@ const CRUMBS: Array<[RegExp, string]> = [
   [/^\/compare/, "Compare documents"],
   [/^\/sources$/, "Sources"],
   [/^\/monitoring/, "Source monitoring"],
+  [/^\/admin/, "Admin console"],
   [/^\/settings/, "Settings"],
 ];
 
@@ -193,6 +196,7 @@ export default function App() {
         <Route path="/compare" element={<ComparePage />} />
         <Route path="/sources" element={<SourcesPage />} />
         <Route path="/monitoring" element={<MonitoringPage />} />
+        <Route path="/admin" element={<AdminPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

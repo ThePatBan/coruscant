@@ -63,6 +63,8 @@ from coruscant.intelligence.models import ChangeSet
 from coruscant.intelligence.models import DocumentSummary as AISummary
 from coruscant.intelligence.models import ExtractedEvent
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
+from coruscant import llm
+from coruscant.llm import LLMGateway
 from coruscant.knowledge_graph.queries import (
     CoExecutiveResult,
     EntityProfile,
@@ -1148,6 +1150,89 @@ def create_app(
             recent_risks=risks,
             recent_opportunities=opportunities,
         )
+
+    # ---- Admin console (single pane): model routing + customers --------------
+    class ProviderOut(BaseModel):
+        kind: str
+        base_url: str
+        label: str
+        has_key: bool  # never expose the key itself
+
+    class RouteOut(BaseModel):
+        provider: str
+        model: str
+
+    class LLMConfigOut(BaseModel):
+        tiers: list[str]
+        tier_hints: dict[str, str]
+        providers: dict[str, ProviderOut]
+        routes: dict[str, RouteOut]
+        available: dict[str, bool]  # per-tier: route resolves + key present
+
+    class ProviderIn(BaseModel):
+        kind: str
+        base_url: str
+        label: str = ""
+        api_key: str | None = None  # None = keep existing; "" = clear; str = set
+
+    class LLMConfigIn(BaseModel):
+        providers: dict[str, ProviderIn]
+        routes: dict[str, RouteOut]
+
+    class CustomerOut(BaseModel):
+        email: str
+        role: str
+        created_at: str
+        api_calls: int
+
+    def _llm_config_out(config: llm.LLMRouterConfig) -> LLMConfigOut:
+        gateway = LLMGateway(settings.data_dir)
+        return LLMConfigOut(
+            tiers=list(llm.TIERS),
+            tier_hints=llm.TIER_HINTS,
+            providers={
+                key: ProviderOut(kind=p.kind, base_url=p.base_url, label=p.label, has_key=bool(p.api_key))
+                for key, p in config.providers.items()
+            },
+            routes={key: RouteOut(provider=r.provider, model=r.model) for key, r in config.routes.items()},
+            available={tier: gateway.available(tier) for tier in llm.TIERS},
+        )
+
+    @app.get("/admin/llm", response_model=LLMConfigOut)
+    def admin_llm_get(_: StoredUser = Depends(require_admin)) -> LLMConfigOut:
+        return _llm_config_out(llm.load_config(settings.data_dir))
+
+    @app.put("/admin/llm", response_model=LLMConfigOut)
+    def admin_llm_put(body: LLMConfigIn, _: StoredUser = Depends(require_admin)) -> LLMConfigOut:
+        current = llm.load_config(settings.data_dir)
+        providers: dict[str, llm.ProviderConfig] = {}
+        for key, incoming in body.providers.items():
+            existing = current.providers.get(key)
+            api_key = existing.api_key if existing else ""
+            if incoming.api_key is not None:  # explicit set (or clear with "")
+                api_key = incoming.api_key
+            providers[key] = llm.ProviderConfig(
+                kind=incoming.kind, base_url=incoming.base_url, label=incoming.label, api_key=api_key
+            )
+        routes = {key: llm.Route(provider=r.provider, model=r.model) for key, r in body.routes.items()}
+        updated = llm.LLMRouterConfig(providers=providers, routes=routes)
+        llm.save_config(settings.data_dir, updated)
+        return _llm_config_out(updated)
+
+    @app.post("/admin/llm/test/{tier}")
+    def admin_llm_test(tier: str, _: StoredUser = Depends(require_admin)) -> dict[str, object]:
+        return LLMGateway(settings.data_dir).test(tier)
+
+    @app.get("/admin/customers", response_model=list[CustomerOut])
+    def admin_customers(_: StoredUser = Depends(require_admin)) -> list[CustomerOut]:
+        users = state.auth.store.list_users() if state.auth is not None else []
+        out: list[CustomerOut] = []
+        for user in users:
+            calls = state.usage.summary([user.email]).total if state.usage is not None else 0
+            out.append(
+                CustomerOut(email=user.email, role=user.role, created_at=user.created_at, api_calls=calls)
+            )
+        return out
 
     return app
 

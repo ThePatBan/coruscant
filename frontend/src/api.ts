@@ -408,6 +408,53 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 const get = <T>(path: string) => request<T>(path);
 const post = <T>(path: string, body: unknown) =>
   request<T>(path, { method: "POST", body: JSON.stringify(body) });
+const put = <T>(path: string, body: unknown) =>
+  request<T>(path, { method: "PUT", body: JSON.stringify(body) });
+
+// ---- Admin console (model routing + customers) -----------------------------
+export interface LLMProvider {
+  kind: string;
+  base_url: string;
+  label: string;
+  has_key: boolean;
+}
+export interface LLMRoute {
+  provider: string;
+  model: string;
+}
+export interface LLMConfig {
+  tiers: string[];
+  tier_hints: Record<string, string>;
+  providers: Record<string, LLMProvider>;
+  routes: Record<string, LLMRoute>;
+  available: Record<string, boolean>;
+}
+// On save, omit api_key to keep the stored one; send "" to clear, or a new value.
+export interface LLMProviderIn {
+  kind: string;
+  base_url: string;
+  label: string;
+  api_key?: string | null;
+}
+export interface LLMConfigIn {
+  providers: Record<string, LLMProviderIn>;
+  routes: Record<string, LLMRoute>;
+}
+export interface LLMTestResult {
+  ok: boolean;
+  tier: string;
+  model?: string | null;
+  provider?: string;
+  latency_ms?: number;
+  sample?: string;
+  error?: string;
+}
+export interface Customer {
+  email: string;
+  role: string;
+  created_at: string;
+  api_calls: number;
+}
 
 export const api = {
   // data
@@ -499,4 +546,10 @@ export const api = {
   me: () => get<CurrentUser>("/auth/me"),
   resetRequest: (email: string) =>
     post<{ email: string; reset_token: string | null }>("/auth/reset/request", { email }),
+
+  // admin console
+  adminLLM: () => get<LLMConfig>("/admin/llm"),
+  adminLLMSave: (config: LLMConfigIn) => put<LLMConfig>("/admin/llm", config),
+  adminLLMTest: (tier: string) => post<LLMTestResult>(`/admin/llm/test/${tier}`, {}),
+  adminCustomers: () => get<Customer[]>("/admin/customers"),
 };
