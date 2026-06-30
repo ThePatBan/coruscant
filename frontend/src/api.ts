@@ -207,6 +207,26 @@ export interface Relationship {
   detail?: string | null;
 }
 
+// Event -> portfolio exposure. Direct = a legal entity in the jurisdiction
+// (Exhibit-21, evidence-backed). Network = peers whose filings name a directly-
+// exposed company (an orientation hint, not dollar magnitude).
+export interface JurisdictionFootprint {
+  company: EntityRef;
+  subsidiaries: string[];
+  source?: string | null;
+}
+export interface NetworkProximity {
+  company: EntityRef;
+  names: EntityRef;
+  entity_name?: string | null;
+  source?: string | null;
+}
+export interface JurisdictionExposure {
+  jurisdiction: string;
+  direct: JurisdictionFootprint[];
+  network: NetworkProximity[];
+}
+
 export interface EntityProfile {
   entity: EntityRef;
   properties: Record<string, unknown>;
@@ -471,6 +491,8 @@ export const api = {
   },
   document: (id: string) => get<DocumentDetail>(`/documents/${encodeURIComponent(id)}`),
   companyGraph: (slug: string) => get<GraphResponse>(`/graph/company/${encodeURIComponent(slug)}`),
+  jurisdictionExposure: (jurisdiction: string) =>
+    get<JurisdictionExposure>(`/graph/jurisdiction-exposure?jurisdiction=${encodeURIComponent(jurisdiction)}`),
   retrieve: (query: string, topK = 6) => post<RetrieveResponse>("/retrieve", { query, top_k: topK }),
   // intelligence
   dashboard: () => get<Dashboard>("/dashboard"),

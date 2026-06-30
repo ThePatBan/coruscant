@@ -22,9 +22,11 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { SourcesPage } from "./pages/SourcesPage";
 import { WatchlistsPage } from "./pages/WatchlistsPage";
 import { WorkspacesPage } from "./pages/WorkspacesPage";
+import { WorldPage } from "./pages/WorldPage";
 
 const NAV = [
-  { to: "/atlas", label: "Atlas", icon: "✦" },
+  { to: "/world", label: "World", icon: "◍" },
+  { to: "/atlas", label: "Company graph", icon: "✦" },
   { to: "/dashboard", label: "Dashboard", icon: "◧" },
   { to: "/search", label: "Search", icon: "⌕" },
   { to: "/companies", label: "Companies", icon: "▤" },
@@ -42,7 +44,8 @@ const NAV = [
 ];
 
 const CRUMBS: Array<[RegExp, string]> = [
-  [/^\/atlas/, "Atlas"],
+  [/^\/world/, "World markets"],
+  [/^\/atlas/, "Company graph"],
   [/^\/dashboard/, "Dashboard"],
   [/^\/search/, "Search the evidence"],
   [/^\/companies\/.+/, "Company"],
@@ -123,14 +126,14 @@ function ProtectedLayout() {
   }
 
   const crumb = CRUMBS.find(([re]) => re.test(location.pathname))?.[1] ?? "";
-  // Atlas is a full-bleed spatial surface: it opts out of the centered, padded
-  // content column so the canvas fills the viewport.
-  const fullBleed = /^\/atlas/.test(location.pathname);
+  // Atlas and World are full-bleed spatial surfaces: they opt out of the centered,
+  // padded content column so the canvas/globe fills the viewport.
+  const fullBleed = /^\/(atlas|world)/.test(location.pathname);
 
   return (
     <div className="app">
       <aside className="sidebar">
-        <NavLink to="/atlas" className="brand">
+        <NavLink to="/world" className="brand">
           <div className="logo" />
           <div>
             <div className="name">Coruscant</div>
@@ -181,6 +184,7 @@ export default function App() {
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route element={<ProtectedLayout />}>
+        <Route path="/world" element={<WorldPage />} />
         <Route path="/atlas" element={<AtlasPage />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/search" element={<AskPage />} />

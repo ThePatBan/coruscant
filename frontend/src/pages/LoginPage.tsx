@@ -6,7 +6,7 @@ import { useAuth } from "../auth";
 export function LoginPage() {
   const { email: current, login, register } = useAuth();
   const navigate = useNavigate();
-  const from = (useLocation().state as { from?: string } | null)?.from ?? "/atlas";
+  const from = (useLocation().state as { from?: string } | null)?.from ?? "/world";
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("demo@coruscant.local");
   const [password, setPassword] = useState("coruscant-demo");

@@ -7,12 +7,17 @@ from coruscant.knowledge_graph.entities import (
     link_document_mentions,
     project_company_entities,
 )
+from coruscant.common.types import GraphEdge, GraphNode
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 from coruscant.knowledge_graph.queries import (
     co_executives,
     entity_profile,
     exposure_to_country,
+    jurisdiction_exposure,
     list_entities,
+    list_jurisdictions,
+    list_sectors,
+    sector_exposure,
 )
 
 
@@ -136,3 +141,49 @@ def test_list_entities_by_kind() -> None:
     people = list_entities(store, "Person")
     assert {p.name for p in people} == {"Tim Cook", "Satya Nadella"}
     assert all(p.kind == "Person" for p in people)
+
+
+def _exposure_store() -> InMemoryKnowledgeGraphStore:
+    """Seeds the edge types the real loaded graph carries: has_subsidiary (with a
+    jurisdiction), in_sector, and references."""
+    store = InMemoryKnowledgeGraphStore()
+    for slug, name in [("hon", "Honeywell"), ("pg", "P&G"), ("mmm", "3M"), ("ko", "Coca-Cola")]:
+        store.upsert_node(GraphNode(kind="Company", key=slug, properties={"name": name}))
+    store.upsert_node(GraphNode(kind="Subsidiary", key="hon-china", properties={"name": "Honeywell China Co."}))
+    store.upsert_node(GraphNode(kind="Subsidiary", key="pg-shanghai", properties={"name": "Gillette (Shanghai) Ltd."}))
+    store.upsert_node(GraphNode(kind="Industry", key="semis", properties={"name": "Semiconductors & Related Devices"}))
+    # Honeywell + P&G hold a legal entity in China (note the non-breaking space).
+    store.upsert_edge(GraphEdge(source_kind="Company", source_key="hon", relation="has_subsidiary",
+        target_kind="Subsidiary", target_key="hon-china",
+        properties={"jurisdiction": "China\xa0", "source_uri": "https://sec.gov/hon-ex21"}))
+    store.upsert_edge(GraphEdge(source_kind="Company", source_key="pg", relation="has_subsidiary",
+        target_kind="Subsidiary", target_key="pg-shanghai", properties={"jurisdiction": "China"}))
+    # 3M references Honeywell; Honeywell is in the semiconductors sector.
+    store.upsert_edge(GraphEdge(source_kind="Company", source_key="mmm", relation="references",
+        target_kind="Company", target_key="hon",
+        properties={"entity_name": "Honeywell International", "source_uri": "https://sec.gov/mmm-10k"}))
+    store.upsert_edge(GraphEdge(source_kind="Company", source_key="hon", relation="in_sector",
+        target_kind="Industry", target_key="semis"))
+    return store
+
+
+def test_jurisdiction_exposure_uses_exhibit21_footprint() -> None:
+    store = _exposure_store()
+    assert [(j.jurisdiction, j.companies) for j in list_jurisdictions(store)] == [("China", 2)]
+    result = jurisdiction_exposure(store, "China")  # nbsp normalized away
+    assert {fp.company.name for fp in result.direct} == {"Honeywell", "P&G"}
+    hon = next(fp for fp in result.direct if fp.company.name == "Honeywell")
+    assert hon.subsidiaries == ["Honeywell China Co."]
+    assert hon.source == "https://sec.gov/hon-ex21"  # provenance preserved
+    # 3M names Honeywell (an exposed peer) but has no China footprint -> network, not direct.
+    assert {n.company.name for n in result.network} == {"3M"}
+
+
+def test_sector_exposure_and_no_exposure_is_an_answer() -> None:
+    store = _exposure_store()
+    assert ("Semiconductors & Related Devices", 1) in [(s.sector, s.companies) for s in list_sectors(store)]
+    semis = sector_exposure(store, "Semiconductors & Related Devices")
+    assert {c.name for c in semis.direct} == {"Honeywell"}
+    assert {n.company.name for n in semis.network} == {"3M"}  # names the exposed company
+    # An agri portfolio: a sector we don't touch returns empty — itself the insight.
+    assert sector_exposure(store, "Agricultural Production").direct == []
