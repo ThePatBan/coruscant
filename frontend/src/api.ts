@@ -296,6 +296,7 @@ export interface AnalysisReport {
   steps: AnalysisStep[];
   concerns: AnalysisConcern[];
   disclaimer: string;
+  generator: string; // "llm:<model>" when reasoned by a model, else "reference-analyst"
 }
 
 export interface Signal {
