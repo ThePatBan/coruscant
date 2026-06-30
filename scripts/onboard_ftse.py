@@ -1,28 +1,34 @@
-"""Onboard cross-listed FTSE companies (20-F filers) and merge them into the live
-company config, so the Atlas shows UK↔US linkages.
+"""Onboard cross-listed 20-F filers (FTSE / NSE ADRs / …) and merge them into the
+live company config, so the Atlas shows cross-border linkages.
 
-UK companies don't file with the SEC — except the cross-listed ones, which file
-Form 20-F (their directors are by-reference in the proxy, but the filing text is
-enough for the co-mention graph). This is a NETWORK step.
+Non-US companies don't file with the SEC — except the cross-listed ones, which
+file Form 20-F (their directors are by-reference in the proxy, but the filing text
+is enough for the co-mention graph). This is a NETWORK step.
 
-Run after generating the FTSE config with the form-aware onboard:
+Run after generating the tranche config with the form-aware onboard, e.g. UK:
 
     SSL_CERT_FILE=$(python3 -m certifi) python3 scripts/onboard_companies.py \\
       --out deploy/ftse-config/companies.yml --form 20-F --country "United Kingdom" \\
       SHEL BP AZN HSBC UL DEO BCS RIO BTI VOD NWG RELX NGG GSK PUK
-
     SSL_CERT_FILE=$(python3 -m certifi) CORUSCANT_CONFIG_DIR=deploy/dow-config \\
-      CORUSCANT_DATA_DIR=data python3 scripts/onboard_ftse.py
+      CORUSCANT_DATA_DIR=data python3 scripts/onboard_ftse.py --source deploy/ftse-config
+
+…or India ADRs:
+
+    … scripts/onboard_companies.py --out deploy/india-config/companies.yml \\
+      --form 20-F --country India INFY WIT IBN HDB RDY SIFY MMYT YTRA
+    … scripts/onboard_ftse.py --source deploy/india-config
 
 It fetches + normalizes each 20-F into the data store and appends the companies to
-the live config with distinctive display names (so the gazetteer matches the right
-form). Then re-run `scripts/recompute_intelligence.py` and restart the API; the
-extraction (with its verified false-positive exclusions) produces the cross-border
-co-mention edges.
+the live config (applying a distinctive display name where one is known, so the
+gazetteer matches the right form). Then re-run `scripts/recompute_intelligence.py`
+and restart the API; the extraction (with its verified false-positive exclusions)
+produces the cross-border co-mention edges.
 """
 
 from __future__ import annotations
 
+import argparse
 import re
 import time
 from datetime import datetime, timezone
@@ -65,8 +71,12 @@ def _get(url: str) -> bytes:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", default="deploy/ftse-config", help="tranche config dir (companies.yml)")
+    args = parser.parse_args()
+
     settings = Settings()
-    ftse = load_companies(Path("deploy/ftse-config"))
+    ftse = load_companies(Path(args.source))
     repo = FileSystemNormalizedDocumentRepository(settings.data_dir)
 
     normalized = 0

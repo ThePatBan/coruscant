@@ -232,7 +232,14 @@ export function Atlas3D({
         controlType="orbit"
         nodeId="id"
         nodeLabel={(n: any) => {
-          const flag = n.country === "United Kingdom" ? "🇬🇧 UK" : n.country === "United States" ? "🇺🇸 US" : "";
+          const flag =
+            n.country === "United Kingdom"
+              ? "🇬🇧 UK"
+              : n.country === "United States"
+                ? "🇺🇸 US"
+                : n.country === "India"
+                  ? "🇮🇳 IN"
+                  : "";
           const sub =
             n.kind === "Company"
               ? flag
