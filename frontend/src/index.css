@@ -1679,6 +1679,35 @@ input.input:focus {
   height: 100%;
 }
 
+/* 3D Atlas (react-force-graph-3d / WebGL) fills the stage. */
+.atlas3d {
+  position: absolute;
+  inset: 0;
+}
+.atlas3d canvas {
+  display: block;
+  outline: none;
+}
+/* Hover tooltip rendered by the force graph as raw HTML. */
+.g3d-tip {
+  font-family: var(--font);
+  background: rgba(17, 20, 26, 0.95);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 7px 11px;
+  color: var(--text);
+  font-size: 13px;
+  box-shadow: var(--shadow);
+}
+.g3d-tip span {
+  display: block;
+  margin-top: 2px;
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
 /* Canvas ----------------------------------------------------------------- */
 .spatial {
   position: absolute;

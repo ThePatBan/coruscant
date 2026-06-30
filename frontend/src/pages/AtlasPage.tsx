@@ -1,11 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, type ChangeSet, type EntityProfile } from "../api";
 import { Cat, Loading, RelationGroups, Skeleton } from "../components";
 import { graphStats, GraphIncompleteNote, type GEdge, type GNode, useRelGraph } from "../graph";
 import { useAsync } from "../hooks";
 import { isEntityRelation, kindGlyph, relationTier, relationVerb, TIERS } from "../relations";
-import { SpatialCanvas, type ChangeCount } from "../spatial";
+import type { ChangeCount } from "../spatial";
+
+// Lazy-loaded so ThreeJS / react-force-graph-3d (a large bundle) is fetched only
+// when the Atlas opens, not on the app's initial load.
+const Atlas3D = lazy(() => import("../Atlas3D").then((m) => ({ default: m.Atlas3D })));
 
 // Atlas — the spatial spine. The relationship graph is the primary surface, not
 // a tab: you navigate the universe by moving a camera, and selecting any entity
@@ -198,36 +202,11 @@ export function AtlasPage() {
     return { ids, steps };
   }, [pathFrom, pathTo, adjacency]);
 
-  // Precise edge keys for the path highlight: pair + the specific traced relation,
-  // so a parallel edge (a different relation between the same two nodes) is NOT lit.
-  const pathEdgeKeys = useMemo(() => {
-    if (!path || path.ids.length < 2) return undefined;
-    const s = new Set<string>();
-    for (let i = 0; i < path.steps.length; i++) {
-      const u = path.ids[i];
-      const v = path.steps[i].toId;
-      s.add(`${[u, v].sort().join("|")}|${path.steps[i].relation}`);
-    }
-    return s;
-  }, [path]);
-
   const startPath = useCallback((from: GNode) => {
     setPathFrom(from);
     setPathTo(null);
     setPicking(true);
   }, []);
-  const onActivate = useCallback(
-    (node: GNode) => {
-      if (picking && pathFrom && node.id !== pathFrom.id) {
-        setPathTo(node);
-        setPicking(false);
-        return;
-      }
-      clearPath();
-      setSelected(node);
-    },
-    [picking, pathFrom, clearPath],
-  );
   const onBackground = useCallback(() => {
     setSelected(null);
     clearPath();
@@ -370,18 +349,18 @@ export function AtlasPage() {
             <Loading label="Mapping the universe" />
           </div>
         ) : (
-          <SpatialCanvas
-            graph={data.graph}
-            extraNodes={expansion.nodes}
-            extraEdges={expansion.edges}
-            anchorOf={expansion.anchorOf}
-            changes={changesAsync.data?.counts}
-            pathNodeIds={path?.ids}
-            pathEdgeKeys={pathEdgeKeys}
-            selected={selected}
-            onActivate={onActivate}
-            onBackground={onBackground}
-          />
+          <Suspense fallback={<div className="atlas-loading"><Loading label="Loading the 3D view" /></div>}>
+            <Atlas3D
+              companies={data.companies}
+              profiles={data.profiles}
+              selectedSlug={selected?.key}
+              onSelectCompany={(slug) => {
+                clearPath();
+                setSelected(data.graph.nodes.find((n) => n.tracked && n.key === slug) ?? null);
+              }}
+              onBackground={onBackground}
+            />
+          </Suspense>
         )}
       </div>
 
@@ -404,6 +383,7 @@ export function AtlasPage() {
           expanded={expandedIds.has(selected.id)}
           revealed={expansion.revealedBy.get(selected.id) ?? 0}
           picking={picking}
+          graphInteractive={false}
           onTracePath={() => startPath(selected)}
           onToggleExpand={() => toggleExpand(selected)}
           onClose={() => setSelected(null)}
@@ -535,6 +515,7 @@ function EvidenceRail({
   expanded,
   revealed,
   picking,
+  graphInteractive = true,
   onTracePath,
   onToggleExpand,
   onClose,
@@ -547,6 +528,7 @@ function EvidenceRail({
   expanded: boolean;
   revealed: number;
   picking: boolean;
+  graphInteractive?: boolean;
   onTracePath: () => void;
   onToggleExpand: () => void;
   onClose: () => void;
@@ -571,14 +553,16 @@ function EvidenceRail({
             Open full dossier →
           </Link>
         ) : null}
-        {!node.tracked ? (
+        {!node.tracked && graphInteractive ? (
           <button className="btn ghost" onClick={onToggleExpand} aria-pressed={expanded}>
             {expanded ? "Collapse connections" : "Expand connections"}
           </button>
         ) : null}
-        <button className="btn ghost" onClick={onTracePath} aria-pressed={picking}>
-          Trace a path from here
-        </button>
+        {graphInteractive ? (
+          <button className="btn ghost" onClick={onTracePath} aria-pressed={picking}>
+            Trace a path from here
+          </button>
+        ) : null}
       </div>
       {picking ? (
         <p className="rail-expand-note">Click another entity on the canvas to trace the shortest path · Esc to cancel.</p>
