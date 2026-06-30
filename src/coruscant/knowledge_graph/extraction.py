@@ -30,6 +30,7 @@ from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 _SECTOR_PROV = "sec-metadata"
 _COMENTION_PROV = "sec-co-mention"
 _SUBSIDIARY_PROV = "sec-exhibit21"
+_OFFICER_PROV = "sec-10k-officers"
 
 # Pure legal-form tokens stripped to get a company's distinctive core name. We
 # deliberately KEEP words like "companies" / "group" — they make a name precise
@@ -231,6 +232,65 @@ def project_subsidiary_edges(
     return count
 
 
+def project_people_edges(
+    store: InMemoryKnowledgeGraphStore,
+    companies: list[CompanyConfig],
+    documents: list[NormalizedDocument],
+) -> int:
+    """Company -employs-> Person, from each 10-K's executive-officers section.
+
+    The people layer: key personnel become first-class nodes carrying their role,
+    so a person who turns up at two companies (officer here, prior role there)
+    becomes a *bridge* — the seed of the board-interlock network. Provenance is the
+    filing the bio was parsed from. Deterministic and precision-first (see
+    ``parse_officers``); about half of 10-Ks carry the section in-text, the rest
+    incorporate it by reference to the proxy.
+    """
+    from coruscant.connectors.sec_edgar import parse_officers  # local: avoid import cycle
+
+    docs_by_slug: dict[str, list[NormalizedDocument]] = {}
+    for doc in documents:
+        slug = str(doc.metadata.get("company_slug") or "")
+        if slug:
+            docs_by_slug.setdefault(slug, []).append(doc)
+
+    count = 0
+    for company in companies:
+        seen: set[str] = set()
+        for doc in docs_by_slug.get(company.slug, []):
+            text = "\n".join(str(s.get("content") or "") for s in doc.sections)
+            for officer in parse_officers(text):
+                name = officer["name"].strip()
+                role = officer["role"].strip()
+                if not name:
+                    continue
+                key = entity_key(name)
+                if key in seen:
+                    continue
+                seen.add(key)
+                if store.get_node("Person", key) is None:
+                    store.upsert_node(
+                        GraphNode(kind="Person", key=key, properties={"name": name, "source": _OFFICER_PROV})
+                    )
+                store.upsert_edge(
+                    GraphEdge(
+                        source_kind="Company",
+                        source_key=company.slug,
+                        relation="employs",
+                        target_kind="Person",
+                        target_key=key,
+                        properties={
+                            "source": _OFFICER_PROV,
+                            "company_slug": company.slug,
+                            "role": role,
+                            "source_uri": doc.source_uri,
+                        },
+                    )
+                )
+                count += 1
+    return count
+
+
 def load_normalized_documents(data_dir: Path) -> list[NormalizedDocument]:
     """Load every persisted normalized document under ``{data_dir}/normalized``."""
     root = Path(data_dir) / "normalized"
@@ -256,9 +316,11 @@ def extract_relationships(
     sector = project_sector_edges(store, companies)
     references = project_cross_company_references(store, companies, documents)
     subsidiaries = project_subsidiary_edges(store, companies, documents)
+    people = project_people_edges(store, companies, documents)
     return {
         "in_sector": sector,
         "references": references,
         "subsidiaries": subsidiaries,
+        "people": people,
         "documents": len(documents),
     }

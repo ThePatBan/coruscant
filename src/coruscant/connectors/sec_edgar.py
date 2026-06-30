@@ -329,6 +329,43 @@ def parse_subsidiaries(text: str, *, parent_core: str = "", limit: int = 30) -> 
     return out
 
 
+# --- Executive officers (Item 1 / "Information about Executive Officers") -----
+# The officers table is semi-structured: Name / Age / Position on consecutive
+# lines. We anchor on the age (a bare 2-digit number), take the preceding line as
+# the name and the following line as the role, and require a cluster (≥2) so a
+# stray "Word 55 President" elsewhere never produces a phantom person. ~half of
+# 10-Ks carry this in-text; the rest incorporate it by reference to the proxy.
+_OFFICER_NAME = re.compile(r"^[A-Z][A-Za-z.'’-]+(?:\s+[A-Z][A-Za-z.'’-]+){1,3}$")
+_OFFICER_ROLE = re.compile(
+    r"chief|president|officer|chairman|vice|treasurer|secretary|controller|counsel|executive", re.I
+)
+
+
+def parse_officers(text: str, *, limit: int = 20) -> list[dict[str, str]]:
+    """Parse (name, role) executive officers from a 10-K's officers section."""
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for i in range(1, len(lines) - 1):
+        if not re.fullmatch(r"\d{2}", lines[i]):
+            continue
+        age = int(lines[i])
+        if not (35 <= age <= 95):
+            continue
+        name = lines[i - 1]
+        role = re.sub(r"\s+", " ", lines[i + 1]).strip()
+        if not _OFFICER_NAME.match(name) or not _OFFICER_ROLE.search(role):
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"name": name, "role": role[:80]})
+        if len(out) >= limit:
+            break
+    return out if len(out) >= 2 else []
+
+
 def normalize_edgar_filing(document: SourceDocument) -> NormalizedDocument:
     parser = _TextStripper()
     parser.feed(document.raw_content)

@@ -311,10 +311,12 @@ def run_ingestion(
     # turns a larger company set into a connected graph rather than isolated nodes.
     extraction = extract_relationships(graph_store, companies, settings.data_dir)
     logger.info(
-        "Extraction: %d co-mention references, %d sector edges, %d subsidiaries (over %d documents)",
+        "Extraction: %d co-mention references, %d sector edges, %d subsidiaries, "
+        "%d officer (people) edges (over %d documents)",
         extraction["references"],
         extraction["in_sector"],
         extraction["subsidiaries"],
+        extraction["people"],
         extraction["documents"],
     )
     save_graph(graph_store, settings.graph_snapshot_path)

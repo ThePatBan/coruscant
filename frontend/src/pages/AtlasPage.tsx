@@ -545,6 +545,7 @@ function TableView({
   onClose: () => void;
 }) {
   const subsidiaries = profile?.relationships.filter((r) => r.relation === "has_subsidiary") ?? [];
+  const people = profile?.relationships.filter((r) => r.relation === "employs" && r.other.kind === "Person") ?? [];
   const coMentions = profile?.relationships.filter((r) => r.relation === "references") ?? [];
   const material = (changeSets ?? []).filter((cs) => cs.material);
   const added = material.reduce((s, cs) => s + cs.added_count, 0);
@@ -617,6 +618,22 @@ function TableView({
             </p>
           ) : null}
         </section>
+
+        {people.length > 0 ? (
+          <section className="tbl-section">
+            <div className="tbl-head">
+              <h3>Key people</h3>
+              <span className="pill">{people.length}</span>
+            </div>
+            <div className="tbl-grid">
+              {people.map((r, i) => (
+                <span className="relchip tier-control" key={i}>
+                  {r.other.name}
+                </span>
+              ))}
+            </div>
+          </section>
+        ) : null}
 
         {subsidiaries.length > 0 ? (
           <section className="tbl-section">
