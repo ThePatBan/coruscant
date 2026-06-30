@@ -1,8 +1,10 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, type EntityProfile, type ExposureResult } from "../api";
-import { Empty, Loading } from "../components";
+import { Empty, Loading, PanelHead, RelationGroups, Skeleton } from "../components";
+import { graphStats, GraphIncompleteNote, RelationMap, useRelGraph } from "../graph";
 import { useAsync } from "../hooks";
+import { isEntityRelation } from "../relations";
 
 const KINDS = ["Company", "Person", "Country", "Product", "Technology", "Agency"];
 
@@ -26,7 +28,7 @@ function ExposureCard() {
       <div>
         <h2>Supply-chain exposure</h2>
         <p className="faint" style={{ fontSize: 13 }}>
-          Which suppliers and companies are exposed to a country.
+          Trace which companies are exposed to a country through the suppliers they depend on.
         </p>
       </div>
       <form onSubmit={run} className="wrap" style={{ gap: 8 }}>
@@ -47,15 +49,13 @@ function ExposureCard() {
               ))}
             </div>
             {result.exposed.map((p, i) => (
-              <div className="change-row" key={i}>
-                <span className="change-mark" style={{ color: "var(--evidence)" }}>⚠</span>
-                <div>
-                  <Link to={`/companies/${p.company.key}`} style={{ fontWeight: 560 }}>
-                    {p.company.name}
-                  </Link>{" "}
-                  <span className="faint">exposed via</span>{" "}
-                  <span className="pill">{p.via.name}</span>
-                </div>
+              <div className="ctrl-row" key={i} style={{ padding: "9px 0" }}>
+                <Link to={`/companies/${p.company.key}`} className="ctrl-actor tier-supply">
+                  <span className="glyph">◧</span>
+                  <span className="nm">{p.company.name}</span>
+                </Link>
+                <span className="ctrl-arrow">exposed via →</span>
+                <span className="relchip tier-supply">{p.via.name}</span>
               </div>
             ))}
           </div>
@@ -65,14 +65,14 @@ function ExposureCard() {
   );
 }
 
-function CoExecutivesCard() {
+function CoExecutivesCard({ trackedKeys }: { trackedKeys?: Set<string> }) {
   const { data } = useAsync(() => api.coExecutives(), []);
   return (
     <div className="card stack gap">
       <div>
         <h2>Connected executives</h2>
         <p className="faint" style={{ fontSize: 13 }}>
-          People who bridge companies, and executives who shared a company.
+          People who bridge companies, and the executives a company has shared.
         </p>
       </div>
       {!data ? (
@@ -80,32 +80,37 @@ function CoExecutivesCard() {
       ) : (
         <div className="stack gap-sm">
           {data.multi_company_people.map((b) => (
-            <div className="wrap" key={b.person.key} style={{ gap: 8 }}>
-              <span className="pill accent">{b.person.name}</span>
-              <span className="faint">→</span>
-              {b.companies.map((c) => (
-                <span className="badge" key={c.key}>{c.name}</span>
-              ))}
+            <div className="ctrl-row" key={b.person.key} style={{ padding: "9px 0" }}>
+              <span className="ctrl-actor tier-proxy">
+                <span className="glyph">◍</span>
+                <span className="nm">{b.person.name}</span>
+              </span>
+              <span className="ctrl-arrow">linked to →</span>
+              <div className="ctrl-targets">
+                {b.companies.map((c) =>
+                  trackedKeys?.has(c.key) ? (
+                    <Link className="relchip tier-proxy" to={`/companies/${c.key}`} key={c.key}>
+                      {c.name}
+                    </Link>
+                  ) : (
+                    <span className="relchip tier-proxy" key={c.key}>{c.name}</span>
+                  ),
+                )}
+              </div>
             </div>
           ))}
-          {data.shared_company_groups
-            .filter((g) => g.people.length >= 2)
-            .map((g) => (
-              <div className="wrap" key={g.company.key} style={{ gap: 8 }}>
-                <span className="badge">{g.company.name}</span>
-                <span className="faint">shared by</span>
-                {g.people.map((p) => (
-                  <span className="pill" key={p.key}>{p.name}</span>
-                ))}
-              </div>
-            ))}
+          <div className="ctrl-note">
+            <span className="inf">inferred</span>
+            Links projected from the curated entity graph (current and prior roles). Open a company to
+            review its source disclosures.
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-function EntityExplorer() {
+function EntityExplorer({ trackedKeys }: { trackedKeys?: Set<string> }) {
   const [kind, setKind] = useState("Company");
   const list = useAsync(() => api.entities(kind), [kind]);
   const [selected, setSelected] = useState<EntityProfile | null>(null);
@@ -140,9 +145,21 @@ function EntityExplorer() {
         </div>
         {list.loading ? <Loading label="Loading entities" /> : null}
         {list.data ? (
-          <div className="list" style={{ maxHeight: 420, overflow: "auto" }}>
+          <div className="list" style={{ maxHeight: 460, overflow: "auto" }}>
             {list.data.map((e) => (
-              <div className="li" key={`${e.kind}-${e.key}`} onClick={() => void open(e.kind, e.key)}>
+              <div
+                className="li"
+                key={`${e.kind}-${e.key}`}
+                tabIndex={0}
+                role="button"
+                onClick={() => void open(e.kind, e.key)}
+                onKeyDown={(ev) => {
+                  if (ev.key === "Enter" || ev.key === " ") {
+                    ev.preventDefault();
+                    void open(e.kind, e.key);
+                  }
+                }}
+              >
                 <div className="grow truncate" style={{ fontWeight: 530 }}>{e.name}</div>
                 <span className="badge">{e.kind}</span>
               </div>
@@ -153,22 +170,15 @@ function EntityExplorer() {
       <div className="stack gap">
         {loadingProfile ? <Loading label="Loading entity" /> : null}
         {selected ? (
-          <div className="card stack gap-sm">
+          <div className="card stack gap">
             <div className="wrap">
               <h2>{selected.entity.name}</h2>
               <span className="badge">{selected.entity.kind}</span>
             </div>
-            {selected.relationships.length === 0 ? (
-              <span className="faint">No relationships.</span>
+            {selected.relationships.filter((r) => isEntityRelation(r.relation)).length === 0 ? (
+              <span className="faint">No relationships recorded.</span>
             ) : (
-              selected.relationships.map((r, i) => (
-                <div className="wrap" key={i} style={{ gap: 8 }}>
-                  <span className="cat" data-c={r.relation}>{r.relation.replace(/_/g, " ")}</span>
-                  <span className="faint">{r.direction === "out" ? "→" : "←"}</span>
-                  <span className="badge">{r.other.kind}</span>
-                  <span>{r.other.name}</span>
-                </div>
-              ))
+              <RelationGroups relationships={selected.relationships} trackedKeys={trackedKeys} />
             )}
             {selected.mentioned_in.length > 0 ? (
               <div className="faint" style={{ fontSize: 12.5 }}>
@@ -183,7 +193,7 @@ function EntityExplorer() {
             ) : null}
           </div>
         ) : (
-          <Empty icon="◬" title="Select an entity" hint="Click any entity to see its relationships." />
+          <Empty icon="◬" title="Select an entity" hint="Click any entity to see its relationships, grouped by tier." />
         )}
       </div>
     </div>
@@ -191,21 +201,47 @@ function EntityExplorer() {
 }
 
 export function GraphPage() {
+  const { data, loading } = useRelGraph();
+  const stats = data ? graphStats(data.graph) : null;
+
   return (
     <div className="stack gap-lg">
       <div className="page-head">
         <h1>Entity graph</h1>
         <p className="sub">
-          Companies, people, suppliers, countries, products, and technologies — connected. Ask
+          Companies, people, suppliers, countries, products, and technologies — connected. Ask the
           cross-entity questions that isolated documents cannot answer.
         </p>
       </div>
+
+      <section className="stack gap">
+        <PanelHead
+          idx="01"
+          kicker="The connected universe"
+          title="Every tracked entity, mapped"
+          sub="Companies on the ring; their people, suppliers, products, and shared dependencies around them. Click a company to open it."
+          right={
+            stats ? (
+              <div className="wrap" style={{ justifyContent: "flex-end" }}>
+                <span className="pill">{stats.companies} companies</span>
+                <span className="pill">{stats.links} edges</span>
+              </div>
+            ) : null
+          }
+        />
+        {loading ? <Skeleton h={460} /> : data ? <RelationMap graph={data.graph} mode="full" /> : null}
+        {data ? <GraphIncompleteNote failed={data.failed} /> : null}
+      </section>
+
       <div className="grid cols-2">
         <ExposureCard />
-        <CoExecutivesCard />
+        <CoExecutivesCard trackedKeys={data?.trackedKeys} />
       </div>
-      <h2>Entity explorer</h2>
-      <EntityExplorer />
+
+      <section className="stack gap">
+        <PanelHead idx="02" kicker="Entity explorer" title="Inspect any entity" />
+        <EntityExplorer trackedKeys={data?.trackedKeys} />
+      </section>
     </div>
   );
 }

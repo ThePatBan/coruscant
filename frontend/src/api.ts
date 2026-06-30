@@ -192,6 +192,9 @@ export interface Relationship {
   relation: string;
   direction: "out" | "in";
   other: EntityRef;
+  // Provenance of the edge, e.g. "reference-entities" (curated graph) or
+  // "document-mention". Returned by the backend; surfaced as a provenance hint.
+  source?: string | null;
 }
 
 export interface EntityProfile {
