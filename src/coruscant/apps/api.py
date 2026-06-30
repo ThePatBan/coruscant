@@ -73,11 +73,19 @@ from coruscant.knowledge_graph.queries import (
     EntityProfile,
     EntityRef,
     ExposureResult,
+    JurisdictionCount,
+    JurisdictionExposure,
+    SectorCount,
+    SectorExposure,
     co_executives,
     company_country_exposures,
     entity_profile,
     exposure_to_country,
+    jurisdiction_exposure,
     list_entities,
+    list_jurisdictions,
+    list_sectors,
+    sector_exposure,
 )
 from coruscant.search.hybrid import HybridRetrievalEngine
 from coruscant.search.reference import TemplateReasoningLayer
@@ -740,6 +748,43 @@ def create_app(
         if not isinstance(graph, InMemoryKnowledgeGraphStore):
             return ExposureResult(country=country)
         return exposure_to_country(graph, country)
+
+    @app.get("/graph/jurisdictions", response_model=list[JurisdictionCount], dependencies=protected)
+    def jurisdictions() -> list[JurisdictionCount]:
+        """The menu of geographic 'events' — jurisdictions where holdings have a
+        legal footprint, by exposed-company count."""
+        graph = state.graph
+        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+            return []
+        return list_jurisdictions(graph)
+
+    @app.get(
+        "/graph/jurisdiction-exposure",
+        response_model=JurisdictionExposure,
+        dependencies=protected,
+    )
+    def jurisdiction_exposure_endpoint(jurisdiction: str) -> JurisdictionExposure:
+        """Event in `jurisdiction` -> who is exposed, with the Exhibit-21 evidence."""
+        graph = state.graph
+        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+            return JurisdictionExposure(jurisdiction=jurisdiction)
+        return jurisdiction_exposure(graph, jurisdiction)
+
+    @app.get("/graph/sectors", response_model=list[SectorCount], dependencies=protected)
+    def sectors() -> list[SectorCount]:
+        """The menu of thematic 'events' — sectors by company count."""
+        graph = state.graph
+        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+            return []
+        return list_sectors(graph)
+
+    @app.get("/graph/sector-exposure", response_model=SectorExposure, dependencies=protected)
+    def sector_exposure_endpoint(sector: str) -> SectorExposure:
+        """Thematic event on `sector` (e.g. rare-earth controls -> semis) -> who is in it."""
+        graph = state.graph
+        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+            return SectorExposure(sector=sector)
+        return sector_exposure(graph, sector)
 
     @app.get("/graph/co-executives", response_model=CoExecutiveResult, dependencies=protected)
     def graph_co_executives() -> CoExecutiveResult:

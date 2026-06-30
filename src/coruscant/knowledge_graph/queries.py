@@ -47,6 +47,51 @@ class ExposureResult(BaseModel):
     exposed: list[ExposurePath] = []  # companies exposed through a supplier
 
 
+class JurisdictionCount(BaseModel):
+    jurisdiction: str
+    companies: int  # how many companies hold a legal entity there
+
+
+class JurisdictionFootprint(BaseModel):
+    """A company's legal footprint in the affected jurisdiction (Exhibit 21) —
+    evidence-backed direct exposure to an event there."""
+
+    company: EntityRef
+    subsidiaries: list[str] = []  # subsidiary names registered in the jurisdiction
+    source: str | None = None  # the Exhibit-21 filing URL (provenance)
+
+
+class NetworkProximity(BaseModel):
+    """A company whose filings name a directly-exposed peer. An orientation hint,
+    NOT dollar exposure — co-mention is an undifferentiated competitor/customer/
+    supplier signal, and we have no supply-chain weight data yet."""
+
+    company: EntityRef
+    names: EntityRef  # the directly-exposed company it references
+    entity_name: str | None = None  # the name as written in the filing
+    source: str | None = None  # filing URL
+
+
+class JurisdictionExposure(BaseModel):
+    jurisdiction: str
+    direct: list[JurisdictionFootprint] = []  # legal footprint there (evidence-backed)
+    network: list[NetworkProximity] = []  # peers that name an exposed company (weaker)
+
+
+class SectorCount(BaseModel):
+    sector: str
+    companies: int
+
+
+class SectorExposure(BaseModel):
+    """Thematic exposure: an event on a sector (e.g. rare-earth controls -> semis)
+    -> the companies in it. 'No exposure' is a first-class answer (you're agri)."""
+
+    sector: str
+    direct: list[EntityRef] = []  # companies operating in the sector
+    network: list[NetworkProximity] = []  # peers that name an exposed company
+
+
 class CoExecutiveGroup(BaseModel):
     company: EntityRef
     people: list[EntityRef] = []
@@ -78,6 +123,16 @@ def _ref(store: InMemoryKnowledgeGraphStore, kind: str, key: str) -> EntityRef:
 def _source_of(properties: dict[str, object]) -> str | None:
     value = properties.get("source")
     return value if isinstance(value, str) else None
+
+
+def _str_prop(properties: dict[str, object], key: str) -> str | None:
+    value = properties.get(key)
+    return value if isinstance(value, str) else None
+
+
+def _normalize_jurisdiction(value: str) -> str:
+    # Exhibit-21 jurisdictions arrive with non-breaking spaces and stray whitespace.
+    return value.replace("\xa0", " ").strip()
 
 
 def _detail_of(properties: dict[str, object]) -> str | None:
@@ -164,6 +219,118 @@ def exposure_to_country(store: InMemoryKnowledgeGraphStore, country: str) -> Exp
                         source=_source_of(in_edge.properties) or "reference-entities",
                     )
                 )
+    return result
+
+
+def list_jurisdictions(store: InMemoryKnowledgeGraphStore) -> list[JurisdictionCount]:
+    """Jurisdictions where companies hold subsidiaries, by exposed-company count —
+    the menu of "events" the exposure demo can fire on."""
+    companies_by_juris: dict[str, set[str]] = {}
+    for edge in store.edges_by_relation("has_subsidiary"):
+        juris = _normalize_jurisdiction(str(edge.properties.get("jurisdiction", "")))
+        if juris:
+            companies_by_juris.setdefault(juris, set()).add(edge.source_key)
+    counts = [
+        JurisdictionCount(jurisdiction=juris, companies=len(companies))
+        for juris, companies in companies_by_juris.items()
+    ]
+    return sorted(counts, key=lambda c: (-c.companies, c.jurisdiction))
+
+
+def jurisdiction_exposure(
+    store: InMemoryKnowledgeGraphStore, jurisdiction: str
+) -> JurisdictionExposure:
+    """Who is exposed to an event in `jurisdiction`, on today's evidence.
+
+    Direct exposure = a legal entity registered there (Exhibit 21), cited to the
+    filing. Network = peers whose filings name a directly-exposed company (an
+    orientation hint, not dollar magnitude — we have no supply-chain weight data).
+    """
+    target = _normalize_jurisdiction(jurisdiction)
+    result = JurisdictionExposure(jurisdiction=target)
+
+    subs_by_company: dict[str, list[str]] = {}
+    source_by_company: dict[str, str | None] = {}
+    for edge in store.edges_by_relation("has_subsidiary"):
+        if _normalize_jurisdiction(str(edge.properties.get("jurisdiction", ""))) != target:
+            continue
+        subs_by_company.setdefault(edge.source_key, []).append(
+            _name(store, edge.target_kind, edge.target_key)
+        )
+        source_by_company.setdefault(edge.source_key, _str_prop(edge.properties, "source_uri"))
+
+    for company_key in sorted(subs_by_company):
+        result.direct.append(
+            JurisdictionFootprint(
+                company=_ref(store, "Company", company_key),
+                subsidiaries=sorted(subs_by_company[company_key]),
+                source=source_by_company.get(company_key),
+            )
+        )
+
+    exposed = set(subs_by_company)
+    seen: set[tuple[str, str]] = set()
+    for edge in store.edges_by_relation("references"):
+        if edge.target_key in exposed and edge.source_key not in exposed:
+            pair = (edge.source_key, edge.target_key)
+            if pair in seen:
+                continue
+            seen.add(pair)
+            result.network.append(
+                NetworkProximity(
+                    company=_ref(store, "Company", edge.source_key),
+                    names=_ref(store, "Company", edge.target_key),
+                    entity_name=_str_prop(edge.properties, "entity_name"),
+                    source=_str_prop(edge.properties, "source_uri"),
+                )
+            )
+    return result
+
+
+def list_sectors(store: InMemoryKnowledgeGraphStore) -> list[SectorCount]:
+    """Sectors with their company counts — the menu of thematic 'events'. Taxonomy-
+    agnostic: reads whatever `in_sector` points to (SIC today, GICS once re-tagged)."""
+    companies_by_sector: dict[str, set[str]] = {}
+    for edge in store.edges_by_relation("in_sector"):
+        sector = _name(store, edge.target_kind, edge.target_key).strip()
+        if sector:
+            companies_by_sector.setdefault(sector, set()).add(edge.source_key)
+    counts = [
+        SectorCount(sector=sector, companies=len(companies))
+        for sector, companies in companies_by_sector.items()
+    ]
+    return sorted(counts, key=lambda c: (-c.companies, c.sector))
+
+
+def sector_exposure(store: InMemoryKnowledgeGraphStore, sector: str) -> SectorExposure:
+    """Thematic exposure to an event on `sector` (e.g. rare-earth controls -> semis):
+    the companies operating in it, plus peers that name them. An empty result is a
+    real answer — 'no exposure, you're agri' is the insight."""
+    target = sector.strip().lower()
+    result = SectorExposure(sector=sector.strip())
+
+    exposed: set[str] = set()
+    for edge in store.edges_by_relation("in_sector"):
+        if _name(store, edge.target_kind, edge.target_key).strip().lower() == target:
+            exposed.add(edge.source_key)
+    for company_key in sorted(exposed):
+        result.direct.append(_ref(store, "Company", company_key))
+
+    seen: set[tuple[str, str]] = set()
+    for edge in store.edges_by_relation("references"):
+        if edge.target_key in exposed and edge.source_key not in exposed:
+            pair = (edge.source_key, edge.target_key)
+            if pair in seen:
+                continue
+            seen.add(pair)
+            result.network.append(
+                NetworkProximity(
+                    company=_ref(store, "Company", edge.source_key),
+                    names=_ref(store, "Company", edge.target_key),
+                    entity_name=_str_prop(edge.properties, "entity_name"),
+                    source=_str_prop(edge.properties, "source_uri"),
+                )
+            )
     return result
 
 
