@@ -10,7 +10,7 @@ from __future__ import annotations
 from coruscant.common.types import NormalizedDocument
 from coruscant.intelligence.confidence import category_confidence
 from coruscant.intelligence.models import ExtractedEvent
-from coruscant.intelligence.text import headline, iso_date, primary_category, sentences
+from coruscant.intelligence.text import headline, is_disclosure_sentence, iso_date, primary_category, sentences
 
 EVENT_CATEGORIES = {
     "product",
@@ -35,6 +35,8 @@ class ReferenceEventExtractor:
             title = str(section.get("title") or "")
             content = str(section.get("content") or "")
             for sentence in sentences(content):
+                if not is_disclosure_sentence(sentence):
+                    continue  # don't let TOC/table scaffolding become an "event"
                 category = primary_category(sentence)
                 if category not in EVENT_CATEGORIES or sentence in seen:
                     continue

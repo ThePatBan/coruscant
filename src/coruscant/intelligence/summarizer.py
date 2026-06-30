@@ -15,6 +15,7 @@ from coruscant.intelligence.models import Claim, DocumentSummary
 from coruscant.intelligence.text import (
     CATEGORY_CUES,
     categories_of,
+    is_disclosure_sentence,
     iso_date,
     primary_category,
     sentences,
@@ -35,7 +36,8 @@ def _iter_sentences(document: NormalizedDocument) -> Iterator[tuple[str, str]]:
         title = str(section.get("title") or "")
         content = str(section.get("content") or "")
         for sentence in sentences(content):
-            yield title, sentence
+            if is_disclosure_sentence(sentence):
+                yield title, sentence
 
 
 def _claim(document: NormalizedDocument, title: str, sentence: str, category: str) -> Claim:

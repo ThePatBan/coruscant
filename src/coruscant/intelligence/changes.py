@@ -11,7 +11,7 @@ from __future__ import annotations
 from coruscant.common.types import NormalizedDocument
 from coruscant.intelligence.confidence import category_confidence
 from coruscant.intelligence.models import ChangeSet, Claim, DocumentChange
-from coruscant.intelligence.text import normalize_statement, primary_category, sentences
+from coruscant.intelligence.text import is_disclosure_sentence, normalize_statement, primary_category, sentences
 
 # Category ordering for "most material first" presentation.
 _MATERIALITY = [
@@ -38,6 +38,8 @@ def _statement_index(document: NormalizedDocument) -> dict[str, tuple[str, str]]
         title = str(section.get("title") or "")
         content = str(section.get("content") or "")
         for sentence in sentences(content):
+            if not is_disclosure_sentence(sentence):
+                continue  # skip TOC lines / table rows / headings, not real changes
             key = normalize_statement(sentence)
             if key and key not in index:
                 index[key] = (sentence, title)

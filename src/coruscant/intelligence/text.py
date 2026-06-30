@@ -119,6 +119,45 @@ def sentences(text: str) -> list[str]:
     return [part.strip() for part in parts if part.strip()]
 
 
+# A real disclosure sentence almost always carries a finite verb. Table-of-
+# contents lines ("1 Overview 1 Business segments 2-6 Human capital 7-8 …"),
+# financial-table rows, and bare headings do not — yet the raw splitter emits
+# them, and they then get keyword-matched into phantom "risk signals". This gate
+# keeps prose and drops the scaffolding, at the cost of a few rare verb-less
+# sentences (an acceptable trade for not surfacing a TOC as a 72%-confidence
+# regulatory concern).
+_VERB_LEXICON = frozenset(
+    """is are was were be been being am will would shall should may might can could must
+    has have had do does did expect expects expected anticipate anticipates believe believes
+    intend intends plan plans seek seeks include includes included provide provides provided
+    operate operates result results resulted affect affects affected require requires required
+    continue continues remain remains face faces depend depends increase increased decrease
+    decreased grow grew reduce reduced incur incurred recognize recognized estimate estimated
+    assume rely relies maintain generate generated invest report reported issue issued offer
+    represent represents drive driven impact impacts experience experienced use uses used
+    contributed declined rose fell expanded launched acquired entered agreed announced reflect
+    reflects exceed exceeds arise arises subject relates related cause causes caused""".split()
+)
+_VERBISH = re.compile(r"\b[a-z]{3,}(?:ed|ing)\b")
+_NUMERIC_TOKEN = re.compile(r"^\(?[$£€]?\d[\d,.–/%-]*\)?$")
+
+
+def is_disclosure_sentence(sentence: str) -> bool:
+    """True if the fragment reads as a disclosure sentence (not a TOC line / table
+    row / heading). Used to keep change-detection, events, and summaries from
+    surfacing document scaffolding as signal."""
+    tokens = sentence.split()
+    if len(tokens) < 6:
+        return False
+    if sum(1 for t in tokens if _NUMERIC_TOKEN.match(t)) / len(tokens) > 0.4:
+        return False  # financial-table row / number run
+    lowered = sentence.lower()
+    words = re.findall(r"\b[a-z][a-z']+\b", lowered)
+    if len(words) < 4:
+        return False  # mostly Title-Case heading or numbers
+    return any(w in _VERB_LEXICON for w in words) or bool(_VERBISH.search(lowered))
+
+
 def categories_of(sentence: str) -> set[str]:
     """All categories whose cue terms appear in the sentence."""
 
