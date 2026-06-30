@@ -61,6 +61,17 @@ export function Atlas3D({ companies, profiles, selectedSlug, onSelectCompany, on
     return adj;
   }, [data]);
 
+  // Click-to-isolate: the selected company's ego subgraph (it + its direct
+  // neighbours — subsidiaries and co-mentioned peers). When set, everything else
+  // is hidden and the camera frames just this.
+  const focusSet = useMemo(() => {
+    if (!selectedSlug) return null;
+    const id = `Company:${selectedSlug}`;
+    const set = new Set<string>([id]);
+    for (const nb of adjacency.get(id) ?? []) set.add(nb);
+    return set;
+  }, [selectedSlug, adjacency]);
+
   // Sector-clustering force + a gentler charge, plus auto-rotate. Deferred to the
   // graph's first engine tick (onEngineTick) so the internal d3 layout exists
   // before we touch it — touching it from a mount effect races layout creation.
@@ -103,6 +114,20 @@ export function Atlas3D({ companies, profiles, selectedSlug, onSelectCompany, on
     tunedRef.current = false;
   }, [data]);
 
+  // Isolate the focused subgraph (or restore the overview) with a camera move.
+  useEffect(() => {
+    const fg = fgRef.current;
+    if (!fg) return;
+    const controls = fg.controls?.();
+    if (focusSet) {
+      if (controls) controls.autoRotate = false;
+      fg.zoomToFit?.(800, 90, (n: any) => focusSet.has(n.id));
+    } else {
+      if (controls) controls.autoRotate = true;
+      fg.zoomToFit?.(800, 70);
+    }
+  }, [focusSet]);
+
   const onHover = useCallback(
     (node: any) => {
       // Pause the auto-rotation while the cursor is on a node so it can be read
@@ -136,17 +161,27 @@ export function Atlas3D({ companies, profiles, selectedSlug, onSelectCompany, on
     [adjacency, data],
   );
 
+  // Clicking a company selects it (opens the rail) and isolates its subgraph via
+  // the focusSet effect above; clicking a subsidiary jumps to its parent company.
   const onClick = useCallback(
     (node: any) => {
-      if (node?.kind === "Company" && node.slug) onSelectCompany(node.slug, node.name);
-      const fg = fgRef.current;
-      if (fg && node && typeof node.x === "number") {
-        const dist = Math.hypot(node.x, node.y, node.z) || 1;
-        const ratio = 1 + 150 / dist;
-        fg.cameraPosition({ x: node.x * ratio, y: node.y * ratio, z: node.z * ratio }, node, 900);
+      if (!node) return;
+      if (node.kind === "Company" && node.slug) {
+        onSelectCompany(node.slug, node.name);
+        return;
+      }
+      for (const nbId of adjacency.get(node.id) ?? []) {
+        if (nbId.startsWith("Company:")) {
+          const slug = nbId.slice("Company:".length);
+          const parent = companies.find((c) => c.slug === slug);
+          if (parent) {
+            onSelectCompany(slug, parent.name);
+            return;
+          }
+        }
       }
     },
-    [onSelectCompany],
+    [onSelectCompany, adjacency, companies],
   );
 
   const dimming = hiNodes.size > 0;
@@ -176,9 +211,21 @@ export function Atlas3D({ companies, profiles, selectedSlug, onSelectCompany, on
         nodeColor={nodeColor as any}
         nodeOpacity={0.95}
         nodeResolution={14}
-        linkColor={(l: any) => (hiLinks.has(l) ? "#e8ebef" : "#39414f")}
-        linkWidth={(l: any) => (hiLinks.has(l) ? 1.4 : 0.4)}
-        linkOpacity={0.55}
+        nodeVisibility={(n: any) => !focusSet || focusSet.has(n.id)}
+        linkColor={(l: any) => {
+          if (hiLinks.has(l)) return "#e8ebef"; // hover: bright white
+          // Co-mention (cross-company structure) reads clearly by default; the
+          // dense ownership halos stay subtle so they don't overwhelm.
+          return l.relation === "references" ? "#8b94a6" : "#454d5c";
+        }}
+        linkWidth={(l: any) => (hiLinks.has(l) ? 1.6 : l.relation === "references" ? 0.9 : 0.35)}
+        linkOpacity={0.7}
+        linkVisibility={(l: any) => {
+          if (!focusSet) return true;
+          const s = typeof l.source === "object" ? l.source.id : l.source;
+          const t = typeof l.target === "object" ? l.target.id : l.target;
+          return focusSet.has(s) && focusSet.has(t);
+        }}
         onNodeHover={onHover}
         onNodeClick={onClick}
         onBackgroundClick={onBackground}
