@@ -227,6 +227,42 @@ export interface JurisdictionExposure {
   network: NetworkProximity[];
 }
 
+// Thematic (GICS) exposure. `sector_exposure` matches at any hierarchy level — a
+// sector (Information Technology) or a sub-industry (Semiconductors).
+export interface SectorCount {
+  sector: string;
+  companies: number;
+}
+export interface SectorExposure {
+  sector: string;
+  matched_level?: string | null;
+  direct: EntityRef[];
+  network: NetworkProximity[];
+}
+export interface GicsSubIndustry {
+  sub_industry: string;
+  industry: string;
+  code?: string | null;
+  companies: EntityRef[];
+}
+export interface GicsSector {
+  sector: string;
+  companies: number;
+  sub_industries: GicsSubIndustry[];
+}
+
+// MSCI market-tier (DM/EM/FM) composition — pathway 4.
+export interface MarketTierCount {
+  tier: string;
+  label: string;
+  companies: number;
+}
+export interface MarketTierExposure {
+  tier: string;
+  label: string;
+  direct: EntityRef[];
+}
+
 export interface EntityProfile {
   entity: EntityRef;
   properties: Record<string, unknown>;
@@ -493,6 +529,13 @@ export const api = {
   companyGraph: (slug: string) => get<GraphResponse>(`/graph/company/${encodeURIComponent(slug)}`),
   jurisdictionExposure: (jurisdiction: string) =>
     get<JurisdictionExposure>(`/graph/jurisdiction-exposure?jurisdiction=${encodeURIComponent(jurisdiction)}`),
+  sectors: () => get<SectorCount[]>("/graph/sectors"),
+  sectorExposure: (sector: string) =>
+    get<SectorExposure>(`/graph/sector-exposure?sector=${encodeURIComponent(sector)}`),
+  gicsBreakdown: () => get<GicsSector[]>("/graph/gics-breakdown"),
+  marketTiers: () => get<MarketTierCount[]>("/graph/market-tiers"),
+  marketTierExposure: (tier: string) =>
+    get<MarketTierExposure>(`/graph/market-tier-exposure?tier=${encodeURIComponent(tier)}`),
   retrieve: (query: string, topK = 6) => post<RetrieveResponse>("/retrieve", { query, top_k: topK }),
   // intelligence
   dashboard: () => get<Dashboard>("/dashboard"),
