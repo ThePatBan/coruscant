@@ -212,9 +212,14 @@ export function Atlas3D({ companies, profiles, selectedSlug, onSelectCompany, on
         nodeOpacity={0.95}
         nodeResolution={14}
         nodeVisibility={(n: any) => !focusSet || focusSet.has(n.id)}
-        linkColor={(l: any) => (hiLinks.has(l) ? "#e8ebef" : "#39414f")}
-        linkWidth={(l: any) => (hiLinks.has(l) ? 1.4 : 0.4)}
-        linkOpacity={0.55}
+        linkColor={(l: any) => {
+          if (hiLinks.has(l)) return "#e8ebef"; // hover: bright white
+          // Co-mention (cross-company structure) reads clearly by default; the
+          // dense ownership halos stay subtle so they don't overwhelm.
+          return l.relation === "references" ? "#8b94a6" : "#454d5c";
+        }}
+        linkWidth={(l: any) => (hiLinks.has(l) ? 1.6 : l.relation === "references" ? 0.9 : 0.35)}
+        linkOpacity={0.7}
         linkVisibility={(l: any) => {
           if (!focusSet) return true;
           const s = typeof l.source === "object" ? l.source.id : l.source;
