@@ -28,6 +28,9 @@ interface RelationMeta {
 
 const RELATIONS: Record<string, RelationMeta> = {
   employs: { tier: "control", verb: "leads" },
+  // Board seat, parsed from the 10-K signature page. A director who signs two
+  // companies' filings is a board interlock (a bridge).
+  board_member: { tier: "control", verb: "board member" },
   previously_at: { tier: "proxy", verb: "formerly at" },
   relies_on_supplier: { tier: "supply", verb: "supplied by" },
   operates_in: { tier: "supply", verb: "operates in" },
@@ -54,6 +57,7 @@ const FALLBACK: RelationMeta = { tier: "peer", verb: "" };
 // relationship graph and the typed relationship views.
 const ENTITY_RELATIONS = new Set([
   "employs",
+  "board_member",
   "previously_at",
   "relies_on_supplier",
   "operates_in",

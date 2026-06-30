@@ -1789,6 +1789,36 @@ input.input:focus {
   flex-wrap: wrap;
   gap: 7px;
 }
+.relchip-sub {
+  color: var(--text-faint);
+  font-weight: 450;
+}
+/* Key people: name + role rows (the role is the informative part). */
+.tbl-people {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 4px 22px;
+}
+.tbl-person {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+.tp-name {
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+.tp-role {
+  color: var(--text-muted);
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 @media (prefers-reduced-motion: reduce) {
   .atlas-table {
     animation: none;

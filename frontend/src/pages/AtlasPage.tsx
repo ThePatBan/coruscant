@@ -546,12 +546,13 @@ function TableView({
 }) {
   const subsidiaries = profile?.relationships.filter((r) => r.relation === "has_subsidiary") ?? [];
   const people = profile?.relationships.filter((r) => r.relation === "employs" && r.other.kind === "Person") ?? [];
+  const board = profile?.relationships.filter((r) => r.relation === "board_member" && r.other.kind === "Person") ?? [];
   const coMentions = profile?.relationships.filter((r) => r.relation === "references") ?? [];
   const material = (changeSets ?? []).filter((cs) => cs.material);
   const added = material.reduce((s, cs) => s + cs.added_count, 0);
   const removed = material.reduce((s, cs) => s + cs.removed_count, 0);
   const allChanges = material.flatMap((cs) => cs.changes);
-  const changes = allChanges.slice(0, 60); // a full 10-K diff can be hundreds of lines
+  const changes = allChanges.slice(0, 24); // headline only; people/board sit below — full diff in the dossier
   const docs = profile?.mentioned_in ?? [];
 
   return (
@@ -625,11 +626,29 @@ function TableView({
               <h3>Key people</h3>
               <span className="pill">{people.length}</span>
             </div>
-            <div className="tbl-grid">
+            <div className="tbl-people">
               {people.map((r, i) => (
-                <span className="relchip tier-control" key={i}>
-                  {r.other.name}
-                </span>
+                <div className="tbl-person" key={i}>
+                  <span className="tp-name">{r.other.name}</span>
+                  {r.detail ? <span className="tp-role">{r.detail}</span> : null}
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        {board.length > 0 ? (
+          <section className="tbl-section">
+            <div className="tbl-head">
+              <h3>Board of directors</h3>
+              <span className="pill">{board.length}</span>
+            </div>
+            <div className="tbl-people">
+              {board.map((r, i) => (
+                <div className="tbl-person" key={i}>
+                  <span className="tp-name">{r.other.name}</span>
+                  {r.detail ? <span className="tp-role">{r.detail}</span> : null}
+                </div>
               ))}
             </div>
           </section>
@@ -643,8 +662,9 @@ function TableView({
             </div>
             <div className="tbl-grid">
               {subsidiaries.map((r, i) => (
-                <span className="relchip tier-ownership" key={i}>
+                <span className="relchip tier-ownership" key={i} title={r.detail ?? undefined}>
                   {r.other.name}
+                  {r.detail ? <span className="relchip-sub"> · {r.detail}</span> : null}
                 </span>
               ))}
             </div>

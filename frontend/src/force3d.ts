@@ -58,7 +58,7 @@ export function sectorColor(sector: string): string {
 }
 
 // entity-to-entity relations rendered as links in 3D.
-const LINK_RELATIONS = new Set(["references", "has_subsidiary", "employs"]);
+const LINK_RELATIONS = new Set(["references", "has_subsidiary", "employs", "board_member"]);
 
 // Deterministic pseudo-random in [0,1) from a string (FNV-1a). No Math.random,
 // so seeded positions are identical every load.
@@ -99,9 +99,10 @@ export function buildForceData(companies: Company[], profiles: Map<string, Entit
       if (rel.relation === "references") {
         if (!trackedSlugs.has(other.key)) continue; // company↔company only
         ensure(targetId, other.name, "Company", sectorOf.get(other.key) ?? "Other", true, other.key);
-      } else if (rel.relation === "employs") {
+      } else if (rel.relation === "employs" || rel.relation === "board_member") {
         if (other.kind !== "Person") continue;
-        // a key person, clustered with its company's sector but drawn distinctly
+        // a key person / director, clustered with the company but drawn distinctly;
+        // a person linked to ≥2 companies is a board interlock (a bridge)
         ensure(targetId, other.name, "Person", sourceSector, false);
       } else {
         // has_subsidiary → a Subsidiary node, coloured by its parent's sector
@@ -116,9 +117,12 @@ export function buildForceData(companies: Company[], profiles: Map<string, Entit
     }
   }
 
-  // Size companies by degree (importance); subsidiaries stay small.
+  // Size companies by degree (importance); subsidiaries stay small. People who
+  // link to ≥2 companies are board interlocks (bridges) — size them up so they
+  // read as the connective tissue between clusters.
   for (const n of nodes.values()) {
     if (n.tracked) n.val = 5 + (degree.get(n.id) ?? 0) * 0.8;
+    else if (n.kind === "Person") n.val = (degree.get(n.id) ?? 0) >= 2 ? 4.5 : 1.6;
   }
 
   // Sector anchor points distributed deterministically on a sphere.

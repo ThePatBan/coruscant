@@ -13,6 +13,7 @@ from coruscant.connectors.sec_edgar import (
     find_exhibit21_url,
     normalize_edgar_filing,
     parse_officers,
+    parse_signers,
     parse_subsidiaries,
 )
 
@@ -80,6 +81,35 @@ def test_parse_officers_requires_a_cluster_and_valid_age() -> None:
     assert parse_officers("\n".join(["Random Person", "42", "Vice President of Sales"])) == []
     # Ages outside 35–95 (e.g. footnote numbers) never anchor an officer row.
     assert parse_officers("\n".join(["John Public", "12", "President", "Jane Doe", "20", "Officer"])) == []
+
+
+def test_parse_signers_classifies_officers_directors_and_skips_firms() -> None:
+    text = "\n".join(
+        [
+            "Pursuant to the requirements of the Securities Exchange Act of 1934, this report has been "
+            "signed below by the following persons on behalf of the registrant and in the capacities indicated.",
+            "/s/ Timothy D. Cook",
+            "Chief Executive Officer and Director",
+            "November 1, 2024",
+            "Timothy D. Cook",
+            "/s/ Andrea Jung",
+            "Director",
+            "November 1, 2024",
+            "Andrea Jung",
+            "/s/ Ernst Young LLP",  # audit firm — filtered out
+            "Director",
+        ]
+    )
+    by_name = {s["name"]: s for s in parse_signers(text)}
+    assert by_name["Timothy D. Cook"]["kind"] == "officer"  # an executive office wins
+    assert by_name["Andrea Jung"]["kind"] == "director"
+    assert "Ernst Young Llp" not in by_name  # firm signature dropped
+
+
+def test_parse_signers_requires_the_signature_preamble() -> None:
+    # The auditor's /s/ appears earlier in the filing; without the signature
+    # preamble we must parse nothing (no phantom people).
+    assert parse_signers("/s/ PricewaterhouseCoopers LLP\nIndependent Auditor") == []
 
 
 def test_reference_edgar_connector_produces_item_sections() -> None:
