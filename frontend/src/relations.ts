@@ -11,6 +11,7 @@
 
 export type RelationTier =
   | "control" // direct leadership of a company
+  | "ownership" // declared parent → subsidiary (Exhibit 21)
   | "proxy" // inferred influence: leadership overlap, prior tenure, agency ties
   | "supply" // dependency / country exposure
   | "alliance" // partner / customer
@@ -41,6 +42,8 @@ const RELATIONS: Record<string, RelationMeta> = {
   // A names company B; in_sector = SEC SIC classification.
   references: { tier: "reference", verb: "names in filings" },
   in_sector: { tier: "reference", verb: "in sector" },
+  // Declared ownership, extracted from the 10-K's Exhibit 21 (subsidiaries list).
+  has_subsidiary: { tier: "ownership", verb: "owns" },
 };
 
 const FALLBACK: RelationMeta = { tier: "peer", verb: "" };
@@ -62,6 +65,7 @@ const ENTITY_RELATIONS = new Set([
   "engaged_with",
   "references",
   "in_sector",
+  "has_subsidiary",
 ]);
 
 export function isEntityRelation(relation: string): boolean {
@@ -90,6 +94,7 @@ export interface TierInfo {
 // question), then dependency, then the softer business ties.
 export const TIERS: TierInfo[] = [
   { tier: "control", label: "Leadership", hint: "Direct control of a company" },
+  { tier: "ownership", label: "Ownership", hint: "Declared subsidiary (Exhibit 21)" },
   { tier: "proxy", label: "Control by proxy", hint: "Inferred — leadership overlap or prior tenure" },
   { tier: "supply", label: "Supply exposure", hint: "Depends on a supplier or country" },
   { tier: "alliance", label: "Alliance", hint: "Partner or customer" },
@@ -100,6 +105,7 @@ export const TIERS: TierInfo[] = [
 
 const TIER_LABELS: Record<RelationTier, string> = {
   control: "Leadership",
+  ownership: "Ownership",
   proxy: "Control by proxy",
   supply: "Supply exposure",
   alliance: "Alliance",
@@ -123,6 +129,7 @@ const KIND_GLYPHS: Record<string, string> = {
   Technology: "⚙",
   Agency: "▣",
   Industry: "❖",
+  Subsidiary: "⌂",
   Document: "▦",
 };
 

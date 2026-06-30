@@ -76,11 +76,12 @@ export function buildGraph(
     const cid = ensure("Company", profile.entity.key, profile.entity.name);
     for (const rel of profile.relationships) {
       if (!isEntityRelation(rel.relation)) continue;
-      // Country (`operates_in`) and Industry (`in_sector`) are low-signal hubs
-      // shared by many companies; on the map they collapse into one central node
-      // everything links to. They stay out of the map (kept in typed relationship
-      // lists); cross-company structure comes from the company↔company edges.
-      if (rel.other.kind === "Country" || rel.other.kind === "Industry") continue;
+      // Country/Industry are low-signal hubs; Subsidiary nodes are numerous
+      // (a company can declare hundreds in Exhibit 21) and per-company, so they
+      // would swamp the overview. All three stay out of the map but remain in the
+      // rail's typed relationship lists; cross-company structure on the map comes
+      // from company↔company edges.
+      if (rel.other.kind === "Country" || rel.other.kind === "Industry" || rel.other.kind === "Subsidiary") continue;
       const oid = ensure(rel.other.kind, rel.other.key, rel.other.name);
       const [a, b] = [cid, oid].sort();
       const ek = `${a}|${b}|${rel.relation}`;

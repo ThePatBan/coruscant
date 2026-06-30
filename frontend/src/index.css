@@ -962,6 +962,9 @@ input.input:focus {
      (inferred, never asserted); supply = provenance amber; alliance = teal;
      rivalry/product stay neutral so they never compete with the signal tiers. */
   --t-control: #7c8cff;
+  /* Declared ownership (Exhibit 21 subsidiaries) — a distinct rose, the one
+     factual control edge, set apart from inferred control (indigo/violet). */
+  --t-ownership: #d782ad;
   --t-proxy: #b39bff;
   --t-supply: #f3b94d;
   --t-alliance: #4bd6a0;
@@ -974,6 +977,7 @@ input.input:focus {
 }
 
 .tier-control { --tc: var(--t-control); }
+.tier-ownership { --tc: var(--t-ownership); }
 .tier-proxy { --tc: var(--t-proxy); }
 .tier-supply { --tc: var(--t-supply); }
 .tier-alliance { --tc: var(--t-alliance); }

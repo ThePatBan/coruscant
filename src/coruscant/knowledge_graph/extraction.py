@@ -29,6 +29,7 @@ from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 
 _SECTOR_PROV = "sec-metadata"
 _COMENTION_PROV = "sec-co-mention"
+_SUBSIDIARY_PROV = "sec-exhibit21"
 
 # Pure legal-form tokens stripped to get a company's distinctive core name. We
 # deliberately KEEP words like "companies" / "group" — they make a name precise
@@ -164,6 +165,72 @@ def project_cross_company_references(
     return count
 
 
+def project_subsidiary_edges(
+    store: InMemoryKnowledgeGraphStore,
+    companies: list[CompanyConfig],
+    documents: list[NormalizedDocument],
+) -> int:
+    """Company -has_subsidiary-> Subsidiary, from each filing's parsed Exhibit 21.
+
+    This is the platform's first *declared* ownership edge (vs the inferred control
+    proxies). Provenance is the Exhibit 21 filing; the registrant's self-entry is
+    filtered out by core-name match.
+    """
+    docs_by_slug: dict[str, list[NormalizedDocument]] = {}
+    for doc in documents:
+        slug = str(doc.metadata.get("company_slug") or "")
+        if slug:
+            docs_by_slug.setdefault(slug, []).append(doc)
+
+    count = 0
+    for company in companies:
+        parent_core = _core_name(company.name)
+        seen: set[str] = set()
+        for doc in docs_by_slug.get(company.slug, []):
+            subs = doc.metadata.get("subsidiaries")
+            if not isinstance(subs, list):
+                continue
+            for sub in subs:
+                if not isinstance(sub, dict):
+                    continue
+                name = str(sub.get("name") or "").strip()
+                if not name:
+                    continue
+                norm = _norm(name)
+                if parent_core and parent_core in norm:
+                    continue
+                key = entity_key(name)
+                if key in seen:
+                    continue
+                seen.add(key)
+                jurisdiction = str(sub.get("jurisdiction") or "").strip()
+                if store.get_node("Subsidiary", key) is None:
+                    store.upsert_node(
+                        GraphNode(
+                            kind="Subsidiary",
+                            key=key,
+                            properties={"name": name, "jurisdiction": jurisdiction, "source": _SUBSIDIARY_PROV},
+                        )
+                    )
+                store.upsert_edge(
+                    GraphEdge(
+                        source_kind="Company",
+                        source_key=company.slug,
+                        relation="has_subsidiary",
+                        target_kind="Subsidiary",
+                        target_key=key,
+                        properties={
+                            "source": _SUBSIDIARY_PROV,
+                            "company_slug": company.slug,
+                            "source_uri": doc.source_uri,
+                            "jurisdiction": jurisdiction,
+                        },
+                    )
+                )
+                count += 1
+    return count
+
+
 def load_normalized_documents(data_dir: Path) -> list[NormalizedDocument]:
     """Load every persisted normalized document under ``{data_dir}/normalized``."""
     root = Path(data_dir) / "normalized"
@@ -188,4 +255,10 @@ def extract_relationships(
     project_company_nodes(store, companies)
     sector = project_sector_edges(store, companies)
     references = project_cross_company_references(store, companies, documents)
-    return {"in_sector": sector, "references": references, "documents": len(documents)}
+    subsidiaries = project_subsidiary_edges(store, companies, documents)
+    return {
+        "in_sector": sector,
+        "references": references,
+        "subsidiaries": subsidiaries,
+        "documents": len(documents),
+    }

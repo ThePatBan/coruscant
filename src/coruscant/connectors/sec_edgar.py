@@ -177,6 +177,15 @@ class EdgarHttpConnector(SourceConnector):
         exhibits = index_data.get("exhibits")
         if isinstance(exhibits, list):
             metadata["indexed_exhibits"] = exhibits
+        # Exhibit 21 → subsidiaries (best-effort; a fetch/parse miss never fails
+        # the 10-K). Provenance travels with the filing's normalized metadata.
+        ex21_url = find_exhibit21_url(request.source_uri, metadata.get("indexed_exhibits"))
+        if ex21_url:
+            ex21_html = self._fetch_primary_document(ex21_url)
+            if ex21_html:
+                subsidiaries = parse_subsidiaries(self._extract_text(ex21_html))
+                if subsidiaries:
+                    metadata["subsidiaries"] = subsidiaries
         metadata.update({"company_slug": request.company_slug, "source_name": request.source_name})
         return SourceDocument(
             source_type="sec_edgar",
@@ -237,6 +246,87 @@ class EdgarHttpConnector(SourceConnector):
         except (URLError, OSError) as exc:
             logger.warning("EDGAR primary document fetch failed for %s: %s", primary_document_url, exc)
             return None
+
+
+# --- Exhibit 21 (Subsidiaries of the Registrant) ----------------------------
+# Deterministic, provenance-backed ownership extraction. Ex-21 is a flat list of
+# (subsidiary name, jurisdiction) pairs; we anchor on a known jurisdiction set and
+# pair each with the preceding line — robust to header noise, precision-first (an
+# unrecognized jurisdiction drops that row rather than inventing an edge).
+
+_US_STATES = (
+    "alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|georgia|"
+    "hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|"
+    "michigan|minnesota|mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|"
+    "new mexico|new york|north carolina|north dakota|ohio|oklahoma|oregon|pennsylvania|"
+    "rhode island|south carolina|south dakota|tennessee|texas|utah|vermont|virginia|washington|"
+    "west virginia|wisconsin|wyoming|district of columbia|puerto rico"
+)
+_COUNTRIES = (
+    "united states|usa|canada|mexico|brazil|chile|argentina|colombia|peru|united kingdom|uk|"
+    "england|scotland|ireland|france|germany|netherlands|belgium|luxembourg|switzerland|spain|"
+    "portugal|italy|austria|sweden|norway|denmark|finland|poland|china|japan|india|singapore|"
+    "hong kong|south korea|korea|taiwan|australia|new zealand|south africa|israel|"
+    "united arab emirates|uae|cayman islands|bermuda|british virgin islands|jersey|guernsey|"
+    "isle of man|mauritius|cyprus|malta|gibraltar|costa rica|panama|guatemala|philippines|"
+    "thailand|vietnam|malaysia|indonesia|turkey|russia|ukraine|czech republic|hungary|romania|"
+    "greece|egypt|nigeria|kenya|morocco|saudi arabia|qatar|bahrain|kuwait|barbados|bahamas|"
+    "curacao|uruguay|ecuador|venezuela|dominican republic|honduras|el salvador|nicaragua|"
+    "paraguay|bolivia|slovakia|slovenia|croatia|serbia|bulgaria"
+)
+_JURISDICTIONS = frozenset(_US_STATES.split("|")) | frozenset(_COUNTRIES.split("|"))
+_SUB_HEADERS = {
+    "subsidiaries", "name", "document", "exhibit", "organized under", "the laws of",
+    "organized under laws of", "registrant", "list of subsidiaries", "subsidiaries of the registrant",
+}
+_EX21_RE = re.compile(r"exhibit[\s_\-]*21", re.I)
+
+
+def _norm_text(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+
+def find_exhibit21_url(source_uri: str, indexed_exhibits: object) -> str | None:
+    """Locate the Exhibit 21 (subsidiaries) document URL from a filing's exhibits.
+
+    Matches `exhibit21` / `exhibit 21` / `exhibit21.1` but NOT 32.1, 10.2.1, 23.1
+    (the `21` must directly follow `exhibit`, so a leading digit like 3 in `321`
+    fails to match).
+    """
+    if not isinstance(indexed_exhibits, list):
+        return None
+    for exhibit in indexed_exhibits:
+        if not isinstance(exhibit, dict):
+            continue
+        title = str(exhibit.get("title") or exhibit.get("url") or exhibit.get("href") or "")
+        if title and _EX21_RE.search(title):
+            return urljoin(source_uri, title)
+    return None
+
+
+def parse_subsidiaries(text: str, *, parent_core: str = "", limit: int = 30) -> list[dict[str, str]]:
+    """Parse (name, jurisdiction) subsidiary pairs from Exhibit 21 plain text."""
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for i in range(1, len(lines)):
+        if _norm_text(lines[i]) not in _JURISDICTIONS:
+            continue
+        name = lines[i - 1].strip().rstrip(",;")
+        norm = _norm_text(name)
+        if len(name) < 3 or len(name) > 90:
+            continue
+        if norm in _JURISDICTIONS or norm in _SUB_HEADERS:
+            continue
+        if parent_core and parent_core in norm:  # skip the registrant's self-entry
+            continue
+        if norm in seen:
+            continue
+        seen.add(norm)
+        out.append({"name": name, "jurisdiction": lines[i].strip()})
+        if len(out) >= limit:
+            break
+    return out
 
 
 def normalize_edgar_filing(document: SourceDocument) -> NormalizedDocument:
