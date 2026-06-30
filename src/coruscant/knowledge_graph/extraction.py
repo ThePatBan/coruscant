@@ -32,6 +32,7 @@ _COMENTION_PROV = "sec-co-mention"
 _SUBSIDIARY_PROV = "sec-exhibit21"
 _OFFICER_PROV = "sec-10k-officers"
 _DIRECTOR_PROV = "sec-10k-signatures"
+_HOLDING_PROV = "sec-form4"
 
 # Pure legal-form tokens stripped to get a company's distinctive core name. We
 # deliberately KEEP words like "companies" / "group" — they make a name precise
@@ -304,6 +305,46 @@ def project_people_edges(
                 )
             )
             count += 1
+    return count
+
+
+def project_holdings_edges(
+    store: InMemoryKnowledgeGraphStore, company_slug: str, holdings: list[dict[str, object]]
+) -> int:
+    """Company -insider_holding-> Person {shares}, from parsed Form 4 filings.
+
+    The holdings layer. ``holdings`` is the output of
+    ``sec_edgar.fetch_recent_form4_holdings`` (network); kept separate from the
+    offline projectors so this stays a pure, testable transform. People are keyed
+    by name, so an insider who is already an officer/director (parsed from the
+    10-K) is enriched in place rather than duplicated.
+    """
+    count = 0
+    for holding in holdings:
+        owner = str(holding.get("owner") or "").strip()
+        shares = holding.get("shares")
+        if not owner or not isinstance(shares, int):
+            continue
+        key = entity_key(owner)
+        if store.get_node("Person", key) is None:
+            store.upsert_node(GraphNode(kind="Person", key=key, properties={"name": owner, "source": _HOLDING_PROV}))
+        role = (
+            str(holding.get("title") or "").strip()
+            or ("Director" if holding.get("is_director") else "")
+            or ("10% owner" if holding.get("is_ten_percent") else "")
+            or "Insider"
+        )
+        store.upsert_edge(
+            GraphEdge(
+                source_kind="Company",
+                source_key=company_slug,
+                relation="insider_holding",
+                target_kind="Person",
+                target_key=key,
+                properties={"source": _HOLDING_PROV, "company_slug": company_slug, "role": role, "shares": shares},
+            )
+        )
+        count += 1
     return count
 
 

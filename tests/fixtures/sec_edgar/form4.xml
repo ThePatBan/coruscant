@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<ownershipDocument>
+  <issuer>
+    <issuerCik>0000320193</issuerCik>
+    <issuerName>Apple Inc.</issuerName>
+    <issuerTradingSymbol>aapl</issuerTradingSymbol>
+  </issuer>
+  <reportingOwner>
+    <reportingOwnerId>
+      <rptOwnerName>Newstead Jennifer</rptOwnerName>
+    </reportingOwnerId>
+    <reportingOwnerRelationship>
+      <isDirector>0</isDirector>
+      <isOfficer>1</isOfficer>
+      <officerTitle>SVP, GC and Secretary</officerTitle>
+      <isTenPercentOwner>0</isTenPercentOwner>
+    </reportingOwnerRelationship>
+  </reportingOwner>
+  <nonDerivativeTable>
+    <nonDerivativeTransaction>
+      <postTransactionAmounts>
+        <sharesOwnedFollowingTransaction><value>57784</value></sharesOwnedFollowingTransaction>
+      </postTransactionAmounts>
+    </nonDerivativeTransaction>
+    <nonDerivativeHolding>
+      <postTransactionAmounts>
+        <sharesOwnedFollowingTransaction><value>210728</value></sharesOwnedFollowingTransaction>
+      </postTransactionAmounts>
+    </nonDerivativeHolding>
+  </nonDerivativeTable>
+</ownershipDocument>

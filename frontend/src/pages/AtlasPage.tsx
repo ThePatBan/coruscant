@@ -547,6 +547,13 @@ function TableView({
   const subsidiaries = profile?.relationships.filter((r) => r.relation === "has_subsidiary") ?? [];
   const people = profile?.relationships.filter((r) => r.relation === "employs" && r.other.kind === "Person") ?? [];
   const board = profile?.relationships.filter((r) => r.relation === "board_member" && r.other.kind === "Person") ?? [];
+  const sharesOf = (d?: string | null) => {
+    const m = d?.match(/([\d,]+)\s+shares/);
+    return m ? parseInt(m[1].replace(/,/g, ""), 10) : 0;
+  };
+  const holdings = (profile?.relationships.filter((r) => r.relation === "insider_holding" && r.other.kind === "Person") ?? [])
+    .slice()
+    .sort((a, b) => sharesOf(b.detail) - sharesOf(a.detail));
   const coMentions = profile?.relationships.filter((r) => r.relation === "references") ?? [];
   const material = (changeSets ?? []).filter((cs) => cs.material);
   const added = material.reduce((s, cs) => s + cs.added_count, 0);
@@ -645,6 +652,23 @@ function TableView({
             </div>
             <div className="tbl-people">
               {board.map((r, i) => (
+                <div className="tbl-person" key={i}>
+                  <span className="tp-name">{r.other.name}</span>
+                  {r.detail ? <span className="tp-role">{r.detail}</span> : null}
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        {holdings.length > 0 ? (
+          <section className="tbl-section">
+            <div className="tbl-head">
+              <h3>Insider holdings</h3>
+              <span className="pill">{holdings.length}</span>
+            </div>
+            <div className="tbl-people">
+              {holdings.map((r, i) => (
                 <div className="tbl-person" key={i}>
                   <span className="tp-name">{r.other.name}</span>
                   {r.detail ? <span className="tp-role">{r.detail}</span> : null}
