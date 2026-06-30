@@ -232,7 +232,15 @@ export function Atlas3D({
         controlType="orbit"
         nodeId="id"
         nodeLabel={(n: any) => {
-          const sub = n.kind === "Company" ? n.sector : n.kind === "Person" ? "Key person" : "Subsidiary";
+          const flag = n.country === "United Kingdom" ? "🇬🇧 UK" : n.country === "United States" ? "🇺🇸 US" : "";
+          const sub =
+            n.kind === "Company"
+              ? flag
+                ? `${n.sector} · ${flag}`
+                : n.sector
+              : n.kind === "Person"
+                ? "Key person"
+                : "Subsidiary";
           return `<div class="g3d-tip"><strong>${esc(n.name)}</strong><span>${esc(sub)}</span></div>`;
         }}
         nodeVal={(n: any) => n.val}
@@ -242,11 +250,14 @@ export function Atlas3D({
         nodeVisibility={(n: any) => !focusSet || focusSet.has(n.id)}
         linkColor={(l: any) => {
           if (hiLinks.has(l)) return "#e8ebef"; // hover: bright white
+          if (l.crossBorder) return "#46cfe0"; // transatlantic co-mention — make the linkage pop
           // Co-mention (cross-company structure) reads clearly by default; the
           // dense ownership halos stay subtle so they don't overwhelm.
           return l.relation === "references" ? "#8b94a6" : "#454d5c";
         }}
-        linkWidth={(l: any) => (hiLinks.has(l) ? 1.6 : l.relation === "references" ? 0.9 : 0.35)}
+        linkWidth={(l: any) =>
+          hiLinks.has(l) ? 1.6 : l.crossBorder ? 1.4 : l.relation === "references" ? 0.9 : 0.35
+        }
         linkOpacity={0.7}
         linkVisibility={(l: any) => {
           if (!focusSet) return true;
