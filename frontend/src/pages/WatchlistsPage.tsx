@@ -1,7 +1,7 @@
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { ApiError, api, type Notification, type Watchlist, type WatchItem } from "../api";
-import { Cat, Empty } from "../components";
+import { ApiError, api, emitNotificationsChanged, type Watchlist, type WatchItem } from "../api";
+import { Empty } from "../components";
 
 const WATCH_TYPES = ["company", "country", "industry", "executive", "keyword", "supply_chain"];
 
@@ -11,7 +11,6 @@ interface EditorItem extends WatchItem {
 
 export function WatchlistsPage() {
   const [watchlists, setWatchlists] = useState<Watchlist[]>([]);
-  const [notifications, setNotifications] = useState<Notification[]>([]);
   const [name, setName] = useState("My watchlist");
   const uid = useRef(1);
   const [items, setItems] = useState<EditorItem[]>([{ uid: 0, type: "country", value: "Taiwan" }]);
@@ -19,9 +18,7 @@ export function WatchlistsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
-    const [wl, notes] = await Promise.all([api.watchlists(), api.notifications()]);
-    setWatchlists(wl);
-    setNotifications(notes);
+    setWatchlists(await api.watchlists());
   }, []);
 
   const guard = useCallback(
@@ -30,6 +27,9 @@ export function WatchlistsPage() {
       try {
         await fn();
         await reload();
+        // Creating / re-checking / deleting a watchlist changes the alert feed —
+        // tell the topbar bell to refresh its unread count.
+        emitNotificationsChanged();
       } catch (err) {
         setError(err instanceof ApiError ? err.message : "Something went wrong");
       }
@@ -56,9 +56,6 @@ export function WatchlistsPage() {
 
   const remove = (id: string) => guard(() => api.deleteWatchlist(id));
   const evaluate = (id: string) => guard(() => api.evaluateWatchlist(id));
-  const markRead = (id: string) => guard(() => api.markRead(id));
-
-  const unread = notifications.filter((n) => !n.read).length;
 
   return (
     <div className="stack gap-lg">
@@ -149,40 +146,16 @@ export function WatchlistsPage() {
         </div>
       </div>
 
-      <div className="stack gap">
-        <div className="row-between">
-          <h2>Notifications</h2>
-          {unread > 0 ? <span className="pill evidence">{unread} unread</span> : null}
-        </div>
-        {notifications.length === 0 ? (
-          <Empty icon="🔔" title="No notifications" hint="Create a watchlist to generate alerts." />
-        ) : (
-          <div className="list">
-            {notifications.map((n) => (
-              <div className="li" key={n.id} style={{ cursor: "default", opacity: n.read ? 0.6 : 1 }}>
-                <div className="grow">
-                  <div className="wrap" style={{ gap: 8, marginBottom: 2 }}>
-                    {!n.read ? <span className="dot" style={{ display: "inline-block", width: 7, height: 7, borderRadius: 9, background: "var(--accent)" }} /> : null}
-                    <span style={{ fontWeight: 560 }}>{n.title}</span>
-                    {n.category ? <Cat category={n.category} /> : null}
-                  </div>
-                  <div className="faint" style={{ fontSize: 13 }}>{n.detail}</div>
-                  {n.canonical_id ? (
-                    <Link to={`/documents/${n.canonical_id}`} className="mono faint" style={{ fontSize: 11.5 }}>
-                      ↳ source
-                    </Link>
-                  ) : null}
-                </div>
-                {!n.read ? (
-                  <button className="btn ghost" style={{ padding: "5px 10px" }} onClick={() => void markRead(n.id)}>
-                    Mark read
-                  </button>
-                ) : null}
-              </div>
-            ))}
+      <Link to="/alerts" className="card hover row-between" style={{ textDecoration: "none", alignItems: "center" }}>
+        <div>
+          <strong>Alerts</strong>
+          <div className="faint" style={{ fontSize: 13, marginTop: 2 }}>
+            Matches from these watchlists collect in your alerts feed — each linked to the source
+            disclosure that triggered it.
           </div>
-        )}
-      </div>
+        </div>
+        <span className="pill accent">Open alerts →</span>
+      </Link>
     </div>
   );
 }

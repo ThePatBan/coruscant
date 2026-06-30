@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import secrets
 
-from sqlalchemy import Boolean, Integer, String, Text, create_engine, delete, select
+from sqlalchemy import Boolean, Integer, String, Text, create_engine, delete, func, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from coruscant.watchlists.models import Notification, Watchlist, WatchItem
@@ -106,6 +106,30 @@ class SqliteWatchlistStore:
                 for r in rows
             ]
 
+    def all_watchlists(self) -> list[tuple[str, Watchlist]]:
+        """Every watchlist across all users, as (owner_email, watchlist) pairs.
+
+        Used by the background evaluator (worker) to refresh notifications for the
+        whole tenant base, not just the caller.
+        """
+
+        with Session(self.engine) as session:
+            rows = session.scalars(
+                select(WatchlistRow).order_by(WatchlistRow.user_email, WatchlistRow.created_at)
+            ).all()
+            return [
+                (
+                    r.user_email,
+                    Watchlist(
+                        id=r.id,
+                        name=r.name,
+                        items=self._items(session, r.id),
+                        created_at=r.created_at,
+                    ),
+                )
+                for r in rows
+            ]
+
     def delete_watchlist(self, user_email: str, watchlist_id: str) -> bool:
         with Session(self.engine) as session:
             row = session.get(WatchlistRow, watchlist_id)
@@ -181,3 +205,27 @@ class SqliteWatchlistStore:
             row.read = True
             session.commit()
             return True
+
+    def mark_all_read(self, user_email: str) -> int:
+        """Mark every unread notification for the user as read; return how many."""
+        with Session(self.engine) as session:
+            rows = session.scalars(
+                select(NotificationRow).where(
+                    NotificationRow.user_email == user_email,
+                    NotificationRow.read.is_(False),
+                )
+            ).all()
+            for row in rows:
+                row.read = True
+            session.commit()
+            return len(rows)
+
+    def summary(self, user_email: str) -> tuple[int, int]:
+        """Return (total, unread) notification counts for the user."""
+        with Session(self.engine) as session:
+            base = select(func.count()).select_from(NotificationRow).where(
+                NotificationRow.user_email == user_email
+            )
+            total = session.scalar(base) or 0
+            unread = session.scalar(base.where(NotificationRow.read.is_(False))) or 0
+            return int(total), int(unread)

@@ -17,12 +17,14 @@ from coruscant.auth.service import AuthService
 from coruscant.auth.store import SqliteUserStore
 from coruscant.commercial.store import SqliteOrgStore, SqliteUsageStore
 from coruscant.common.config import (
+    CompanyConfig,
     Settings,
     get_settings,
     load_companies,
     load_entities,
     load_sources,
 )
+from coruscant.connectors.sec_edgar import RateLimiter
 from coruscant.infrastructure.catalog import SqliteDocumentCatalog
 from coruscant.infrastructure.intelligence_store import SqliteIntelligenceStore
 from coruscant.infrastructure.status import RunStatus, load_status, save_status
@@ -30,8 +32,14 @@ from coruscant.infrastructure.repositories import (
     FileSystemNormalizedDocumentRepository,
     FileSystemRawDocumentRepository,
 )
-from coruscant.ingestion.orchestrator import IngestionOrchestrator, IngestionReport
-from coruscant.ingestion.registry import default_registry
+from coruscant.ingestion.orchestrator import (
+    IngestionOrchestrator,
+    IngestionReport,
+    IngestionTarget,
+    SourceResolver,
+    reference_targets,
+)
+from coruscant.ingestion.registry import SourceDefinition, SourceRegistry, default_registry
 from coruscant.intelligence.reliability import (
     SourceReliability,
     errors_for_source,
@@ -47,6 +55,7 @@ from coruscant.infrastructure.schedule_store import SqliteScheduleStore
 from coruscant.ingestion.scheduler import due_sources
 from coruscant.portfolio.store import SqlitePortfolioStore
 from coruscant.search.hybrid import HybridRetrievalEngine
+from coruscant.watchlists.matcher import match_watch_items
 from coruscant.watchlists.store import SqliteWatchlistStore
 from coruscant.workspaces.store import SqliteWorkspaceStore
 
@@ -196,33 +205,146 @@ def seed_demo_user(settings: Settings | None = None) -> bool:
     return True
 
 
-def run_ingestion(settings: Settings | None = None) -> IngestionReport:
-    """Run the full ingestion lifecycle and persist all derived stores."""
+def build_registry(
+    settings: Settings | None = None, *, rate_limiter: RateLimiter | None = None
+) -> SourceRegistry:
+    """Registry with live connectors swapped in for ``settings.live_sources``."""
 
     settings = settings or get_settings()
-    graph_store = InMemoryKnowledgeGraphStore()
+    return default_registry(
+        settings.live_sources,
+        edgar_user_agent=settings.edgar_user_agent,
+        rate_limiter=rate_limiter,
+    )
+
+
+def build_source_resolver(settings: Settings | None = None) -> SourceResolver:
+    """Choose how disclosures are located per source.
+
+    Offline (default): synthetic reference targets. When ``sec_edgar`` is live,
+    its targets are the company's configured real SEC filing URLs (oldest →
+    newest so the change detector still sees a prior + current); a company with no
+    configured filings (e.g. a private company with no 10-K) simply yields nothing
+    — an observable zero, not an error. Every other source stays on reference.
+    """
+
+    settings = settings or get_settings()
+    live = set(settings.live_sources)
+    if "sec_edgar" not in live:
+        return reference_targets
+
+    def resolver(
+        company: CompanyConfig, source_type: str, definition: SourceDefinition
+    ) -> list[IngestionTarget]:
+        if source_type != "sec_edgar":
+            return reference_targets(company, source_type, definition)
+        return [
+            IngestionTarget(
+                label=f"SEC filing {revision + 1}",
+                published_at="",  # the real date comes from the parsed filing
+                source_uri=url,
+                revision=revision,
+            )
+            for revision, url in enumerate(company.sec_filings)
+        ]
+
+    return resolver
+
+
+def run_ingestion(
+    settings: Settings | None = None,
+    *,
+    respect_due: bool = False,
+    now: datetime | None = None,
+) -> IngestionReport:
+    """Run the ingestion lifecycle and persist all derived stores.
+
+    ``respect_due=True`` (the scheduled/worker path) ingests only sources whose
+    cadence has elapsed and layers them onto the existing graph snapshot, so a
+    partial run never drops not-due sources' projections. The default full run
+    (CLI/one-shot) rebuilds everything from scratch — unchanged behavior.
+    """
+
+    settings = settings or get_settings()
+    moment = now or datetime.now(tz=timezone.utc)
+    # One shared limiter for the whole run keeps the aggregate SEC request rate
+    # under the fair-access cap. Only constructed when something runs live.
+    rate_limiter = (
+        RateLimiter(1.0 / settings.sec_rate_limit_per_second)
+        if settings.live_sources and settings.sec_rate_limit_per_second > 0
+        else None
+    )
+
+    companies = load_companies(settings.config_dir)
+    sources = load_sources(settings.config_dir)
+    if respect_due:
+        due = set(due_source_types(settings, now=moment))
+        skipped = sorted(s.type for s in sources if s.enabled and s.type not in due)
+        sources = [s for s in sources if s.type in due]
+        if skipped:
+            logger.info("Scheduler: skipping not-due sources: %s", ", ".join(skipped))
+
+    # Incremental due-runs start from the persisted graph so not-due sources
+    # survive; full runs start clean. Re-projection is idempotent (dedup by id).
+    if respect_due and settings.graph_snapshot_path.exists():
+        graph_store = load_graph(settings.graph_snapshot_path)
+    else:
+        graph_store = InMemoryKnowledgeGraphStore()
+
     orchestrator = IngestionOrchestrator(
         raw_repository=FileSystemRawDocumentRepository(settings.data_dir),
         normalized_repository=FileSystemNormalizedDocumentRepository(settings.data_dir),
         catalog=build_catalog(settings),
         graph_store=graph_store,
         engine=HybridRetrievalEngine(),
+        registry=build_registry(settings, rate_limiter=rate_limiter),
         intelligence_store=build_intelligence_store(settings),
         entities=load_entities(settings.config_dir),
         dead_letter_store=build_dead_letter_store(settings),
+        resolver=build_source_resolver(settings),
         max_attempts=settings.ingest_max_attempts,
     )
-    companies = load_companies(settings.config_dir)
-    sources = load_sources(settings.config_dir)
     report = orchestrator.run(companies, sources)
     save_graph(graph_store, settings.graph_snapshot_path)
-    completed_at = datetime.now(tz=timezone.utc).isoformat()
+    completed_at = moment.isoformat()
     save_status(RunStatus.from_report(report, completed_at=completed_at), settings.status_path)
     # Record last successful run per source so the scheduler can compute due-ness.
     schedule = build_schedule_store(settings)
     for source_type in report.source_types:
         schedule.record_run(source_type, completed_at)
     return report
+
+
+def evaluate_all_watchlists(settings: Settings | None = None, *, now: datetime | None = None) -> int:
+    """Re-evaluate every user's watchlists against the current intelligence.
+
+    The background loop: the worker calls this after each ingestion run so new
+    material changes and events become source-linked notifications with no user
+    action. Idempotent (notification de-dup), so it is safe to run every tick; the
+    on-demand API evaluators share the same matcher and remain fully intact.
+    Returns the number of new notifications created.
+    """
+
+    settings = settings or get_settings()
+    now_iso = (now or datetime.now(tz=timezone.utc)).isoformat()
+    watchlist_store = build_watchlist_store(settings)
+    intelligence = build_intelligence_store(settings)
+    graph = load_graph_store(settings)
+    companies = load_companies(settings.config_dir)
+    events = intelligence.list_events()
+    change_sets = intelligence.list_change_sets()
+    created = 0
+    for user_email, watchlist in watchlist_store.all_watchlists():
+        notifications = match_watch_items(
+            watchlist.items,
+            events=events,
+            change_sets=change_sets,
+            companies=companies,
+            graph=graph,
+            now_iso=now_iso,
+        )
+        created += watchlist_store.add_notifications(user_email, watchlist.id, notifications)
+    return created
 
 
 def load_run_status(settings: Settings | None = None) -> RunStatus | None:

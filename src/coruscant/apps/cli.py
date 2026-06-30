@@ -38,9 +38,9 @@ def cmd_sources(_: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_ingest(_: argparse.Namespace) -> int:
+def cmd_ingest(args: argparse.Namespace) -> int:
     configure_logging()
-    report = run_ingestion()
+    report = run_ingestion(respect_due=getattr(args, "due_only", False))
     print(
         f"Ingested {report.document_count} documents across "
         f"{len(report.companies)} companies and {len(report.source_types)} sources."
@@ -120,7 +120,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("companies", help="List configured companies").set_defaults(func=cmd_companies)
     sub.add_parser("sources", help="List registered ingestion sources").set_defaults(func=cmd_sources)
-    sub.add_parser("ingest", help="Run the full ingestion lifecycle").set_defaults(func=cmd_ingest)
+    ingest = sub.add_parser("ingest", help="Run the ingestion lifecycle")
+    ingest.add_argument(
+        "--due-only",
+        action="store_true",
+        help="Ingest only sources whose cadence has elapsed (scheduler-aware)",
+    )
+    ingest.set_defaults(func=cmd_ingest)
     sub.add_parser("schedule", help="Show which sources are due for ingestion").set_defaults(func=cmd_schedule)
 
     query = sub.add_parser("query", help="Answer a query against the ingested corpus")

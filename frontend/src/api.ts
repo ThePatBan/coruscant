@@ -11,6 +11,14 @@ export const tokenStore = {
   clear: (): void => localStorage.removeItem(TOKEN_KEY),
 };
 
+// Broadcast that the user's notification state changed (a watchlist was
+// re-checked, or alerts were marked read) so any mounted unread-badge can
+// refresh without a shared store or polling timer.
+export const NOTIFICATIONS_EVENT = "coruscant:notifications";
+export function emitNotificationsChanged(): void {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(NOTIFICATIONS_EVENT));
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -258,6 +266,11 @@ export interface Notification {
   read: boolean;
 }
 
+export interface NotificationSummary {
+  total: number;
+  unread: number;
+}
+
 export interface AnalysisStep {
   label: string;
   detail: string;
@@ -433,10 +446,14 @@ export const api = {
     request<{ ok: boolean }>(`/watchlists/${encodeURIComponent(id)}`, { method: "DELETE" }),
   evaluateWatchlist: (id: string) =>
     post<{ notifications_created: number }>(`/watchlists/${encodeURIComponent(id)}/evaluate`, {}),
+  evaluateAllWatchlists: () =>
+    post<{ watchlists_evaluated: number; notifications_created: number }>("/watchlists/evaluate-all", {}),
   notifications: (unreadOnly = false) =>
     get<Notification[]>(`/notifications${unreadOnly ? "?unread_only=true" : ""}`),
+  notificationsSummary: () => get<NotificationSummary>("/notifications/summary"),
   markRead: (id: string) =>
     post<{ ok: boolean }>(`/notifications/${encodeURIComponent(id)}/read`, {}),
+  markAllRead: () => post<{ marked: number }>("/notifications/read-all", {}),
   // saved searches & comparison
   savedSearches: () => get<SavedSearch[]>("/saved-searches"),
   createSavedSearch: (name: string, query: string, source_type?: string | null) =>

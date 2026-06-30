@@ -1,7 +1,9 @@
+import { useEffect, useState } from "react";
 import { NavLink, Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
-import { api } from "./api";
+import { api, NOTIFICATIONS_EVENT } from "./api";
 import { useAuth } from "./auth";
 import { useAsync } from "./hooks";
+import { AlertsPage } from "./pages/AlertsPage";
 import { AskPage } from "./pages/AskPage";
 import { CompaniesPage } from "./pages/CompaniesPage";
 import { CompanyDetailPage } from "./pages/CompanyDetailPage";
@@ -25,7 +27,8 @@ const NAV = [
   { to: "/companies", label: "Companies", icon: "▤" },
   { to: "/graph", label: "Entity graph", icon: "◬" },
   { to: "/portfolio", label: "Portfolio", icon: "▣" },
-  { to: "/watchlists", label: "Watchlists", icon: "🔔" },
+  { to: "/alerts", label: "Alerts", icon: "🔔" },
+  { to: "/watchlists", label: "Watchlists", icon: "◎" },
   { to: "/workspaces", label: "Workspaces", icon: "❏" },
   { to: "/documents", label: "Documents", icon: "▦" },
   { to: "/compare", label: "Compare", icon: "⇄" },
@@ -41,6 +44,7 @@ const CRUMBS: Array<[RegExp, string]> = [
   [/^\/companies$/, "Companies"],
   [/^\/graph/, "Entity graph"],
   [/^\/portfolio/, "Portfolio"],
+  [/^\/alerts/, "Alerts"],
   [/^\/watchlists/, "Watchlists"],
   [/^\/workspaces/, "Workspaces"],
   [/^\/documents\/.+/, "Document"],
@@ -70,6 +74,30 @@ function HealthPills() {
       </span>
       <span className="pill">{data.graph_nodes} nodes</span>
     </>
+  );
+}
+
+function NotificationBell() {
+  const location = useLocation();
+  const [tick, setTick] = useState(0);
+  // Refresh on navigation, and whenever an alerts mutation broadcasts a change.
+  useEffect(() => {
+    const handler = () => setTick((t) => t + 1);
+    window.addEventListener(NOTIFICATIONS_EVENT, handler);
+    return () => window.removeEventListener(NOTIFICATIONS_EVENT, handler);
+  }, []);
+  const { data } = useAsync(() => api.notificationsSummary(), [location.pathname, tick]);
+  const unread = data?.unread ?? 0;
+  return (
+    <NavLink
+      to="/alerts"
+      className={({ isActive }) => (isActive ? "bell active" : "bell")}
+      aria-label={unread > 0 ? `Alerts, ${unread} unread` : "Alerts"}
+      title={unread > 0 ? `${unread} unread alert${unread === 1 ? "" : "s"}` : "Alerts"}
+    >
+      <span aria-hidden="true">🔔</span>
+      {unread > 0 ? <span className="bell-badge">{unread > 99 ? "99+" : unread}</span> : null}
+    </NavLink>
   );
 }
 
@@ -121,6 +149,7 @@ function ProtectedLayout() {
           <div className="crumb">{crumb}</div>
           <div className="stats">
             <HealthPills />
+            <NotificationBell />
             <span className="pill accent" title={email}>
               {email}
             </span>
@@ -149,6 +178,7 @@ export default function App() {
         <Route path="/companies/:slug" element={<CompanyDetailPage />} />
         <Route path="/graph" element={<GraphPage />} />
         <Route path="/portfolio" element={<PortfolioPage />} />
+        <Route path="/alerts" element={<AlertsPage />} />
         <Route path="/watchlists" element={<WatchlistsPage />} />
         <Route path="/workspaces" element={<WorkspacesPage />} />
         <Route path="/documents" element={<DocumentsPage />} />

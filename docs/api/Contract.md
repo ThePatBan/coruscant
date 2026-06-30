@@ -42,7 +42,10 @@ These exist but are **not** part of the frozen v1 contract and may change:
 `/graph/exposure`, `/graph/co-executives`, `POST /analyst/{slug}`,
 `/signals/{slug}`, `/dashboard`, `/saved-searches*`, `/watchlists*`,
 `/notifications*`, `/portfolios*`, `/workspaces*`, `/api-keys*`, `/usage`,
-`/organizations*` (and `/organizations/{id}/plan`, `/organizations/{id}/billing`).
+`/quota`, `/organizations*` (and `/organizations/{id}/plan`,
+`/organizations/{id}/billing`). In a multi-tenant deployment `/retrieve`,
+`/analyst`, and `POST /watchlists` may return `429` when the caller's plan quota
+is exhausted (see `/quota`).
 
 ## Stable response invariants
 

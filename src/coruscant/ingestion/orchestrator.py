@@ -10,6 +10,7 @@ an :class:`IngestionReport`.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import logging
@@ -43,6 +44,47 @@ logger = logging.getLogger(__name__)
 
 def reference_source_uri(source_type: str, company_slug: str, key: str) -> str:
     return f"reference://{source_type}/{company_slug}/{key}"
+
+
+@dataclass(frozen=True)
+class IngestionTarget:
+    """One concrete disclosure to ingest for a company × source.
+
+    The resolver seam: the default (reference) resolver derives targets from a
+    source definition's synthetic periods; a live resolver derives them from real
+    URLs (e.g. configured SEC filing documents). The orchestrator is agnostic to
+    where the ``source_uri`` came from.
+    """
+
+    label: str
+    published_at: str
+    source_uri: str
+    revision: int
+
+
+# Resolves the concrete targets to ingest for a company × source. Pure and
+# swappable so live ingestion never touches the orchestrator's core loop.
+SourceResolver = Callable[[CompanyConfig, str, "SourceDefinition"], list[IngestionTarget]]
+
+
+def reference_targets(
+    company: CompanyConfig, source_type: str, definition: SourceDefinition
+) -> list[IngestionTarget]:
+    """Default resolver: synthetic ``reference://`` URIs, one per defined period.
+
+    Reproduces the pre-resolver behavior exactly, so offline/dev ingestion is
+    byte-for-byte unchanged.
+    """
+
+    return [
+        IngestionTarget(
+            label=label,
+            published_at=published_at,
+            source_uri=reference_source_uri(source_type, company.slug, published_at),
+            revision=revision,
+        )
+        for revision, (label, published_at) in enumerate(definition.periods)
+    ]
 
 
 @dataclass
@@ -95,6 +137,7 @@ class IngestionOrchestrator:
         intelligence_store: SqliteIntelligenceStore | None = None,
         entities: dict[str, CompanyEntities] | None = None,
         dead_letter_store: SqliteDeadLetterStore | None = None,
+        resolver: SourceResolver | None = None,
         max_attempts: int = 1,
     ) -> None:
         self.raw_repository = raw_repository
@@ -106,6 +149,7 @@ class IngestionOrchestrator:
         self.intelligence_store = intelligence_store
         self.entities = entities or {}
         self.dead_letter_store = dead_letter_store
+        self.resolver = resolver if resolver is not None else reference_targets
         self.max_attempts = max(1, max_attempts)
         self._names_by_company: dict[str, dict[str, tuple[str, str]]] = {}
         self.projector = ReferenceGraphProjector()
@@ -114,9 +158,12 @@ class IngestionOrchestrator:
         self.change_detector = ReferenceChangeDetector()
 
     def _resolve_sources(self, sources: list[SourceSetting] | None) -> list[SourceSetting]:
-        if sources:
-            return [source for source in sources if source.enabled]
-        return [SourceSetting(type=source_type) for source_type in self.registry.source_types()]
+        # None means "use every registered source" (caller did not specify); an
+        # explicit empty list means "ingest nothing" (e.g. a due-aware run with
+        # nothing currently due) — these must not be conflated.
+        if sources is None:
+            return [SourceSetting(type=source_type) for source_type in self.registry.source_types()]
+        return [source for source in sources if source.enabled]
 
     def run(
         self,
@@ -152,6 +199,36 @@ class IngestionOrchestrator:
                 )
         return report
 
+    def _dead_letter(
+        self,
+        company: CompanyConfig,
+        source_type: str,
+        period: str,
+        exc: Exception,
+        report: IngestionReport,
+        *,
+        attempts: int,
+    ) -> None:
+        """Record an ingestion failure so it is explicit, observable, and queryable.
+
+        Never swallowed: the failure lands in the run report and (when configured)
+        the dead-letter queue. Used for both per-disclosure fetch failures and
+        live target-resolution (e.g. SEC discovery) failures.
+        """
+
+        message = f"{company.slug}:{source_type}:{period}: {exc}"
+        report.errors.append(message)
+        logger.error("Ingestion failed after %d attempt(s) for %s", attempts, message)
+        if self.dead_letter_store is not None:
+            self.dead_letter_store.record(
+                company_slug=company.slug,
+                source_type=source_type,
+                period=period,
+                attempts=attempts,
+                error=str(exc),
+                created_at=datetime.now(tz=timezone.utc).isoformat(),
+            )
+
     def _ingest_company_source(
         self,
         company: CompanyConfig,
@@ -159,25 +236,24 @@ class IngestionOrchestrator:
         definition: SourceDefinition,
         report: IngestionReport,
     ) -> None:
+        # Resolving targets can itself reach the network (live discovery) and fail;
+        # that failure is dead-lettered like any other rather than aborting the run.
+        try:
+            targets = self.resolver(company, source_type, definition)
+        except Exception as exc:
+            self._dead_letter(company, source_type, "resolve", exc, report, attempts=1)
+            return
+
         documents: list[NormalizedDocument] = []
-        for revision, (label, published_at) in enumerate(definition.periods):
+        for target in targets:
             try:
                 item, normalized = self._ingest_one_with_retry(
-                    company, source_type, definition, label, published_at, revision
+                    company, source_type, definition, target
                 )
             except Exception as exc:
-                message = f"{company.slug}:{source_type}:{label}: {exc}"
-                report.errors.append(message)
-                logger.error("Ingestion failed after %d attempts for %s", self.max_attempts, message)
-                if self.dead_letter_store is not None:
-                    self.dead_letter_store.record(
-                        company_slug=company.slug,
-                        source_type=source_type,
-                        period=label,
-                        attempts=self.max_attempts,
-                        error=str(exc),
-                        created_at=datetime.now(tz=timezone.utc).isoformat(),
-                    )
+                self._dead_letter(
+                    company, source_type, target.label, exc, report, attempts=self.max_attempts
+                )
                 continue
             report.items.append(item)
             documents.append(normalized)
@@ -220,16 +296,12 @@ class IngestionOrchestrator:
         company: CompanyConfig,
         source_type: str,
         definition: SourceDefinition,
-        label: str,
-        published_at: str,
-        revision: int,
+        target: IngestionTarget,
     ) -> tuple[IngestionItem, NormalizedDocument]:
         last_exc: Exception | None = None
         for attempt in range(1, self.max_attempts + 1):
             try:
-                return self._ingest_one(
-                    company, source_type, definition, label, published_at, revision
-                )
+                return self._ingest_one(company, source_type, definition, target)
             except Exception as exc:
                 last_exc = exc
                 logger.warning(
@@ -238,7 +310,7 @@ class IngestionOrchestrator:
                     self.max_attempts,
                     company.slug,
                     source_type,
-                    label,
+                    target.label,
                     exc,
                 )
         assert last_exc is not None
@@ -249,19 +321,17 @@ class IngestionOrchestrator:
         company: CompanyConfig,
         source_type: str,
         definition: SourceDefinition,
-        label: str,
-        published_at: str,
-        revision: int,
+        target: IngestionTarget,
     ) -> tuple[IngestionItem, NormalizedDocument]:
         request = FetchRequest(
             company_slug=company.slug,
             source_name=source_type,
-            source_uri=reference_source_uri(source_type, company.slug, published_at),
+            source_uri=target.source_uri,
             company_name=company.name,
             industry=company.industry,
-            period=label,
-            published_at=published_at,
-            revision=revision,
+            period=target.label,
+            published_at=target.published_at or None,
+            revision=target.revision,
         )
         pipeline = GenericIngestionPipeline(
             connector=definition.connector_factory(),
@@ -285,9 +355,9 @@ class IngestionOrchestrator:
             document_type=normalized.document_type,
             title=normalized.title,
             source_uri=normalized.source_uri,
-            period=label,
-            published_at=published_at,
-            revision=revision,
+            period=target.label,
+            published_at=target.published_at,
+            revision=target.revision,
             node_count=len(result.graph_nodes),
             edge_count=len(result.graph_edges),
         )

@@ -32,12 +32,32 @@ Coverage: Apple, Microsoft, Tesla, SpaceX, Cargill, ExxonMobil.
 
 ```bash
 make setup                 # editable install with dev dependencies
-make test                  # 77 tests
-coruscant ingest           # run the lifecycle + seed the demo user
+make test                  # full regression suite
+coruscant ingest           # run the lifecycle + seed the demo user (full)
+coruscant ingest --due-only # ingest only sources whose cadence has elapsed
 coruscant query "Apple risk factors and guidance"
 make api                   # serve the API (coruscant serve)
 cd frontend && npm install && npm run dev   # SPA on :5173, proxying /api -> :8000
 ```
+
+## Production modes (optional)
+
+The default is fully offline and deterministic. Two switches turn on production
+behavior (see [.env.example](.env.example) for all variables):
+
+- **Live SEC ingestion** — `CORUSCANT_LIVE_SOURCES=["sec_edgar"]` swaps the offline
+  reference connector for the live HTTP connector, which declares
+  `CORUSCANT_EDGAR_USER_AGENT` on every request and rate-limits to
+  `CORUSCANT_SEC_RATE_LIMIT_PER_SECOND` (SEC fair-access). It fetches the real
+  filing URLs declared per company in [config/companies.yml](config/companies.yml)
+  (`sec_filings:`); fetch/resolve failures are dead-lettered, never swallowed.
+- **Multi-tenant quotas** — when an organization store is configured, per-plan
+  daily API-call and watchlist limits are enforced (`429`), surfaced via
+  `GET /quota`. Disable with `CORUSCANT_ENFORCE_QUOTAS=false`.
+
+The **worker** (`coruscant.apps.worker`, the docker `ingest` service) runs the
+scheduled lifecycle: due-aware ingestion, then a background watchlist evaluation
+so notifications are generated without any user action.
 
 ## Architecture
 
