@@ -49,13 +49,15 @@ def load_ticker_map() -> dict[str, dict]:
     return {str(row["ticker"]).upper(): row for row in data.values()}
 
 
-def latest_10k_urls(cik: int, n: int) -> tuple[list[str], str, str]:
+def latest_filing_urls(cik: int, n: int, form: str = "10-K") -> tuple[list[str], str, str]:
+    """Latest `n` filings of `form` (10-K for US filers, 20-F for cross-listed
+    foreign private issuers), oldest→newest, plus the registrant name + SIC."""
     cik10 = f"{cik:010d}"
     sub = json.loads(_get(f"https://data.sec.gov/submissions/CIK{cik10}.json"))
     recent = sub["filings"]["recent"]
     picks: list[str] = []
     for i in range(len(recent["form"])):
-        if recent["form"][i] != "10-K":
+        if recent["form"][i] != form:
             continue
         accession = recent["accessionNumber"][i].replace("-", "")
         doc = recent["primaryDocument"][i]
@@ -72,6 +74,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--filings", type=int, default=2)
+    ap.add_argument("--form", default="10-K", help="filing form: 10-K (US) or 20-F (cross-listed foreign)")
+    ap.add_argument("--country", default="United States")
     ap.add_argument("tickers", nargs="*", default=[])
     args = ap.parse_args()
     tickers = [t.upper() for t in (args.tickers or DOW_30)]
@@ -85,12 +89,12 @@ def main() -> int:
             continue
         cik = int(row["cik_str"])
         try:
-            urls, name, sic = latest_10k_urls(cik, args.filings)
+            urls, name, sic = latest_filing_urls(cik, args.filings, args.form)
         except Exception as exc:  # noqa: BLE001 — onboarding is best-effort per ticker
             print(f"  ! {ticker} (CIK {cik}): {exc}; skipping", file=sys.stderr)
             continue
         if not urls:
-            print(f"  ! {ticker}: no 10-K filings found; skipping", file=sys.stderr)
+            print(f"  ! {ticker}: no {args.form} filings found; skipping", file=sys.stderr)
             continue
         name = name or str(row.get("title") or ticker)
         companies.append(
@@ -99,12 +103,12 @@ def main() -> int:
                 "name": name.title() if name.isupper() else name,
                 "aliases": [ticker, name],
                 "industry": sic,
-                "country": "United States",
+                "country": args.country,
                 "cik": str(cik),
                 "sec_filings": urls,
             }
         )
-        print(f"  + {ticker:5} {name[:38]:40} {len(urls)} 10-K  [{sic}]")
+        print(f"  + {ticker:5} {name[:38]:40} {len(urls)} {args.form}  [{sic}]")
         time.sleep(0.2)  # be polite to SEC
 
     args.out.parent.mkdir(parents=True, exist_ok=True)

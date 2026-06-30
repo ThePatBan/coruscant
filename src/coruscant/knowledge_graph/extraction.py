@@ -42,10 +42,24 @@ _SUFFIXES = {
     "corp", "corporation", "inc", "incorporated", "co", "com",
     "plc", "ltd", "lp", "sa", "ag", "nv",
 }
-# Single-word cores that are also common English words — excluded from the
-# gazetteer so a coincidental word (e.g. a travel "visa") never asserts a
-# co-mention. A fabricated edge would violate the platform's first principle.
-_AMBIGUOUS = {"visa"}
+# Single-word cores that are also common English words, or that collide across
+# distinct companies — excluded from the gazetteer so a coincidental word never
+# asserts a co-mention. A fabricated edge would violate the platform's first
+# principle. "shell" → "shell company/corporation"; "prudential" → the UK
+# Prudential plc vs the US Prudential Financial are different firms; "salesforce"
+# → a company's "sales force" / "salesforce training" (verified to false-positive
+# in AstraZeneca, BAT, and Prudential filings).
+_AMBIGUOUS = {"visa", "shell", "prudential", "salesforce"}
+
+# Specific (source, target) co-mention pairs verified to be false positives by
+# reading the matched sentence: the distinctive name matched a non-company use.
+# Each carries its reason; this is an evidence-based exclusion, the opposite of
+# fabrication. (See the UK/US cross-border verification, 2026-06.)
+_FALSE_COMENTIONS: set[tuple[str, str]] = {
+    ("deo", "aapl"),  # Diageo: "Captain Morgan Sliced Apple" — the fruit/flavour, not Apple Inc.
+    ("shel", "amzn"),  # Shell: "the Peruvian Amazon" — the rainforest, not Amazon.com
+    ("bti", "mrk"),  # BAT: "Merck Group" = Merck KGaA (Germany), not Merck & Co (US)
+}
 
 
 def _norm(text: str) -> str:
@@ -145,7 +159,7 @@ def project_cross_company_references(
                 if target_slug == company.slug:
                     continue
                 pair = (company.slug, target_slug)
-                if pair in seen:
+                if pair in seen or pair in _FALSE_COMENTIONS:
                     continue
                 if pattern.search(haystack):
                     seen.add(pair)

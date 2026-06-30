@@ -15,6 +15,7 @@ export interface FNode {
   kind: "Company" | "Subsidiary" | "Person";
   slug?: string; // company slug, for selection
   sector: string;
+  country?: string; // for the transatlantic layer
   val: number; // node size (importance)
   tracked: boolean;
   x?: number;
@@ -31,6 +32,7 @@ export interface FLink {
   source: string;
   target: string;
   relation: string;
+  crossBorder?: boolean; // a co-mention between companies in different countries
 }
 
 export interface ForceData {
@@ -73,6 +75,7 @@ function hash01(seed: string): number {
 
 export function buildForceData(companies: Company[], profiles: Map<string, EntityProfile>): ForceData {
   const sectorOf = new Map(companies.map((c) => [c.slug, coarseSector(c.industry)]));
+  const countryOf = new Map(companies.map((c) => [c.slug, c.country ?? undefined]));
   const trackedSlugs = new Set(companies.map((c) => c.slug));
   const nodes = new Map<string, FNode>();
   const links: FLink[] = [];
@@ -80,7 +83,17 @@ export function buildForceData(companies: Company[], profiles: Map<string, Entit
   const degree = new Map<string, number>();
 
   const ensure = (id: string, name: string, kind: FNode["kind"], sector: string, tracked: boolean, slug?: string) => {
-    if (!nodes.has(id)) nodes.set(id, { id, name, kind, sector, tracked, slug, val: tracked ? 6 : 1.6 });
+    if (!nodes.has(id))
+      nodes.set(id, {
+        id,
+        name,
+        kind,
+        sector,
+        tracked,
+        slug,
+        country: slug ? countryOf.get(slug) : undefined,
+        val: tracked ? 6 : 1.6,
+      });
   };
 
   for (const c of companies) {
@@ -111,7 +124,12 @@ export function buildForceData(companies: Company[], profiles: Map<string, Entit
       const key = [sourceId, targetId].sort().join("|") + "|" + rel.relation;
       if (seenLink.has(key)) continue;
       seenLink.add(key);
-      links.push({ source: sourceId, target: targetId, relation: rel.relation });
+      const crossBorder =
+        rel.relation === "references" &&
+        !!countryOf.get(c.slug) &&
+        !!countryOf.get(other.key) &&
+        countryOf.get(c.slug) !== countryOf.get(other.key);
+      links.push({ source: sourceId, target: targetId, relation: rel.relation, crossBorder });
       degree.set(sourceId, (degree.get(sourceId) ?? 0) + 1);
       degree.set(targetId, (degree.get(targetId) ?? 0) + 1);
     }

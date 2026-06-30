@@ -29,6 +29,8 @@ export function AtlasPage() {
   const [picking, setPicking] = useState(false);
   const [tableOpen, setTableOpen] = useState(false); // drill level 3: table/text view
   const stats = data ? graphStats(data.graph) : null;
+  const ukCount = data?.companies.filter((c) => c.country === "United Kingdom").length ?? 0;
+  const usCount = data?.companies.filter((c) => c.country === "United States").length ?? 0;
 
   const clearPath = useCallback(() => {
     setPathFrom(null);
@@ -346,6 +348,11 @@ export function AtlasPage() {
               <span className="pill">{stats.companies} companies</span>
               <span className="pill">{stats.links} edges</span>
               <span className="pill">{stats.bridges} bridges</span>
+              {ukCount > 0 ? (
+                <span className="pill" title="Companies by country">
+                  🇺🇸 {usCount} · 🇬🇧 {ukCount}
+                </span>
+              ) : null}
               {expansion.nodes.length > 0 ? (
                 <span className="pill accent">+{expansion.nodes.length} expanded</span>
               ) : null}
