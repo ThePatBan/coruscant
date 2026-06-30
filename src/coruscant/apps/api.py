@@ -1102,24 +1102,26 @@ def create_app(
             if isinstance(state.graph, InMemoryKnowledgeGraphStore)
             else []
         )
-        kwargs = dict(
-            company_slug=slug,
-            company_name=name,
-            question=body.question,
-            change_sets=change_sets,
-            events=events,
-            country_exposures=exposures,
-        )
+        def _run(analyst: LLMAnalyst | ReferenceAnalyst) -> AnalysisReport:
+            return analyst.analyze(
+                company_slug=slug,
+                company_name=name,
+                question=body.question,
+                change_sets=change_sets,
+                events=events,
+                country_exposures=exposures,
+            )
+
         # Reason with the configured "complex" model when one is set; otherwise
         # fall back to the deterministic evidence scan. Any LLM failure (no key,
         # bad JSON, model down) degrades gracefully to the same fallback.
         gateway = LLMGateway(settings.data_dir)
         if gateway.available("complex"):
             try:
-                return LLMAnalyst(gateway).analyze(**kwargs)
+                return _run(LLMAnalyst(gateway))
             except LLMError as exc:
                 logger.warning("LLM analyst unavailable (%s); using deterministic fallback.", exc)
-        return ReferenceAnalyst().analyze(**kwargs)
+        return _run(ReferenceAnalyst())
 
     @app.get("/signals/{slug}", response_model=list[Signal], dependencies=protected)
     def signals(slug: str) -> list[Signal]:

@@ -424,7 +424,7 @@ def _form4_tag(xml: str, tag: str) -> str:
 
 def _form4_flag(xml: str, tag: str) -> bool:
     match = re.search(rf"<{tag}>\s*(.*?)\s*</{tag}>", xml, re.S)
-    return bool(match) and match.group(1).strip().lower() in ("1", "true")
+    return match is not None and match.group(1).strip().lower() in ("1", "true")
 
 
 def reformat_insider_name(name: str) -> str:
