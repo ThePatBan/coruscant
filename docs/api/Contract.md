@@ -26,19 +26,26 @@ Auth: a bearer token (`Authorization: Bearer …`) from `/auth/login` or an
 - `POST /retrieve` · `GET /answer`
 - `GET /graph/company/{slug}`
 
-### Authenticated — observability / admin (RBAC)
-- `GET /status` — last ingestion run summary
-- `GET /monitoring` — per-source reliability
-- `GET /admin/audit` — audit log (admin)
-- `GET /admin/dead-letter` — failed-ingestion dead-letter queue (admin)
+### Authenticated — observability
+- `GET /status` — last ingestion run summary *(any authenticated user)*
+- `GET /monitoring` — per-source reliability *(any authenticated user)*
+
+### Admin only (RBAC — `admin` role)
+- `GET /admin/audit` — audit log
+- `GET /admin/dead-letter` — failed-ingestion dead-letter queue
 
 ## Future platform (evolves behind M2+ gates)
 
 These exist but are **not** part of the frozen v1 contract and may change:
 `/documents/{id}/summary`, `/companies/{slug}/timeline`,
-`/companies/{slug}/changes`, `/entities`, `/entities/{kind}/{key}`,
-`/graph/exposure`, `/graph/co-executives`, `/analyst/{slug}`, `/signals/{slug}`,
-`/watchlists*`, `/notifications*`, `/portfolios*`, `/workspaces*`, `/api-keys*`.
+`/companies/{slug}/changes`, `/compare`, `/entities`, `/entities/{kind}/{key}`,
+`/graph/exposure`, `/graph/co-executives`, `POST /analyst/{slug}`,
+`/signals/{slug}`, `/dashboard`, `/saved-searches*`, `/watchlists*`,
+`/notifications*`, `/portfolios*`, `/workspaces*`, `/api-keys*`, `/usage`,
+`/quota`, `/organizations*` (and `/organizations/{id}/plan`,
+`/organizations/{id}/billing`). In a multi-tenant deployment `/retrieve`,
+`/analyst`, and `POST /watchlists` may return `429` when the caller's plan quota
+is exhausted (see `/quota`).
 
 ## Stable response invariants
 

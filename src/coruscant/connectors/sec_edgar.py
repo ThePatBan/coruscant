@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 import json
 import logging
+import time
 from datetime import date, datetime, timezone
 from hashlib import sha256
 from html import unescape
@@ -25,6 +27,38 @@ from coruscant.connectors.base import FetchRequest, SourceConnector
 from coruscant.connectors.common import developments_text
 
 logger = logging.getLogger(__name__)
+
+
+class RateLimiter:
+    """Minimum-interval throttle for fair-access compliance (e.g. SEC ~10 req/s).
+
+    A single limiter is shared across every request of a live ingestion run so the
+    aggregate request rate stays under the cap. ``monotonic``/``sleep`` are
+    injectable so the spacing is deterministically testable without real waiting.
+    """
+
+    def __init__(
+        self,
+        min_interval_seconds: float,
+        *,
+        monotonic: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self.min_interval = max(0.0, min_interval_seconds)
+        self._monotonic = monotonic
+        self._sleep = sleep
+        self._last: float | None = None
+
+    def acquire(self) -> None:
+        if self.min_interval <= 0:
+            return
+        now = self._monotonic()
+        if self._last is not None:
+            wait = self.min_interval - (now - self._last)
+            if wait > 0:
+                self._sleep(wait)
+                now = self._monotonic()
+        self._last = now
 
 
 class _TextStripper(HTMLParser):
@@ -100,17 +134,27 @@ class ReferenceEdgarConnector(SourceConnector):
 
 
 class EdgarHttpConnector(SourceConnector):
-    """Fetch SEC filing pages with a plain HTTP client."""
+    """Fetch SEC filing pages with a plain HTTP client.
 
-    def __init__(self, user_agent: str) -> None:
+    Every outbound request declares the configured ``user_agent`` (SEC requires a
+    contact-bearing UA) and passes through the optional shared ``rate_limiter`` so
+    a live run respects SEC fair-access limits.
+    """
+
+    def __init__(self, user_agent: str, *, rate_limiter: RateLimiter | None = None) -> None:
         self.user_agent = user_agent
+        self.rate_limiter = rate_limiter
+
+    def _open(self, url: str):  # type: ignore[no-untyped-def]
+        if self.rate_limiter is not None:
+            self.rate_limiter.acquire()
+        return urlopen(Request(url, headers={"User-Agent": self.user_agent}), timeout=30)
 
     def fetch(self, request: FetchRequest) -> SourceDocument:
         # A failure to fetch the primary filing is a hard, explicit error so the
         # orchestrator records it (dead-letter + run report) — never swallowed.
         try:
-            req = Request(request.source_uri, headers={"User-Agent": self.user_agent})
-            with urlopen(req, timeout=30) as response:
+            with self._open(request.source_uri) as response:
                 content_type = response.headers.get("content-type")
                 payload = response.read().decode("utf-8", errors="replace")
         except (URLError, OSError) as exc:
@@ -163,8 +207,7 @@ class EdgarHttpConnector(SourceConnector):
         # The index.json is an optional enrichment; on failure we log (observable)
         # and continue with the primary payload rather than failing the fetch.
         try:
-            req = Request(index_url, headers={"User-Agent": self.user_agent})
-            with urlopen(req, timeout=30) as response:
+            with self._open(index_url) as response:
                 payload = response.read().decode("utf-8", errors="replace")
         except (URLError, OSError) as exc:
             logger.warning("EDGAR index.json unavailable for %s: %s", index_url, exc)
@@ -189,8 +232,7 @@ class EdgarHttpConnector(SourceConnector):
     def _fetch_primary_document(self, primary_document_url: str) -> str | None:
         # Best-effort: on failure we log and fall back to the index payload.
         try:
-            req = Request(primary_document_url, headers={"User-Agent": self.user_agent})
-            with urlopen(req, timeout=30) as response:
+            with self._open(primary_document_url) as response:
                 return response.read().decode("utf-8", errors="replace")
         except (URLError, OSError) as exc:
             logger.warning("EDGAR primary document fetch failed for %s: %s", primary_document_url, exc)

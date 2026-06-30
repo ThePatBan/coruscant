@@ -28,7 +28,14 @@ from coruscant.apps.runtime import (
     load_run_status,
     source_monitoring,
 )
-from coruscant.commercial.models import PLANS, BillingSummary, Organization, UsageSummary
+from coruscant.commercial.models import (
+    DEFAULT_PLAN,
+    PLANS,
+    BillingSummary,
+    Organization,
+    Plan,
+    UsageSummary,
+)
 from coruscant.commercial.store import SqliteOrgStore, SqliteUsageStore
 from coruscant.enterprise.api_keys import ApiKey, ApiKeyCreated, SqliteApiKeyStore
 from coruscant.enterprise.audit import AuditEntry, SqliteAuditStore
@@ -245,6 +252,17 @@ class SavedSearchCreate(BaseModel):
     source_type: str | None = None
 
 
+class QuotaStatus(BaseModel):
+    plan: str
+    plan_label: str
+    max_api_calls_per_day: int
+    api_calls_today: int
+    api_calls_remaining: int
+    max_watchlists: int
+    watchlists_used: int
+    enforced: bool
+
+
 class OrgCreate(BaseModel):
     name: str
     plan: str = "free"
@@ -261,6 +279,16 @@ class WatchlistCreate(BaseModel):
 
 class WatchlistCreated(BaseModel):
     watchlist: Watchlist
+    notifications_created: int
+
+
+class NotificationSummary(BaseModel):
+    total: int
+    unread: int
+
+
+class EvaluateAllResult(BaseModel):
+    watchlists_evaluated: int
     notifications_created: int
 
 
@@ -324,6 +352,7 @@ def create_app(
     settings = get_settings()
     # Fail closed: enforcement is on unless a caller explicitly opts out (tests).
     enforce_auth = require_auth or load_from_storage
+    enforce_quotas = settings.enforce_quotas
     state = _AppState(
         engine=retrieval_engine if retrieval_engine is not None else HybridRetrievalEngine(),
         graph=graph_store if graph_store is not None else InMemoryKnowledgeGraphStore(),
@@ -411,6 +440,56 @@ def create_app(
     def _record_usage(email: str, action: str) -> None:
         if state.usage is not None:
             state.usage.record(email, action, created_at=datetime.now(tz=timezone.utc).isoformat())
+
+    def _today_since() -> str:
+        # Quotas are per-day; count usage since today's UTC midnight.
+        return datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT00:00:00+00:00")
+
+    def _quota_enforced() -> bool:
+        # Enforcement is a multi-tenant concern: only active when an organization
+        # store is configured (a real deployment). Single-tenant / offline use —
+        # where no org store is wired — is never throttled, so existing behavior
+        # is preserved.
+        return enforce_quotas and state.orgs is not None
+
+    def _effective_plan(email: str) -> Plan:
+        # The most generous plan across the orgs the user belongs to; free by
+        # default. Counting usage per-user keeps throttling simple and fair.
+        plan = PLANS[DEFAULT_PLAN]
+        if state.orgs is not None:
+            for org in state.orgs.list_orgs(email):
+                candidate = PLANS.get(org.plan, plan)
+                if candidate.max_api_calls_per_day > plan.max_api_calls_per_day:
+                    plan = candidate
+        return plan
+
+    def _api_calls_today(email: str) -> int:
+        if state.usage is None:
+            return 0
+        return state.usage.summary([email], since_iso=_today_since()).total
+
+    def _enforce_api_quota(email: str) -> None:
+        if not _quota_enforced():
+            return
+        plan = _effective_plan(email)
+        if _api_calls_today(email) >= plan.max_api_calls_per_day:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"daily API quota reached ({plan.max_api_calls_per_day}/day on the "
+                    f"{plan.label} plan); upgrade the plan or retry tomorrow"
+                ),
+            )
+
+    def _enforce_watchlist_quota(email: str) -> None:
+        if not _quota_enforced() or state.watchlists is None:
+            return
+        plan = _effective_plan(email)
+        if len(state.watchlists.list_watchlists(email)) >= plan.max_watchlists:
+            raise HTTPException(
+                status_code=429,
+                detail=f"watchlist limit reached ({plan.max_watchlists} on the {plan.label} plan)",
+            )
 
     def _auth() -> AuthService:
         if state.auth is None:
@@ -548,6 +627,7 @@ def create_app(
 
     @app.post("/retrieve", response_model=RetrieveResponse, dependencies=protected)
     def retrieve(request: RetrieveRequest, email: str = Depends(current_email)) -> RetrieveResponse:
+        _enforce_api_quota(email)
         _record_usage(email, "retrieve")
         reasoning = TemplateReasoningLayer(state.engine)
         matches = state.engine.retrieve_with_evidence(request.query, top_k=request.top_k)
@@ -670,6 +750,7 @@ def create_app(
         for item in body.items:
             if item.type not in WATCH_TYPES:
                 raise HTTPException(status_code=400, detail=f"unknown watch type: {item.type}")
+        _enforce_watchlist_quota(email)
         watchlist = store.create_watchlist(
             email, body.name, body.items, created_at=datetime.now(tz=timezone.utc).isoformat()
         )
@@ -680,6 +761,15 @@ def create_app(
     @app.get("/watchlists", response_model=list[Watchlist], dependencies=protected)
     def list_watchlists(email: str = Depends(current_email)) -> list[Watchlist]:
         return _watchlists().list_watchlists(email)
+
+    @app.post("/watchlists/evaluate-all", response_model=EvaluateAllResult, dependencies=protected)
+    def evaluate_all_watchlists(email: str = Depends(current_email)) -> EvaluateAllResult:
+        """Re-evaluate all of the user's watchlists in one pass (the "check for
+        updates" action). Idempotent: notification de-dup means an unchanged
+        corpus yields zero new notifications."""
+        watchlists = _watchlists().list_watchlists(email)
+        created = sum(_evaluate_watchlist(email, wl) for wl in watchlists)
+        return EvaluateAllResult(watchlists_evaluated=len(watchlists), notifications_created=created)
 
     @app.delete("/watchlists/{watchlist_id}", dependencies=protected)
     def delete_watchlist(watchlist_id: str, email: str = Depends(current_email)) -> dict[str, bool]:
@@ -695,9 +785,18 @@ def create_app(
             raise HTTPException(status_code=404, detail="watchlist not found")
         return {"notifications_created": _evaluate_watchlist(email, watchlist)}
 
+    @app.get("/notifications/summary", response_model=NotificationSummary, dependencies=protected)
+    def notifications_summary(email: str = Depends(current_email)) -> NotificationSummary:
+        total, unread = _watchlists().summary(email)
+        return NotificationSummary(total=total, unread=unread)
+
     @app.get("/notifications", response_model=list[Notification], dependencies=protected)
     def notifications(unread_only: bool = False, email: str = Depends(current_email)) -> list[Notification]:
         return _watchlists().list_notifications(email, unread_only=unread_only)
+
+    @app.post("/notifications/read-all", dependencies=protected)
+    def read_all_notifications(email: str = Depends(current_email)) -> dict[str, int]:
+        return {"marked": _watchlists().mark_all_read(email)}
 
     @app.post("/notifications/{notification_id}/read", dependencies=protected)
     def read_notification(notification_id: str, email: str = Depends(current_email)) -> dict[str, bool]:
@@ -924,6 +1023,29 @@ def create_app(
     def usage(email: str = Depends(current_email)) -> UsageSummary:
         return state.usage.summary([email]) if state.usage else UsageSummary()
 
+    @app.get("/quota", response_model=QuotaStatus, dependencies=protected)
+    def quota(email: str = Depends(current_email)) -> QuotaStatus:
+        """The caller's effective plan, today's usage, and remaining headroom.
+
+        Always available so clients can render limits even where enforcement is
+        off; ``enforced`` says whether the limits are actually applied here.
+        """
+        plan = _effective_plan(email)
+        used = _api_calls_today(email)
+        watchlists_used = (
+            len(state.watchlists.list_watchlists(email)) if state.watchlists is not None else 0
+        )
+        return QuotaStatus(
+            plan=plan.name,
+            plan_label=plan.label,
+            max_api_calls_per_day=plan.max_api_calls_per_day,
+            api_calls_today=used,
+            api_calls_remaining=max(0, plan.max_api_calls_per_day - used),
+            max_watchlists=plan.max_watchlists,
+            watchlists_used=watchlists_used,
+            enforced=_quota_enforced(),
+        )
+
     @app.get("/admin/audit", response_model=list[AuditEntry])
     def admin_audit(_: StoredUser = Depends(require_admin), limit: int = 200) -> list[AuditEntry]:
         return state.audit.list_entries(limit=limit) if state.audit else []
@@ -963,6 +1085,7 @@ def create_app(
 
     @app.post("/analyst/{slug}", response_model=AnalysisReport, dependencies=protected)
     def analyst(slug: str, body: AnalystRequest, email: str = Depends(current_email)) -> AnalysisReport:
+        _enforce_api_quota(email)
         _record_usage(email, "analyst")
         company = next((c for c in load_companies(settings.config_dir) if c.slug == slug), None)
         name = company.name if company else slug

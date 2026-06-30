@@ -1,3 +1,11 @@
+# Tracked companies. Optional live-EDGAR fields (ignored in offline/reference
+# mode, i.e. unless CORUSCANT_LIVE_SOURCES includes sec_edgar):
+#   cik:          SEC central index key (identity; omit for private companies)
+#   sec_filings:  real SEC filing document/index URLs, oldest → newest, so the
+#                 change detector sees a prior + current disclosure. Example:
+#                   sec_filings:
+#                     - https://www.sec.gov/Archives/edgar/data/320193/.../aapl-2024.htm
+#                     - https://www.sec.gov/Archives/edgar/data/320193/.../aapl-2025.htm
 companies:
   - slug: apple
     name: Apple

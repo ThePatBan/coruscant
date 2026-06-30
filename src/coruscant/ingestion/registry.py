@@ -8,8 +8,8 @@ substituted per deployment.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, replace
 
 from coruscant.common.types import NormalizedDocument, SourceDocument
 from coruscant.connectors.base import SourceConnector
@@ -45,10 +45,34 @@ from coruscant.connectors.extended_sources import (
     normalize_procurement,
     normalize_sanctions,
 )
-from coruscant.connectors.sec_edgar import ReferenceEdgarConnector, normalize_edgar_filing
+from coruscant.connectors.sec_edgar import (
+    EdgarHttpConnector,
+    RateLimiter,
+    ReferenceEdgarConnector,
+    normalize_edgar_filing,
+)
 
 ConnectorFactory = Callable[[], SourceConnector]
 Normalizer = Callable[[SourceDocument], NormalizedDocument]
+
+# Default SEC contact UA; the real value comes from Settings.edgar_user_agent and
+# is threaded in by the runtime when live ingestion is enabled.
+DEFAULT_EDGAR_USER_AGENT = "Coruscant/0.1.0 contact@coruscant.local"
+
+
+def _live_connector_factory(
+    source_type: str, edgar_user_agent: str, rate_limiter: RateLimiter | None
+) -> ConnectorFactory | None:
+    """Return the live (network) connector factory for a source, if one exists.
+
+    Only sources with a real connector are eligible; anything else stays on its
+    reference connector even if requested live, so an over-broad ``live_sources``
+    setting can never silently break offline ingestion.
+    """
+
+    if source_type == "sec_edgar":
+        return lambda: EdgarHttpConnector(edgar_user_agent, rate_limiter=rate_limiter)
+    return None
 
 
 @dataclass(frozen=True)
@@ -223,8 +247,29 @@ _DEFAULT_DEFINITIONS: tuple[SourceDefinition, ...] = (
 )
 
 
-def default_registry() -> SourceRegistry:
+def default_registry(
+    live_sources: Iterable[str] = (),
+    *,
+    edgar_user_agent: str = DEFAULT_EDGAR_USER_AGENT,
+    rate_limiter: RateLimiter | None = None,
+) -> SourceRegistry:
+    """Build the source registry.
+
+    With no ``live_sources`` (the default) every source uses its offline reference
+    connector — dev/test stay fully deterministic and network-free. For each
+    requested live source that has a real connector, its ``connector_factory`` is
+    swapped for the live one (carrying the SEC ``user_agent`` + shared
+    ``rate_limiter``); all other metadata is unchanged.
+    """
+
+    live = set(live_sources)
     registry = SourceRegistry()
     for definition in _DEFAULT_DEFINITIONS:
+        if definition.source_type in live:
+            factory = _live_connector_factory(
+                definition.source_type, edgar_user_agent, rate_limiter
+            )
+            if factory is not None:
+                definition = replace(definition, connector_factory=factory)
         registry.register(definition)
     return registry

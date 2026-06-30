@@ -1,5 +1,12 @@
 # MVP Completion Report
 
+> **Historical snapshot (2026-06-28).** This records the initial MVP build and is
+> **superseded by the M2–M5 work** that landed afterward. Its metrics are point-in-
+> time and now stale (e.g. "8 endpoints / 54 tests / 45 modules" → the code now has
+> ~58 routes / 268 tests / ~85 modules). For current scope and verified milestone
+> status see [docs/roadmap/Milestones.md](../roadmap/Milestones.md) and
+> [docs/api/Contract.md](../api/Contract.md). Do not treat the counts below as live.
+
 **Date:** 2026-06-28
 **Scope:** Complete the Coruscant MVP build on top of the bootstrap architecture.
 
