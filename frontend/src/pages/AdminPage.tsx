@@ -46,12 +46,30 @@ function AdminConsole({ initial }: { initial: LLMConfig }) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
+  const [newName, setNewName] = useState("");
   const providerKeys = useMemo(() => Object.keys(providers), [providers]);
 
   const setRoute = (tier: string, patch: Partial<LLMRoute>) =>
     setRoutes((r) => ({ ...r, [tier]: { ...r[tier], ...patch } }));
   const setProvider = (key: string, patch: Partial<LLMProviderIn>) =>
     setProviders((p) => ({ ...p, [key]: { ...p[key], ...patch } }));
+
+  const addProvider = () => {
+    const id = newName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    if (!id || providers[id]) return;
+    const kind = /anthropic|claude|haiku|opus|sonnet/.test(id) ? "anthropic" : "openai";
+    const base_url = kind === "anthropic" ? "https://api.anthropic.com" : "https://api.openai.com/v1";
+    setProviders((p) => ({ ...p, [id]: { kind, base_url, label: newName.trim(), api_key: "" } }));
+    setHasKey((h) => ({ ...h, [id]: false }));
+    setNewName("");
+  };
+  const removeProvider = (key: string) => {
+    if (Object.values(routes).some((r) => r.provider === key)) return; // in use — unroute first
+    setProviders((p) => {
+      const { [key]: _drop, ...rest } = p;
+      return rest;
+    });
+  };
 
   const save = async () => {
     setSaving(true);
@@ -155,6 +173,7 @@ function AdminConsole({ initial }: { initial: LLMConfig }) {
         <div className="provider-list">
           {providerKeys.map((key) => {
             const p = providers[key];
+            const inUse = Object.values(routes).some((r) => r.provider === key);
             return (
               <div className="provider-row" key={key}>
                 <div className="provider-name">{p.label || key}</div>
@@ -175,9 +194,29 @@ function AdminConsole({ initial }: { initial: LLMConfig }) {
                   onChange={(e) => setProvider(key, { api_key: e.target.value })}
                   placeholder={hasKey[key] ? "•••••••• (set — leave blank to keep)" : "no key set"}
                 />
+                <button
+                  className="prov-x"
+                  onClick={() => removeProvider(key)}
+                  disabled={inUse}
+                  title={inUse ? "Routed to a tier — unroute it first" : "Remove provider"}
+                  aria-label="Remove provider"
+                >
+                  ✕
+                </button>
               </div>
             );
           })}
+        </div>
+        <div className="add-provider">
+          <input
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addProvider()}
+            placeholder="New slot name (e.g. Anthropic — Sonnet, or a 2nd local model)"
+          />
+          <button className="btn ghost" onClick={addProvider} disabled={!newName.trim()}>
+            + Add provider
+          </button>
         </div>
       </section>
 
