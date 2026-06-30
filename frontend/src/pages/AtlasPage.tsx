@@ -26,6 +26,7 @@ export function AtlasPage() {
   const [pathFrom, setPathFrom] = useState<GNode | null>(null);
   const [pathTo, setPathTo] = useState<GNode | null>(null);
   const [picking, setPicking] = useState(false);
+  const [tableOpen, setTableOpen] = useState(false); // drill level 3: table/text view
   const stats = data ? graphStats(data.graph) : null;
 
   const clearPath = useCallback(() => {
@@ -84,18 +85,24 @@ export function AtlasPage() {
     if (selected) loadProfile(selected);
   }, [selected, loadProfile]);
 
-  // Escape unwinds the most recent state: cancel picking → clear path → close rail.
+  // Escape unwinds one drill level: table → isolated graph → overview.
   useEffect(() => {
-    if (!selected && !picking && !pathFrom) return;
+    if (!selected && !picking && !pathFrom && !tableOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (picking) clearPath(); // cancelling a pick must drop the half-started pathFrom too
+      if (tableOpen) setTableOpen(false);
+      else if (picking) clearPath();
       else if (pathFrom && pathTo) clearPath();
       else setSelected(null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, picking, pathFrom, pathTo, clearPath]);
+  }, [selected, picking, pathFrom, pathTo, tableOpen, clearPath]);
+
+  // Clearing the selection (back to overview) also closes the table.
+  useEffect(() => {
+    if (!selected && tableOpen) setTableOpen(false);
+  }, [selected, tableOpen]);
 
   const toggleExpand = useCallback(
     (node: GNode) => {
@@ -362,7 +369,22 @@ export function AtlasPage() {
             />
           </Suspense>
         )}
+        {selected && !tableOpen ? (
+          <button className="atlas-back" onClick={onBackground}>
+            ← Overview
+          </button>
+        ) : null}
       </div>
+
+      {tableOpen && selected ? (
+        <TableView
+          node={selected}
+          profile={profiles.get(selected.id)}
+          changeSets={selected.tracked ? changesAsync.data?.setsBySlug.get(selected.key) : undefined}
+          trackedKeys={data?.trackedKeys}
+          onClose={() => setTableOpen(false)}
+        />
+      ) : null}
 
       {pathFrom && pathTo ? (
         <PathPanel
@@ -386,6 +408,7 @@ export function AtlasPage() {
           graphInteractive={false}
           onTracePath={() => startPath(selected)}
           onToggleExpand={() => toggleExpand(selected)}
+          onViewTable={() => setTableOpen(true)}
           onClose={() => setSelected(null)}
         />
       ) : null}
@@ -506,6 +529,153 @@ function PathPanel({
   );
 }
 
+// Drill level 3: the focused company as scannable tables — full material-change
+// list (with source links), subsidiaries, co-mentions, and source documents.
+function TableView({
+  node,
+  profile,
+  changeSets,
+  trackedKeys,
+  onClose,
+}: {
+  node: GNode;
+  profile?: EntityProfile;
+  changeSets?: ChangeSet[];
+  trackedKeys?: Set<string>;
+  onClose: () => void;
+}) {
+  const subsidiaries = profile?.relationships.filter((r) => r.relation === "has_subsidiary") ?? [];
+  const coMentions = profile?.relationships.filter((r) => r.relation === "references") ?? [];
+  const material = (changeSets ?? []).filter((cs) => cs.material);
+  const added = material.reduce((s, cs) => s + cs.added_count, 0);
+  const removed = material.reduce((s, cs) => s + cs.removed_count, 0);
+  const allChanges = material.flatMap((cs) => cs.changes);
+  const changes = allChanges.slice(0, 60); // a full 10-K diff can be hundreds of lines
+  const docs = profile?.mentioned_in ?? [];
+
+  return (
+    <div className="atlas-table" role="dialog" aria-label={`${node.name} detail`}>
+      <div className="atlas-table-bar">
+        <button className="btn ghost" onClick={onClose}>
+          ← Back to graph
+        </button>
+        <div className="atlas-table-title">
+          <span className="rail-kind">
+            {kindGlyph(node.kind)} {node.kind}
+          </span>
+          <h2>{node.name}</h2>
+        </div>
+        <Link className="btn ghost" to={`/companies/${node.key}`}>
+          Open full dossier →
+        </Link>
+      </div>
+      <div className="atlas-table-body">
+        <section className="tbl-section">
+          <div className="tbl-head">
+            <h3>What changed</h3>
+            {material.length ? (
+              <span className="wrap" style={{ gap: 6 }}>
+                <span className="pill" style={{ color: "var(--good)" }}>+{added}</span>
+                <span className="pill" style={{ color: "var(--danger)" }}>−{removed}</span>
+              </span>
+            ) : null}
+          </div>
+          {changes.length === 0 ? (
+            <p className="faint">No material changes in the latest disclosure.</p>
+          ) : (
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th aria-label="direction"></th>
+                  <th>Category</th>
+                  <th>Statement</th>
+                  <th>Source</th>
+                </tr>
+              </thead>
+              <tbody>
+                {changes.map((c, i) => (
+                  <tr key={i} className={c.kind}>
+                    <td className="tbl-mark">{c.kind === "added" ? "+" : "−"}</td>
+                    <td><Cat category={c.category} /></td>
+                    <td className="tbl-stmt">{c.statement}</td>
+                    <td>
+                      {c.evidence?.canonical_id ? (
+                        <Link className="pill evidence" to={`/documents/${c.evidence.canonical_id}`}>↳ source</Link>
+                      ) : (
+                        <span className="faint">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {allChanges.length > changes.length ? (
+            <p className="faint" style={{ marginTop: 10 }}>
+              Showing {changes.length} of {allChanges.length} change lines —{" "}
+              <Link to={`/companies/${node.key}`}>open the full dossier</Link>.
+            </p>
+          ) : null}
+        </section>
+
+        {subsidiaries.length > 0 ? (
+          <section className="tbl-section">
+            <div className="tbl-head">
+              <h3>Subsidiaries</h3>
+              <span className="pill">{subsidiaries.length}</span>
+            </div>
+            <div className="tbl-grid">
+              {subsidiaries.map((r, i) => (
+                <span className="relchip tier-ownership" key={i}>
+                  {r.other.name}
+                </span>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        {coMentions.length > 0 ? (
+          <section className="tbl-section">
+            <div className="tbl-head">
+              <h3>Co-mentions</h3>
+              <span className="pill">{coMentions.length}</span>
+            </div>
+            <div className="tbl-grid">
+              {coMentions.map((r, i) =>
+                trackedKeys?.has(r.other.key) ? (
+                  <Link className="relchip tier-reference" to={`/companies/${r.other.key}`} key={i}>
+                    {r.other.name}
+                  </Link>
+                ) : (
+                  <span className="relchip tier-reference" key={i}>
+                    {r.other.name}
+                  </span>
+                ),
+              )}
+            </div>
+          </section>
+        ) : null}
+
+        {docs.length > 0 ? (
+          <section className="tbl-section">
+            <div className="tbl-head">
+              <h3>Mentioned in</h3>
+              <span className="pill">{docs.length}</span>
+            </div>
+            <div className="wrap">
+              {docs.slice(0, 40).map((id) => (
+                <Link key={id} to={`/documents/${id}`} className="pill evidence" title={id}>
+                  ↳ source
+                </Link>
+              ))}
+            </div>
+          </section>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function EvidenceRail({
   node,
   profile,
@@ -518,6 +688,7 @@ function EvidenceRail({
   graphInteractive = true,
   onTracePath,
   onToggleExpand,
+  onViewTable,
   onClose,
 }: {
   node: GNode;
@@ -531,6 +702,7 @@ function EvidenceRail({
   graphInteractive?: boolean;
   onTracePath: () => void;
   onToggleExpand: () => void;
+  onViewTable?: () => void;
   onClose: () => void;
 }) {
   return (
@@ -548,6 +720,11 @@ function EvidenceRail({
       </div>
 
       <div className="rail-actions">
+        {node.tracked && onViewTable ? (
+          <button className="btn" onClick={onViewTable}>
+            View as table →
+          </button>
+        ) : null}
         {node.tracked ? (
           <Link className="btn ghost" to={`/companies/${node.key}`}>
             Open full dossier →
