@@ -1664,6 +1664,78 @@ input.input:focus {
   min-height: 0;
 }
 
+/* Hint to shift-click a second company; sits bottom-centre over the canvas. */
+.atlas-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 5;
+  padding: 6px 13px;
+  border-radius: var(--radius-sm);
+  background: rgba(17, 20, 26, 0.85);
+  border: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: 12.5px;
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+
+/* Compare panel: the overlap of two companies (shared board/peers/sector). */
+.compare-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 18px;
+  line-height: 1.25;
+  margin: 2px 0 14px;
+}
+.compare-amp {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+}
+.compare-flag {
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.compare-flag .relchip {
+  margin: 0 1px;
+}
+.compare-empty {
+  margin-top: 14px;
+  line-height: 1.5;
+}
+.compare-people {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.compare-person {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+}
+.compare-person .tp-name {
+  white-space: normal;
+}
+.compare-roles {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+.compare-roles .cr em {
+  color: var(--text-faint);
+  font-style: normal;
+  margin-right: 6px;
+}
+
 /* Drill: "← Overview" exits an isolated subgraph back to the full ball. Anchored
    bottom-left so it never collides with the header legend. */
 .atlas-back {
