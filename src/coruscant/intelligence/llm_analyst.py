@@ -19,7 +19,7 @@ import re
 from coruscant.intelligence.analyst import AnalysisConcern, AnalysisReport, AnalysisStep
 from coruscant.intelligence.confidence import MAX_CONFIDENCE
 from coruscant.intelligence.models import ChangeSet, Claim, ExtractedEvent
-from coruscant.llm import LLMError
+from coruscant.llm import LLMError, LLMGateway
 
 _VALID_SEVERITY = {"high", "medium", "low"}
 _OPPORTUNITY_RE = re.compile(r"\b(opportunit\w*|upside|bullish|tailwind\w*|catalyst\w*)\b")
@@ -97,7 +97,7 @@ def _parse_json(text: str) -> dict:
 
 
 class LLMAnalyst:
-    def __init__(self, gateway, *, tier: str = "complex") -> None:
+    def __init__(self, gateway: LLMGateway, *, tier: str = "complex") -> None:
         self.gateway = gateway
         self.tier = tier
 

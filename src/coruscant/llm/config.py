@@ -11,6 +11,7 @@ Persisted as JSON under the data dir so the admin page can edit it at runtime.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -88,6 +89,22 @@ def load_config(data_dir: Path) -> LLMRouterConfig:
 
 
 def save_config(data_dir: Path, config: LLMRouterConfig) -> None:
+    # This file holds plaintext provider API keys, so it must not be world- or
+    # group-readable. Create it owner-only (0o600), bypassing umask, and tighten
+    # the directory + any pre-existing file too.
     path = config_path(data_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(config.model_dump_json(indent=2))
+    try:
+        os.chmod(path.parent, 0o700)
+    except OSError:
+        pass
+    data = config.model_dump_json(indent=2).encode("utf-8")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, data)
+    finally:
+        os.close(fd)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
