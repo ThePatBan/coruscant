@@ -12,7 +12,7 @@ import { coarseSector } from "./relations";
 export interface FNode {
   id: string;
   name: string;
-  kind: "Company" | "Subsidiary";
+  kind: "Company" | "Subsidiary" | "Person";
   slug?: string; // company slug, for selection
   sector: string;
   val: number; // node size (importance)
@@ -21,6 +21,11 @@ export interface FNode {
   y?: number;
   z?: number;
 }
+
+// Key people (executive officers) render as a distinct "leadership" layer — one
+// warm hue across all sectors, so the people stand out from the sector-coloured
+// companies and their subsidiary halos.
+export const PERSON_COLOR = "#ecd9a6";
 
 export interface FLink {
   source: string;
@@ -53,7 +58,7 @@ export function sectorColor(sector: string): string {
 }
 
 // entity-to-entity relations rendered as links in 3D.
-const LINK_RELATIONS = new Set(["references", "has_subsidiary"]);
+const LINK_RELATIONS = new Set(["references", "has_subsidiary", "employs"]);
 
 // Deterministic pseudo-random in [0,1) from a string (FNV-1a). No Math.random,
 // so seeded positions are identical every load.
@@ -94,6 +99,10 @@ export function buildForceData(companies: Company[], profiles: Map<string, Entit
       if (rel.relation === "references") {
         if (!trackedSlugs.has(other.key)) continue; // company↔company only
         ensure(targetId, other.name, "Company", sectorOf.get(other.key) ?? "Other", true, other.key);
+      } else if (rel.relation === "employs") {
+        if (other.kind !== "Person") continue;
+        // a key person, clustered with its company's sector but drawn distinctly
+        ensure(targetId, other.name, "Person", sourceSector, false);
       } else {
         // has_subsidiary → a Subsidiary node, coloured by its parent's sector
         ensure(targetId, other.name, "Subsidiary", sourceSector, false);

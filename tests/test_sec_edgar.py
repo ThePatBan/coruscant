@@ -12,6 +12,7 @@ from coruscant.connectors.sec_edgar import (
     _parse_primary_document_url,
     find_exhibit21_url,
     normalize_edgar_filing,
+    parse_officers,
     parse_subsidiaries,
 )
 
@@ -52,6 +53,33 @@ def test_parse_subsidiaries_skips_parent_and_respects_limit() -> None:
     text = "\n".join(["Acme Corp", "Delaware", "Sub One", "Texas", "Sub Two", "Nevada"])
     subs = parse_subsidiaries(text, parent_core="acme", limit=1)
     assert [s["name"] for s in subs] == ["Sub One"]  # parent skipped, limit honored
+
+
+def test_parse_officers_extracts_name_age_role_clusters() -> None:
+    text = "\n".join(
+        [
+            "Information about our Executive Officers",
+            "Michael K. Wirth",
+            "64",
+            "Chairman of the Board and Chief Executive Officer",
+            "Eimear P. Bonner",
+            "50",
+            "Vice President and Chief Financial Officer",
+            "Some Narrative Paragraph",
+            "about the business that follows",
+        ]
+    )
+    officers = parse_officers(text)
+    names = [o["name"] for o in officers]
+    assert "Michael K. Wirth" in names
+    assert {"name": "Eimear P. Bonner", "role": "Vice President and Chief Financial Officer"} in officers
+
+
+def test_parse_officers_requires_a_cluster_and_valid_age() -> None:
+    # A lone Name/age/role triple is not an officers table — needs a cluster (≥2).
+    assert parse_officers("\n".join(["Random Person", "42", "Vice President of Sales"])) == []
+    # Ages outside 35–95 (e.g. footnote numbers) never anchor an officer row.
+    assert parse_officers("\n".join(["John Public", "12", "President", "Jane Doe", "20", "Officer"])) == []
 
 
 def test_reference_edgar_connector_produces_item_sections() -> None:

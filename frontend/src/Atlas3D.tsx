@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph3D from "react-force-graph-3d";
-import { buildForceData, sectorColor, type FLink } from "./force3d";
+import { buildForceData, sectorColor, PERSON_COLOR, type FLink } from "./force3d";
 import type { Company, EntityProfile } from "./api";
 
 const DIM = "#2a2f3a";
@@ -188,7 +188,8 @@ export function Atlas3D({ companies, profiles, selectedSlug, onSelectCompany, on
   const nodeColor = useCallback(
     (n: any) => {
       const lit = !dimming || hiNodes.has(n.id) || n.slug === selectedSlug;
-      return lit ? sectorColor(n.sector) : DIM;
+      if (!lit) return DIM;
+      return n.kind === "Person" ? PERSON_COLOR : sectorColor(n.sector);
     },
     [dimming, hiNodes, selectedSlug],
   );
@@ -204,9 +205,10 @@ export function Atlas3D({ companies, profiles, selectedSlug, onSelectCompany, on
         showNavInfo={false}
         controlType="orbit"
         nodeId="id"
-        nodeLabel={(n: any) =>
-          `<div class="g3d-tip"><strong>${esc(n.name)}</strong><span>${esc(n.kind === "Company" ? n.sector : "Subsidiary")}</span></div>`
-        }
+        nodeLabel={(n: any) => {
+          const sub = n.kind === "Company" ? n.sector : n.kind === "Person" ? "Key person" : "Subsidiary";
+          return `<div class="g3d-tip"><strong>${esc(n.name)}</strong><span>${esc(sub)}</span></div>`;
+        }}
         nodeVal={(n: any) => n.val}
         nodeColor={nodeColor as any}
         nodeOpacity={0.95}
