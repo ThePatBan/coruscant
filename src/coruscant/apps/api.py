@@ -93,6 +93,7 @@ from coruscant.knowledge_graph.queries import (
     market_tier_exposure,
     sector_exposure,
 )
+from coruscant.pricing import PortfolioPrices, PriceService, summarize
 from coruscant.search.hybrid import HybridRetrievalEngine
 from coruscant.search.reference import TemplateReasoningLayer
 
@@ -327,6 +328,7 @@ class _AppState:
     saved_searches: SqliteSavedSearchStore | None = None
     orgs: SqliteOrgStore | None = None
     usage: SqliteUsageStore | None = None
+    prices: PriceService | None = None
 
 
 def _all_documents(engine: Any) -> list[NormalizedDocument]:
@@ -387,6 +389,7 @@ def create_app(
         saved_searches=saved_search_store,
         orgs=org_store,
         usage=usage_store,
+        prices=PriceService(enabled=settings.enable_live_prices),
     )
 
     @asynccontextmanager
@@ -827,6 +830,19 @@ def create_app(
         if not isinstance(graph, InMemoryKnowledgeGraphStore):
             return CoExecutiveResult()
         return co_executives(graph)
+
+    @app.get("/portfolio/prices", response_model=PortfolioPrices, dependencies=protected)
+    def portfolio_prices() -> PortfolioPrices:
+        """Live "since yesterday" quotes for the tracked universe (Yahoo, free).
+        Returns connected=false when live prices are off — never a fabricated feed.
+        The aggregate is equal-weighted across the sample (no holdings/weights yet)."""
+        companies = load_companies(settings.config_dir)
+        holdings_meta = [(c.slug, c.name, c.ticker_symbol) for c in companies]
+        service = state.prices
+        if service is None or not service.enabled:
+            return summarize(holdings_meta, {}, total=len(companies), connected=False)
+        quotes = service.quotes([symbol for _, _, symbol in holdings_meta])
+        return summarize(holdings_meta, quotes, total=len(companies), connected=True)
 
     # ---- Watchlists & notifications ----------------------------------------
 
