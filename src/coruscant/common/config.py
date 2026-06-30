@@ -16,9 +16,17 @@ class CompanyConfig(BaseModel):
     country: str | None = None
     # SEC central index key (identity; optional — private companies have none).
     cik: str | None = None
+    # Exchange ticker for live quotes. Optional: for our universe the slug is the
+    # lowercased ticker (aapl→AAPL, the UK/India names are US-listed ADRs), so this
+    # defaults to slug.upper(); set it when a slug and ticker diverge (e.g. BRK.B).
+    ticker: str | None = None
     # Explicit SEC filing document/index URLs (oldest → newest) used by the live
     # EDGAR path. Ignored in reference/offline mode. Empty for private companies.
     sec_filings: list[str] = Field(default_factory=list)
+
+    @property
+    def ticker_symbol(self) -> str:
+        return (self.ticker or self.slug).upper()
 
 
 class SourceSetting(BaseModel):
@@ -65,6 +73,10 @@ class Settings(BaseSettings):
     # SEC fair-access cap (requests/second). SEC permits ~10/s with a declared
     # User-Agent; default keeps headroom. Applies to every live EDGAR request.
     sec_rate_limit_per_second: float = 8.0
+    # Live equity quotes (Yahoo Finance, free/unofficial). OFF by default so the
+    # offline/test path never hits the network; set true to light up the World
+    # tab's "since yesterday" prices.
+    enable_live_prices: bool = False
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
     # Empty by default: build_auth_service falls back to a per-process ephemeral
     # secret (never a committed constant). Set CORUSCANT_SECRET_KEY for stable,

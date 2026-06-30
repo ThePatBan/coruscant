@@ -263,6 +263,28 @@ export interface MarketTierExposure {
   direct: EntityRef[];
 }
 
+// Live "since yesterday" quotes (Yahoo Finance, free). `connected` is false when
+// the feed is off — the UI shows the stub then, never a fabricated number.
+export interface HoldingQuote {
+  slug: string;
+  name: string;
+  symbol: string;
+  price: number;
+  change_pct: number;
+  currency?: string | null;
+}
+export interface PortfolioPrices {
+  connected: boolean;
+  as_of?: string | null;
+  priced: number;
+  total: number;
+  avg_change_pct?: number | null;
+  gainers: number;
+  losers: number;
+  holdings: HoldingQuote[];
+  note?: string | null;
+}
+
 export interface EntityProfile {
   entity: EntityRef;
   properties: Record<string, unknown>;
@@ -536,6 +558,7 @@ export const api = {
   marketTiers: () => get<MarketTierCount[]>("/graph/market-tiers"),
   marketTierExposure: (tier: string) =>
     get<MarketTierExposure>(`/graph/market-tier-exposure?tier=${encodeURIComponent(tier)}`),
+  portfolioPrices: () => get<PortfolioPrices>("/portfolio/prices"),
   retrieve: (query: string, topK = 6) => post<RetrieveResponse>("/retrieve", { query, top_k: topK }),
   // intelligence
   dashboard: () => get<Dashboard>("/dashboard"),

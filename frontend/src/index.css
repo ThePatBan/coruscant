@@ -2826,6 +2826,38 @@ button.wp-tile.wp-cta:hover {
   font-size: 11px;
 }
 
+/* Today's movers (live prices) */
+.movers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 24px;
+}
+.movers-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mover {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  gap: 12px;
+}
+.mover-sym {
+  font-weight: 550;
+}
+.up {
+  color: var(--good);
+}
+.down {
+  color: #ff7a7a;
+}
+.wp-value.up,
+.wp-value.down {
+  font-variant-numeric: tabular-nums;
+}
+
 /* Selected-country tier context line */
 .ci-tier {
   display: flex;

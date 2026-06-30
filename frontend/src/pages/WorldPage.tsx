@@ -10,7 +10,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { EXCHANGES, marketStatus, localTime, TIER_LABEL, type Exchange } from "../world/exchanges";
-import { api, type GicsSector, type MarketTierCount } from "../api";
+import { api, type GicsSector, type MarketTierCount, type PortfolioPrices } from "../api";
 import { useAsync } from "../hooks";
 
 // The globe pulls in three.js — lazy-load it so it lands in its own chunk (and
@@ -21,6 +21,36 @@ const TIER_CLASS: Record<string, string> = { DM: "tier-dm", EM: "tier-em", FM: "
 
 function pct(n: number, total: number): number {
   return total > 0 ? Math.round((n / total) * 100) : 0;
+}
+
+function signedPct(n: number): string {
+  return `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
+}
+
+// Top gainers / losers since yesterday (free Yahoo quotes).
+function Movers({ prices }: { prices: PortfolioPrices }) {
+  if (!prices.connected || prices.holdings.length === 0) return null;
+  const gainers = prices.holdings.slice(0, 3);
+  const losers = prices.holdings.slice(-3).reverse();
+  const Row = ({ h }: { h: PortfolioPrices["holdings"][number] }) => (
+    <span className="mover">
+      <span className="mover-sym">{h.symbol}</span>
+      <span className={h.change_pct >= 0 ? "up" : "down"}>{signedPct(h.change_pct)}</span>
+    </span>
+  );
+  return (
+    <div className="pc-block">
+      <div className="ci-section-label">Today's movers <span className="muted">· since prior close</span></div>
+      <div className="movers">
+        <div className="movers-col">
+          {gainers.map((h) => <Row key={h.slug} h={h} />)}
+        </div>
+        <div className="movers-col">
+          {losers.map((h) => <Row key={h.slug} h={h} />)}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function StubBadge({ label }: { label: string }) {
@@ -120,7 +150,15 @@ function GicsTree({ sectors }: { sectors: GicsSector[] }) {
   );
 }
 
-function PortfolioComposition({ tiers, sectors }: { tiers: MarketTierCount[]; sectors: GicsSector[] }) {
+function PortfolioComposition({
+  tiers,
+  sectors,
+  prices,
+}: {
+  tiers: MarketTierCount[];
+  sectors: GicsSector[];
+  prices: PortfolioPrices | null;
+}) {
   const total = tiers.reduce((s, t) => s + t.companies, 0);
   return (
     <div className="portfolio-composition">
@@ -133,6 +171,7 @@ function PortfolioComposition({ tiers, sectors }: { tiers: MarketTierCount[]; se
         </div>
       </div>
       <MarketTierBar tiers={tiers} />
+      {prices ? <Movers prices={prices} /> : null}
       <GicsTree sectors={sectors} />
     </div>
   );
@@ -218,6 +257,7 @@ export function WorldPage() {
   const { data: companies } = useAsync(() => api.companies(), []);
   const { data: tiers } = useAsync(() => api.marketTiers(), []);
   const { data: sectors } = useAsync(() => api.gicsBreakdown(), []);
+  const { data: prices } = useAsync(() => api.portfolioPrices(), []);
 
   // Re-evaluate open/closed each minute.
   useEffect(() => {
@@ -239,9 +279,19 @@ export function WorldPage() {
           <div className="wp-sub muted">tracking the {sampleSize}-company universe</div>
         </div>
         <div className="wp-tile">
-          <div className="wp-label">Since yesterday <StubBadge label="prices" /></div>
-          <div className="wp-value">—</div>
-          <div className="wp-sub muted">Yahoo / Google Finance — not connected</div>
+          {prices?.connected && prices.avg_change_pct != null ? (
+            <>
+              <div className="wp-label">Since yesterday <span className="stub-badge" title="Free Yahoo Finance quotes, not real-time">Yahoo</span></div>
+              <div className={`wp-value ${prices.avg_change_pct >= 0 ? "up" : "down"}`}>{signedPct(prices.avg_change_pct)}</div>
+              <div className="wp-sub muted">{prices.gainers}↑ {prices.losers}↓ · equal-weight, {prices.priced} priced</div>
+            </>
+          ) : (
+            <>
+              <div className="wp-label">Since yesterday <StubBadge label="prices" /></div>
+              <div className="wp-value">—</div>
+              <div className="wp-sub muted">Yahoo Finance — not connected</div>
+            </>
+          )}
         </div>
         <div className="wp-tile">
           <div className="wp-label">Markets open now</div>
@@ -284,7 +334,7 @@ export function WorldPage() {
         {selected ? (
           <CountryInsight exchange={selected} tiers={tierList} />
         ) : (
-          <PortfolioComposition tiers={tierList} sectors={sectors ?? []} />
+          <PortfolioComposition tiers={tierList} sectors={sectors ?? []} prices={prices ?? null} />
         )}
       </section>
     </div>
