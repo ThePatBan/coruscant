@@ -22,7 +22,7 @@ const FEATURES = [
 export function LandingPage() {
   const { email } = useAuth();
   const navigate = useNavigate();
-  const primary = email ? "/dashboard" : "/login";
+  const primary = email ? "/atlas" : "/login";
 
   return (
     <div className="landing">

@@ -45,6 +45,7 @@ from coruscant.intelligence.reliability import (
     errors_for_source,
     score_source,
 )
+from coruscant.knowledge_graph.extraction import extract_relationships
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 from coruscant.knowledge_graph.persistence import load_graph, save_graph
 from coruscant.enterprise.api_keys import SqliteApiKeyStore
@@ -305,6 +306,17 @@ def run_ingestion(
         max_attempts=settings.ingest_max_attempts,
     )
     report = orchestrator.run(companies, sources)
+    # Deterministic relationship extraction over the ingested corpus: cross-company
+    # co-mention bridges + SIC sector edges, each with provenance. This is what
+    # turns a larger company set into a connected graph rather than isolated nodes.
+    extraction = extract_relationships(graph_store, companies, settings.data_dir)
+    logger.info(
+        "Extraction: %d co-mention references, %d sector edges, %d subsidiaries (over %d documents)",
+        extraction["references"],
+        extraction["in_sector"],
+        extraction["subsidiaries"],
+        extraction["documents"],
+    )
     save_graph(graph_store, settings.graph_snapshot_path)
     completed_at = moment.isoformat()
     save_status(RunStatus.from_report(report, completed_at=completed_at), settings.status_path)

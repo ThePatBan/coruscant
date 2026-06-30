@@ -10,8 +10,48 @@ from coruscant.connectors.sec_edgar import (
     _parse_index_exhibits,
     _parse_index_metadata,
     _parse_primary_document_url,
+    find_exhibit21_url,
     normalize_edgar_filing,
+    parse_subsidiaries,
 )
+
+
+def test_find_exhibit21_url_matches_only_exhibit_21() -> None:
+    base = "https://www.sec.gov/Archives/edgar/data/1/000/a10-k.htm"
+    indexed = [
+        {"title": "hd_exhibit321-2025.htm"},  # 32.1 — must NOT match
+        {"title": "a10-kexhibit1021.htm"},  # 10.2.1 — must NOT match
+        {"title": "fy2025exhibit21.htm"},  # 21 — the real one
+    ]
+    url = find_exhibit21_url(base, indexed)
+    assert url is not None and url.endswith("fy2025exhibit21.htm")
+    assert find_exhibit21_url(base, [{"title": "exhibit23.htm"}]) is None
+    assert find_exhibit21_url(base, None) is None
+
+
+def test_parse_subsidiaries_pairs_name_and_jurisdiction() -> None:
+    text = "\n".join(
+        [
+            "Exhibit 21.1",
+            "Subsidiaries:",
+            "Acme Holdings, Inc.",
+            "Delaware",
+            "Globex International Limited",
+            "Ireland",
+            "Trailing Name With No Jurisdiction",
+        ]
+    )
+    subs = parse_subsidiaries(text)
+    names = [s["name"] for s in subs]
+    assert "Acme Holdings, Inc." in names
+    assert {"name": "Globex International Limited", "jurisdiction": "Ireland"} in subs
+    assert "Trailing Name With No Jurisdiction" not in names  # no jurisdiction → dropped
+
+
+def test_parse_subsidiaries_skips_parent_and_respects_limit() -> None:
+    text = "\n".join(["Acme Corp", "Delaware", "Sub One", "Texas", "Sub Two", "Nevada"])
+    subs = parse_subsidiaries(text, parent_core="acme", limit=1)
+    assert [s["name"] for s in subs] == ["Sub One"]  # parent skipped, limit honored
 
 
 def test_reference_edgar_connector_produces_item_sections() -> None:
@@ -85,6 +125,7 @@ def test_edgar_http_connector_uses_index_json(monkeypatch) -> None:
     index_url = urljoin(filing_url, "index.json")
     index_payload = (fixture_dir / "index.json").read_text()
     primary_payload = (fixture_dir / "10-k-primary.txt").read_text()
+    exhibit21_payload = (fixture_dir / "exhibit21.htm").read_text()
 
     class _Response:
         def __init__(self, text: str, content_type: str = "application/json") -> None:
@@ -106,6 +147,8 @@ def test_edgar_http_connector_uses_index_json(monkeypatch) -> None:
             return _Response(index_payload)
         if url == filing_url:
             return _Response(primary_payload, "text/html")
+        if url.endswith("exhibit21.htm"):
+            return _Response(exhibit21_payload, "text/html")
         if url.endswith("a10-k20250927.htm"):
             return _Response(primary_payload, "text/html")
         raise AssertionError(f"Unexpected URL: {url}")
@@ -125,6 +168,10 @@ def test_edgar_http_connector_uses_index_json(monkeypatch) -> None:
     assert document.metadata["primary_document_url"].endswith("a10-k20250927.htm")
     assert document.metadata["indexed_exhibits"]
     assert "Apple designs devices and services." in document.raw_content
+    # Exhibit 21 subsidiaries are fetched and parsed alongside the 10-K.
+    subsidiaries = document.metadata["subsidiaries"]
+    assert any(s["name"] == "Apple Operations International" for s in subsidiaries)
+    assert any(s["jurisdiction"] == "Ireland" for s in subsidiaries)
 
 
 def test_form_specific_section_templates() -> None:

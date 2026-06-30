@@ -11,11 +11,13 @@
 
 export type RelationTier =
   | "control" // direct leadership of a company
+  | "ownership" // declared parent → subsidiary (Exhibit 21)
   | "proxy" // inferred influence: leadership overlap, prior tenure, agency ties
   | "supply" // dependency / country exposure
   | "alliance" // partner / customer
   | "peer" // rivalry
   | "product" // builds / uses
+  | "reference" // extracted at scale from filings: co-mention, shared sector
   | "mention";
 
 interface RelationMeta {
@@ -36,6 +38,12 @@ const RELATIONS: Record<string, RelationMeta> = {
   uses_technology: { tier: "product", verb: "uses" },
   engaged_with: { tier: "proxy", verb: "engaged with" },
   mentions: { tier: "mention", verb: "mentions" },
+  // Extracted at scale from filings (provenance: the filing). references = company
+  // A names company B; in_sector = SEC SIC classification.
+  references: { tier: "reference", verb: "names in filings" },
+  in_sector: { tier: "reference", verb: "in sector" },
+  // Declared ownership, extracted from the 10-K's Exhibit 21 (subsidiaries list).
+  has_subsidiary: { tier: "ownership", verb: "owns" },
 };
 
 const FALLBACK: RelationMeta = { tier: "peer", verb: "" };
@@ -55,6 +63,9 @@ const ENTITY_RELATIONS = new Set([
   "produces",
   "uses_technology",
   "engaged_with",
+  "references",
+  "in_sector",
+  "has_subsidiary",
 ]);
 
 export function isEntityRelation(relation: string): boolean {
@@ -83,20 +94,24 @@ export interface TierInfo {
 // question), then dependency, then the softer business ties.
 export const TIERS: TierInfo[] = [
   { tier: "control", label: "Leadership", hint: "Direct control of a company" },
+  { tier: "ownership", label: "Ownership", hint: "Declared subsidiary (Exhibit 21)" },
   { tier: "proxy", label: "Control by proxy", hint: "Inferred — leadership overlap or prior tenure" },
   { tier: "supply", label: "Supply exposure", hint: "Depends on a supplier or country" },
   { tier: "alliance", label: "Alliance", hint: "Partner or customer" },
   { tier: "peer", label: "Rivalry", hint: "Named competitor" },
   { tier: "product", label: "Product / tech", hint: "Builds or uses" },
+  { tier: "reference", label: "Co-mention", hint: "Extracted from filings: names each other, or shared SIC sector" },
 ];
 
 const TIER_LABELS: Record<RelationTier, string> = {
   control: "Leadership",
+  ownership: "Ownership",
   proxy: "Control by proxy",
   supply: "Supply exposure",
   alliance: "Alliance",
   peer: "Rivalry",
   product: "Product / tech",
+  reference: "Co-mention",
   mention: "Mention",
 };
 
@@ -113,9 +128,31 @@ const KIND_GLYPHS: Record<string, string> = {
   Product: "▰",
   Technology: "⚙",
   Agency: "▣",
+  Industry: "❖",
+  Subsidiary: "⌂",
   Document: "▦",
 };
 
 export function kindGlyph(kind: string): string {
   return KIND_GLYPHS[kind] ?? "•";
+}
+
+// Map a granular SEC SIC industry description to a coarse sector, so companies
+// cluster into readable groups on the canvas (exact SIC is mostly singletons).
+// Order matters — earlier rules win.
+const SECTOR_RULES: Array<[RegExp, string]> = [
+  [/pharmaceut|biological|medical|hospital|health|surgical|diagnostic/, "Health"],
+  [/bank|financ|insurance|broker|casualty|securit/, "Financials"],
+  [/software|comput|semiconduct|communications equip|electronic|information|internet/, "Technology"],
+  [/petroleum|oil|gas|energy|refin|coal|drilling/, "Energy"],
+  [/telephone|telecom|wireless|broadcast/, "Telecom"],
+  [/retail/, "Retail"],
+  [/aircraft|machinery|construction|industrial|engine|aerospace|defense/, "Industrials"],
+  [/beverage|food|soap|detergent|cosmetic|footwear|apparel|tobacco|household|amusement|recreation|motion picture|entertain/, "Consumer"],
+];
+
+export function coarseSector(industry: string | null | undefined): string {
+  const s = (industry || "").toLowerCase();
+  for (const [re, sector] of SECTOR_RULES) if (re.test(s)) return sector;
+  return "Other";
 }
