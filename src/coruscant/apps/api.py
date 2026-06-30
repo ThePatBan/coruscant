@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import logging
 import secrets
 from typing import Any
 
@@ -58,6 +59,8 @@ from coruscant.common.types import SCHEMA_VERSION, NormalizedDocument, Provenanc
 from coruscant.infrastructure.intelligence_store import SqliteIntelligenceStore
 from coruscant.ingestion.registry import default_registry
 from coruscant.intelligence.analyst import AnalysisReport, ReferenceAnalyst
+from coruscant.intelligence.llm_analyst import LLMAnalyst
+from coruscant.llm import LLMError
 from coruscant.intelligence.signals import ReferenceSignalEngine, Signal
 from coruscant.intelligence.models import ChangeSet
 from coruscant.intelligence.models import DocumentSummary as AISummary
@@ -80,6 +83,7 @@ from coruscant.search.hybrid import HybridRetrievalEngine
 from coruscant.search.reference import TemplateReasoningLayer
 
 
+logger = logging.getLogger(__name__)
 API_VERSION = "1.0"  # frozen MVP API surface (ADR-0006); breaking changes bump this
 
 
@@ -1098,7 +1102,7 @@ def create_app(
             if isinstance(state.graph, InMemoryKnowledgeGraphStore)
             else []
         )
-        return ReferenceAnalyst().analyze(
+        kwargs = dict(
             company_slug=slug,
             company_name=name,
             question=body.question,
@@ -1106,6 +1110,16 @@ def create_app(
             events=events,
             country_exposures=exposures,
         )
+        # Reason with the configured "complex" model when one is set; otherwise
+        # fall back to the deterministic evidence scan. Any LLM failure (no key,
+        # bad JSON, model down) degrades gracefully to the same fallback.
+        gateway = LLMGateway(settings.data_dir)
+        if gateway.available("complex"):
+            try:
+                return LLMAnalyst(gateway).analyze(**kwargs)
+            except LLMError as exc:
+                logger.warning("LLM analyst unavailable (%s); using deterministic fallback.", exc)
+        return ReferenceAnalyst().analyze(**kwargs)
 
     @app.get("/signals/{slug}", response_model=list[Signal], dependencies=protected)
     def signals(slug: str) -> list[Signal]:

@@ -45,7 +45,7 @@ export function AnalystPanel({ slug, name }: { slug: string; name: string }) {
       <div>
         <h2>◎ AI Analyst</h2>
         <p className="faint" style={{ fontSize: 13 }}>
-          Multi-step reasoning over what changed — not retrieval. Every conclusion is cited.
+          Ranks what to watch over the next 6–12 months, grounded in the cited evidence.
         </p>
       </div>
       <form onSubmit={run} className="searchbar" style={{ boxShadow: "none" }}>
@@ -58,7 +58,14 @@ export function AnalystPanel({ slug, name }: { slug: string; name: string }) {
       {report ? (
         <div className="stack gap">
           <div className="answer">
-            <div className="answer-label">Assessment · {report.focus}</div>
+            <div className="row-between">
+              <div className="answer-label">Assessment · {report.focus}</div>
+              <span className="pill" title={report.generator}>
+                {report.generator?.startsWith("llm:")
+                  ? `⚡ ${report.generator.slice(4)}`
+                  : "deterministic scan"}
+              </span>
+            </div>
             <div style={{ fontWeight: 560 }}>{report.headline}</div>
           </div>
           <div className="wrap" style={{ gap: 6 }}>
