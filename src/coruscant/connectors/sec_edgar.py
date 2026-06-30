@@ -411,6 +411,93 @@ def parse_signers(text: str, *, limit: int = 40) -> list[dict[str, str]]:
     return out
 
 
+# --- Form 4 (insider holdings) ------------------------------------------------
+# Form 4 is the structured (XML) insider-transaction filing: issuer, reporting
+# owner, their relationship (director/officer/10%-owner), and — what we want —
+# the shares beneficially owned after the reported transaction. The latest Form 4
+# per insider gives their current holding. This is the holdings layer; it also
+# independently confirms who the directors/officers are.
+def _form4_tag(xml: str, tag: str) -> str:
+    match = re.search(rf"<{tag}>(.*?)</{tag}>", xml, re.S)
+    return match.group(1).strip() if match else ""
+
+
+def _form4_flag(xml: str, tag: str) -> bool:
+    match = re.search(rf"<{tag}>\s*(.*?)\s*</{tag}>", xml, re.S)
+    return bool(match) and match.group(1).strip().lower() in ("1", "true")
+
+
+def reformat_insider_name(name: str) -> str:
+    """SEC Form 4 names are "LAST FIRST MIDDLE"; reorder to "First Middle Last"
+    so an insider matches the same person parsed from the 10-K."""
+    parts = name.replace(",", " ").split()
+    if len(parts) >= 2:
+        return " ".join(parts[1:] + [parts[:1][0]]).title()
+    return name.title()
+
+
+def parse_form4(xml: str) -> dict[str, object] | None:
+    """Parse one Form 4 ownership XML into issuer / owner / role / shares-held."""
+    owner = _form4_tag(xml, "rptOwnerName")
+    if not owner:
+        return None
+    held: int | None = None
+    values = re.findall(r"<sharesOwnedFollowingTransaction>\s*<value>\s*(.*?)\s*</value>", xml, re.S)
+    if values:  # the last entry is the most recent post-transaction balance
+        try:
+            held = int(float(values[-1].replace(",", "")))
+        except ValueError:
+            held = None
+    return {
+        "issuer": _form4_tag(xml, "issuerName"),
+        "symbol": _form4_tag(xml, "issuerTradingSymbol").upper(),
+        "owner": reformat_insider_name(owner),
+        "is_director": _form4_flag(xml, "isDirector"),
+        "is_officer": _form4_flag(xml, "isOfficer"),
+        "is_ten_percent": _form4_flag(xml, "isTenPercentOwner"),
+        "title": _form4_tag(xml, "officerTitle"),
+        "shares": held,
+    }
+
+
+def fetch_recent_form4_holdings(
+    cik: str, *, user_agent: str, limit: int = 30, pause_seconds: float = 0.13
+) -> list[dict[str, object]]:
+    """Fetch a CIK's recent Form 4s and return the latest holding per insider."""
+    from urllib.error import HTTPError
+
+    headers = {"User-Agent": user_agent}
+    padded = str(cik).lstrip("0").zfill(10)
+
+    def _get(url: str) -> bytes:
+        with urlopen(Request(url, headers=headers), timeout=30) as resp:  # noqa: S310 (trusted SEC host)
+            return resp.read()
+
+    try:
+        submissions = json.loads(_get(f"https://data.sec.gov/submissions/CIK{padded}.json"))
+    except (HTTPError, URLError, ValueError):
+        return []
+    recent = submissions.get("filings", {}).get("recent", {})
+    forms = recent.get("form", [])
+    accessions = recent.get("accessionNumber", [])
+    primary = recent.get("primaryDocument", [])
+    indexes = [i for i, form in enumerate(forms) if form == "4"][:limit]
+
+    by_owner: dict[str, dict[str, object]] = {}  # first (newest) wins
+    for i in indexes:
+        acc = accessions[i].replace("-", "")
+        raw_doc = re.sub(r"^xsl[^/]*/", "", primary[i])  # raw XML, not the XSL-rendered view
+        url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc}/{raw_doc}"
+        try:
+            parsed = parse_form4(_get(url).decode("utf-8", "replace"))
+        except (HTTPError, URLError):
+            continue
+        time.sleep(pause_seconds)  # SEC fair-access courtesy
+        if parsed and parsed["owner"] and parsed["shares"] is not None:
+            by_owner.setdefault(str(parsed["owner"]).lower(), parsed)
+    return list(by_owner.values())
+
+
 def normalize_edgar_filing(document: SourceDocument) -> NormalizedDocument:
     parser = _TextStripper()
     parser.feed(document.raw_content)

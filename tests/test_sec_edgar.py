@@ -12,9 +12,11 @@ from coruscant.connectors.sec_edgar import (
     _parse_primary_document_url,
     find_exhibit21_url,
     normalize_edgar_filing,
+    parse_form4,
     parse_officers,
     parse_signers,
     parse_subsidiaries,
+    reformat_insider_name,
 )
 
 
@@ -110,6 +112,23 @@ def test_parse_signers_requires_the_signature_preamble() -> None:
     # The auditor's /s/ appears earlier in the filing; without the signature
     # preamble we must parse nothing (no phantom people).
     assert parse_signers("/s/ PricewaterhouseCoopers LLP\nIndependent Auditor") == []
+
+
+def test_parse_form4_extracts_owner_role_and_latest_holding() -> None:
+    xml = Path("tests/fixtures/sec_edgar/form4.xml").read_text()
+    parsed = parse_form4(xml)
+    assert parsed is not None
+    assert parsed["symbol"] == "AAPL"
+    assert parsed["owner"] == "Jennifer Newstead"  # reordered from "Newstead Jennifer"
+    assert parsed["is_officer"] is True
+    assert parsed["is_director"] is False
+    assert parsed["title"] == "SVP, GC and Secretary"
+    assert parsed["shares"] == 210728  # the last post-transaction balance
+
+
+def test_reformat_insider_name_reorders_last_first() -> None:
+    assert reformat_insider_name("Newstead Jennifer") == "Jennifer Newstead"
+    assert reformat_insider_name("Cook Timothy D") == "Timothy D Cook"
 
 
 def test_reference_edgar_connector_produces_item_sections() -> None:

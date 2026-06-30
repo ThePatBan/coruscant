@@ -82,7 +82,13 @@ def _source_of(properties: dict[str, object]) -> str | None:
 
 def _detail_of(properties: dict[str, object]) -> str | None:
     """The most useful human-readable fact carried on the edge (officer role,
-    subsidiary jurisdiction). Stored on the edge but otherwise dropped by the API."""
+    subsidiary jurisdiction, insider shares). Stored on the edge but otherwise
+    dropped by the API."""
+    shares = properties.get("shares")
+    if isinstance(shares, int):
+        role = properties.get("role")
+        held = f"{shares:,} shares"
+        return f"{role} · {held}" if isinstance(role, str) and role else held
     for key in ("role", "jurisdiction"):
         value = properties.get(key)
         if isinstance(value, str) and value.strip():
