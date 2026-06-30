@@ -31,6 +31,7 @@ _SECTOR_PROV = "sec-metadata"
 _COMENTION_PROV = "sec-co-mention"
 _SUBSIDIARY_PROV = "sec-exhibit21"
 _OFFICER_PROV = "sec-10k-officers"
+_DIRECTOR_PROV = "sec-10k-signatures"
 
 # Pure legal-form tokens stripped to get a company's distinctive core name. We
 # deliberately KEEP words like "companies" / "group" — they make a name precise
@@ -237,16 +238,19 @@ def project_people_edges(
     companies: list[CompanyConfig],
     documents: list[NormalizedDocument],
 ) -> int:
-    """Company -employs-> Person, from each 10-K's executive-officers section.
+    """Company -employs-> Person (officers) and -board_member-> Person (directors).
 
-    The people layer: key personnel become first-class nodes carrying their role,
-    so a person who turns up at two companies (officer here, prior role there)
-    becomes a *bridge* — the seed of the board-interlock network. Provenance is the
-    filing the bio was parsed from. Deterministic and precision-first (see
-    ``parse_officers``); about half of 10-Ks carry the section in-text, the rest
-    incorporate it by reference to the proxy.
+    The people layer. Two deterministic sources, both in the 10-K:
+      - the executive-officers table (``parse_officers``) → officers, and
+      - the signature page (``parse_signers``) → officers + every director.
+    The signature page closes the coverage gap (filings that incorporate Item 10
+    by reference still sign) and surfaces directors, so a person who signs two
+    companies' 10-Ks becomes a *bridge* — the board-interlock network (e.g. Tim
+    Cook on Apple + Nike, Alex Gorsky on Apple + JPMorgan). Provenance is the
+    filing; an officer classification always wins over a director one for the same
+    person at the same company.
     """
-    from coruscant.connectors.sec_edgar import parse_officers  # local: avoid import cycle
+    from coruscant.connectors.sec_edgar import parse_officers, parse_signers  # local: avoid import cycle
 
     docs_by_slug: dict[str, list[NormalizedDocument]] = {}
     for doc in documents:
@@ -256,38 +260,50 @@ def project_people_edges(
 
     count = 0
     for company in companies:
-        seen: set[str] = set()
+        # Collect one record per person: key -> (name, relation, role, source_uri).
+        people: dict[str, tuple[str, str, str, str]] = {}
+
+        def record(name: str, relation: str, role: str, uri: str) -> None:
+            name = name.strip()
+            if not name:
+                return
+            key = entity_key(name)
+            existing = people.get(key)
+            # An officer (employs) edge wins over a board_member one for the same person.
+            if existing is not None and not (existing[1] == "board_member" and relation == "employs"):
+                return
+            people[key] = (name, relation, role.strip(), uri)
+
         for doc in docs_by_slug.get(company.slug, []):
             text = "\n".join(str(s.get("content") or "") for s in doc.sections)
             for officer in parse_officers(text):
-                name = officer["name"].strip()
-                role = officer["role"].strip()
-                if not name:
-                    continue
-                key = entity_key(name)
-                if key in seen:
-                    continue
-                seen.add(key)
-                if store.get_node("Person", key) is None:
-                    store.upsert_node(
-                        GraphNode(kind="Person", key=key, properties={"name": name, "source": _OFFICER_PROV})
-                    )
-                store.upsert_edge(
-                    GraphEdge(
-                        source_kind="Company",
-                        source_key=company.slug,
-                        relation="employs",
-                        target_kind="Person",
-                        target_key=key,
-                        properties={
-                            "source": _OFFICER_PROV,
-                            "company_slug": company.slug,
-                            "role": role,
-                            "source_uri": doc.source_uri,
-                        },
-                    )
+                record(officer["name"], "employs", officer["role"], doc.source_uri)
+            for signer in parse_signers(text):
+                relation = "employs" if signer["kind"] == "officer" else "board_member"
+                record(signer["name"], relation, signer["role"], doc.source_uri)
+
+        for key, (name, relation, role, uri) in people.items():
+            prov = _OFFICER_PROV if relation == "employs" else _DIRECTOR_PROV
+            if store.get_node("Person", key) is None:
+                store.upsert_node(
+                    GraphNode(kind="Person", key=key, properties={"name": name, "source": prov})
                 )
-                count += 1
+            store.upsert_edge(
+                GraphEdge(
+                    source_kind="Company",
+                    source_key=company.slug,
+                    relation=relation,
+                    target_kind="Person",
+                    target_key=key,
+                    properties={
+                        "source": prov,
+                        "company_slug": company.slug,
+                        "role": role,
+                        "source_uri": uri,
+                    },
+                )
+            )
+            count += 1
     return count
 
 

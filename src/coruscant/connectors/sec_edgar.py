@@ -366,6 +366,51 @@ def parse_officers(text: str, *, limit: int = 20) -> list[dict[str, str]]:
     return out if len(out) >= 2 else []
 
 
+# --- Signature page (Part IV) -------------------------------------------------
+# Every 10-K is signed by the principal officers AND every director, as
+# "/s/ NAME" followed by a title. This closes the officer-coverage gap (the ~half
+# of filings that incorporate Item 10 by reference still have a signature page)
+# and — crucially — surfaces *directors*, so a person who signs two companies'
+# 10-Ks is a board interlock (a bridge). We anchor on the standard SEC signature
+# preamble to skip the auditor's "/s/", and require a role title to drop stray
+# firm signatures (e.g. the audit firm's LLP line).
+_SIGNER_NAME = re.compile(r"^[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ.'’-]*(?:\s+[A-Za-zÀ-ÿ.'’-]+){1,3}$")
+_SIGNER_FIRM = re.compile(r"\b(LLP|L\.L\.P|LP|Inc|Incorporated|Company|Corp|Associates|Partners)\b|&", re.I)
+_SIGNER_ROLE = re.compile(r"director|officer|president|chief|chairman|vice|treasurer|secretary|controller|counsel", re.I)
+_OFFICER_TITLE = re.compile(r"chief|president|officer|vice|controller|treasurer|secretary|counsel", re.I)
+
+
+def parse_signers(text: str, *, limit: int = 40) -> list[dict[str, str]]:
+    """Parse signature-page signers (officers + directors) from a 10-K."""
+    anchor = re.search(r"signed below by the following persons on behalf of the registrant", text, re.I)
+    if not anchor:
+        return []
+    lines = [line.strip() for line in text[anchor.end() : anchor.end() + 4000].split("\n") if line.strip()]
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for i, line in enumerate(lines):
+        match = re.match(r"^/s/\s*(.+)$", line)
+        if not match:
+            continue
+        name = match.group(1).strip()
+        if not _SIGNER_NAME.match(name) or _SIGNER_FIRM.search(name):
+            continue
+        title = next((lines[j] for j in range(i + 1, min(i + 4, len(lines))) if _SIGNER_ROLE.search(lines[j])), None)
+        if not title:  # no role nearby → a stray / firm signature, skip
+            continue
+        proper = name.title()
+        key = proper.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        # An independent director: title says "director" but names no executive office.
+        is_director = bool(re.search(r"director", title, re.I)) and not _OFFICER_TITLE.search(title)
+        out.append({"name": proper, "role": title[:80], "kind": "director" if is_director else "officer"})
+        if len(out) >= limit:
+            break
+    return out
+
+
 def normalize_edgar_filing(document: SourceDocument) -> NormalizedDocument:
     parser = _TextStripper()
     parser.feed(document.raw_content)
