@@ -391,7 +391,7 @@ button {
 }
 .provider-row {
   display: grid;
-  grid-template-columns: 150px 160px 1fr 1.2fr;
+  grid-template-columns: 1.3fr 150px 1.4fr 1.4fr auto;
   gap: 10px;
   align-items: center;
   padding: 10px 0;
@@ -402,6 +402,37 @@ button {
 }
 .provider-name {
   font-weight: 550;
+  font-size: 13px;
+  min-width: 0;
+}
+.prov-x {
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 4px 6px;
+}
+.prov-x:hover:not(:disabled) {
+  color: var(--danger);
+}
+.prov-x:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.add-provider {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+.add-provider input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 13px;
 }
 .admin select,
 .admin input {

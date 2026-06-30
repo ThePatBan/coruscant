@@ -49,11 +49,18 @@ def default_config() -> LLMRouterConfig:
                 kind="openai", base_url="http://localhost:11434/v1", label="Local (Ollama / LM Studio)"
             ),
             "openai": ProviderConfig(kind="openai", base_url="https://api.openai.com/v1", label="OpenAI"),
-            "anthropic": ProviderConfig(kind="anthropic", base_url="https://api.anthropic.com", label="Anthropic"),
+            # Anthropic uses one key across all its models, so a cheap and a capable
+            # slot can share that key — wire the same key into both.
+            "anthropic-haiku": ProviderConfig(
+                kind="anthropic", base_url="https://api.anthropic.com", label="Anthropic — Haiku (low-cost)"
+            ),
+            "anthropic": ProviderConfig(
+                kind="anthropic", base_url="https://api.anthropic.com", label="Anthropic — Opus (capable)"
+            ),
         },
         routes={
             "simple": Route(provider="local", model="gemma2"),
-            "light": Route(provider="openai", model="gpt-5.4-mini"),
+            "light": Route(provider="anthropic-haiku", model="claude-haiku-4-5"),
             "complex": Route(provider="anthropic", model="claude-opus-4-8"),
         },
     )
