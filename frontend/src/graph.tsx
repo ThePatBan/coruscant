@@ -11,7 +11,7 @@ import { useMemo, useState, type KeyboardEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, type Company, type EntityProfile } from "./api";
 import { useAsync } from "./hooks";
-import { isEntityRelation, kindGlyph, relationTier, relationVerb, tierLabel, TIERS, type RelationTier } from "./relations";
+import { coarseSector, isEntityRelation, kindGlyph, relationTier, relationVerb, tierLabel, TIERS, type RelationTier } from "./relations";
 
 export interface GNode {
   id: string;
@@ -21,6 +21,8 @@ export interface GNode {
   tracked: boolean;
   /** tracked-company keys this node connects (≥2 ⇒ a bridge). */
   bridges: string[];
+  /** SEC SIC industry of a tracked company; drives sector clustering on the ring. */
+  sector?: string;
 }
 
 export interface GEdge {
@@ -38,8 +40,14 @@ export interface RelGraph {
 
 const nodeId = (kind: string, key: string) => `${kind}:${key}`;
 
-/** Build a relationship graph from the entity profiles of the tracked companies. */
-export function buildGraph(profiles: EntityProfile[], trackedKeys: Iterable<string>): RelGraph {
+/** Build a relationship graph from the entity profiles of the tracked companies.
+ *  `sectorBySlug` (optional) attaches each tracked company's industry for sector
+ *  clustering; omit it to keep the plain alphabetical ring (e.g. the dashboard). */
+export function buildGraph(
+  profiles: EntityProfile[],
+  trackedKeys: Iterable<string>,
+  sectorBySlug?: Map<string, string>,
+): RelGraph {
   const tracked = new Set(trackedKeys);
   const nodes = new Map<string, GNode>();
   const edges = new Map<string, GEdge>();
@@ -51,13 +59,15 @@ export function buildGraph(profiles: EntityProfile[], trackedKeys: Iterable<stri
       if (!existing.name && name) existing.name = name;
       return id;
     }
+    const isTracked = kind === "Company" && tracked.has(key);
     nodes.set(id, {
       id,
       kind,
       key,
       name: name || key,
-      tracked: kind === "Company" && tracked.has(key),
+      tracked: isTracked,
       bridges: [],
+      sector: isTracked ? sectorBySlug?.get(key) : undefined,
     });
     return id;
   };
@@ -66,11 +76,11 @@ export function buildGraph(profiles: EntityProfile[], trackedKeys: Iterable<stri
     const cid = ensure("Company", profile.entity.key, profile.entity.name);
     for (const rel of profile.relationships) {
       if (!isEntityRelation(rel.relation)) continue;
-      // Country (`operates_in`) is a low-signal attribute shared by nearly every
-      // company; on the map it collapses into one central hub that everything
-      // links to. Geographic exposure is served better by the exposure tracer,
-      // so countries stay out of the map (they remain in typed relationship lists).
-      if (rel.other.kind === "Country") continue;
+      // Country (`operates_in`) and Industry (`in_sector`) are low-signal hubs
+      // shared by many companies; on the map they collapse into one central node
+      // everything links to. They stay out of the map (kept in typed relationship
+      // lists); cross-company structure comes from the company↔company edges.
+      if (rel.other.kind === "Country" || rel.other.kind === "Industry") continue;
       const oid = ensure(rel.other.kind, rel.other.key, rel.other.name);
       const [a, b] = [cid, oid].sort();
       const ek = `${a}|${b}|${rel.relation}`;
@@ -106,6 +116,7 @@ export function useRelGraph() {
   return useAsync<LoadedGraph>(async () => {
     const companies = await api.companies();
     const trackedKeys = new Set(companies.map((c) => c.slug));
+    const sectorBySlug = new Map(companies.map((c) => [c.slug, c.industry ?? ""]));
     const loaded = await Promise.all(companies.map((c) => api.entity("Company", c.slug).catch(() => null)));
     const profiles = new Map<string, EntityProfile>();
     let failed = 0;
@@ -114,7 +125,7 @@ export function useRelGraph() {
       if (p) profiles.set(c.slug, p);
       else failed += 1;
     });
-    const graph = buildGraph([...profiles.values()], trackedKeys);
+    const graph = buildGraph([...profiles.values()], trackedKeys, sectorBySlug);
     return { graph, trackedKeys, companies, profiles, failed };
   }, []);
 }
@@ -152,7 +163,7 @@ interface Pt {
   y: number;
 }
 
-type Mode = "core" | "full" | "ego";
+export type Mode = "core" | "full" | "ego";
 
 interface Dims {
   w: number;
@@ -181,14 +192,79 @@ function dimsFor(mode: Mode): Dims {
   return { w, h, cx: w / 2, cy: h / 2, Rc: 172, leafR: 0 };
 }
 
-interface Layout {
+export interface Layout {
   pos: Map<string, Pt>;
   visible: Set<string>;
   w: number;
   h: number;
+  sectorLabels: SectorLabel[];
 }
 
-function computeLayout(graph: RelGraph, mode: Mode, focusKey?: string): Layout {
+export interface SectorLabel {
+  label: string;
+  x: number;
+  y: number;
+}
+
+/** Place tracked companies on the ring, grouped into adjacent sector arcs with a
+ *  gap between sectors, so same-sector companies cluster. Returns a label anchor
+ *  per sector (at the arc midpoint, just outside the ring). Deterministic; with
+ *  one sector (or no sector data) it degrades to a plain evenly-spaced ring. */
+function placeTrackedRing(
+  tracked: GNode[],
+  pos: Map<string, Pt>,
+  visible: Set<string>,
+  cx: number,
+  cy: number,
+  Rc: number,
+): SectorLabel[] {
+  const groups = new Map<string, GNode[]>();
+  for (const n of tracked) {
+    const sec = coarseSector(n.sector);
+    (groups.get(sec) ?? groups.set(sec, []).get(sec)!).push(n);
+  }
+  const sectors = [...groups.keys()].sort();
+  const GAP = 1.4; // inter-sector gap, in company-slot units
+  type Slot = { node?: GNode; sector?: string; w: number };
+  const seq: Slot[] = [];
+  let total = 0;
+  sectors.forEach((sec, gi) => {
+    if (gi > 0) {
+      seq.push({ w: GAP });
+      total += GAP;
+    }
+    for (const n of groups.get(sec)!.slice().sort((a, b) => a.key.localeCompare(b.key))) {
+      seq.push({ node: n, sector: sec, w: 1 });
+      total += 1;
+    }
+  });
+  if (sectors.length > 1) {
+    seq.push({ w: GAP }); // close the ring with a gap between last and first sector
+    total += GAP;
+  }
+  total = Math.max(total, 1);
+  const sectorAngles = new Map<string, number[]>();
+  let acc = 0;
+  for (const slot of seq) {
+    if (slot.node) {
+      const ang = -Math.PI / 2 + ((acc + slot.w / 2) / total) * 2 * Math.PI;
+      pos.set(slot.node.id, { x: cx + Rc * Math.cos(ang), y: cy + Rc * Math.sin(ang) });
+      visible.add(slot.node.id);
+      (sectorAngles.get(slot.sector!) ?? sectorAngles.set(slot.sector!, []).get(slot.sector!)!).push(ang);
+    }
+    acc += slot.w;
+  }
+  if (sectors.length <= 1) return [];
+  const Rlabel = Rc + 54;
+  const labels: SectorLabel[] = [];
+  for (const [sec, angs] of sectorAngles) {
+    const mid = angs.reduce((s, a) => s + a, 0) / angs.length;
+    labels.push({ label: sec, x: cx + Rlabel * Math.cos(mid), y: cy + Rlabel * Math.sin(mid) });
+  }
+  return labels;
+}
+
+export function computeLayout(graph: RelGraph, mode: Mode, focusKey?: string): Layout {
   const { w, h, cx, cy, Rc, leafR } = dimsFor(mode);
   const pos = new Map<string, Pt>();
   const visible = new Set<string>();
@@ -212,16 +288,11 @@ function computeLayout(graph: RelGraph, mode: Mode, focusKey?: string): Layout {
       pos.set(id, { x: cx + Rc * Math.cos(ang), y: cy + Rc * Math.sin(ang) });
       visible.add(id);
     });
-    return { pos, visible, w, h };
+    return { pos, visible, w, h, sectorLabels: [] };
   }
 
-  const trackedNodes = graph.nodes.filter((n) => n.tracked).sort((a, b) => a.key.localeCompare(b.key));
-  const N = Math.max(trackedNodes.length, 1);
-  trackedNodes.forEach((n, i) => {
-    const ang = -Math.PI / 2 + (i * 2 * Math.PI) / N;
-    pos.set(n.id, { x: cx + Rc * Math.cos(ang), y: cy + Rc * Math.sin(ang) });
-    visible.add(n.id);
-  });
+  const trackedNodes = graph.nodes.filter((n) => n.tracked);
+  const sectorLabels = placeTrackedRing(trackedNodes, pos, visible, cx, cy, Rc);
 
   const isShown = (n: GNode) =>
     n.tracked || (mode === "full" ? n.bridges.length >= 1 : n.bridges.length >= 2);
@@ -287,7 +358,7 @@ function computeLayout(graph: RelGraph, mode: Mode, focusKey?: string): Layout {
   const anchors = trackedNodes.map((n) => pos.get(n.id)!);
   relax(bridgePts, anchors, w, h);
 
-  return { pos, visible, w, h };
+  return { pos, visible, w, h, sectorLabels };
 }
 
 const MARGIN = 60;
@@ -520,7 +591,7 @@ export function RelationMap({
 }
 
 /** Pick the visual tier for a satellite node from its strongest incident edge. */
-function bridgeTier(n: GNode, edges: GEdge[]): RelationTier {
+export function bridgeTier(n: GNode, edges: GEdge[]): RelationTier {
   if (n.tracked) return "control";
   const order: RelationTier[] = ["control", "proxy", "supply", "alliance", "peer", "product", "mention"];
   let best: RelationTier = "product";

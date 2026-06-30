@@ -16,6 +16,7 @@ export type RelationTier =
   | "alliance" // partner / customer
   | "peer" // rivalry
   | "product" // builds / uses
+  | "reference" // extracted at scale from filings: co-mention, shared sector
   | "mention";
 
 interface RelationMeta {
@@ -36,6 +37,10 @@ const RELATIONS: Record<string, RelationMeta> = {
   uses_technology: { tier: "product", verb: "uses" },
   engaged_with: { tier: "proxy", verb: "engaged with" },
   mentions: { tier: "mention", verb: "mentions" },
+  // Extracted at scale from filings (provenance: the filing). references = company
+  // A names company B; in_sector = SEC SIC classification.
+  references: { tier: "reference", verb: "names in filings" },
+  in_sector: { tier: "reference", verb: "in sector" },
 };
 
 const FALLBACK: RelationMeta = { tier: "peer", verb: "" };
@@ -55,6 +60,8 @@ const ENTITY_RELATIONS = new Set([
   "produces",
   "uses_technology",
   "engaged_with",
+  "references",
+  "in_sector",
 ]);
 
 export function isEntityRelation(relation: string): boolean {
@@ -88,6 +95,7 @@ export const TIERS: TierInfo[] = [
   { tier: "alliance", label: "Alliance", hint: "Partner or customer" },
   { tier: "peer", label: "Rivalry", hint: "Named competitor" },
   { tier: "product", label: "Product / tech", hint: "Builds or uses" },
+  { tier: "reference", label: "Co-mention", hint: "Extracted from filings: names each other, or shared SIC sector" },
 ];
 
 const TIER_LABELS: Record<RelationTier, string> = {
@@ -97,6 +105,7 @@ const TIER_LABELS: Record<RelationTier, string> = {
   alliance: "Alliance",
   peer: "Rivalry",
   product: "Product / tech",
+  reference: "Co-mention",
   mention: "Mention",
 };
 
@@ -113,9 +122,30 @@ const KIND_GLYPHS: Record<string, string> = {
   Product: "▰",
   Technology: "⚙",
   Agency: "▣",
+  Industry: "❖",
   Document: "▦",
 };
 
 export function kindGlyph(kind: string): string {
   return KIND_GLYPHS[kind] ?? "•";
+}
+
+// Map a granular SEC SIC industry description to a coarse sector, so companies
+// cluster into readable groups on the canvas (exact SIC is mostly singletons).
+// Order matters — earlier rules win.
+const SECTOR_RULES: Array<[RegExp, string]> = [
+  [/pharmaceut|biological|medical|hospital|health|surgical|diagnostic/, "Health"],
+  [/bank|financ|insurance|broker|casualty|securit/, "Financials"],
+  [/software|comput|semiconduct|communications equip|electronic|information|internet/, "Technology"],
+  [/petroleum|oil|gas|energy|refin|coal|drilling/, "Energy"],
+  [/telephone|telecom|wireless|broadcast/, "Telecom"],
+  [/retail/, "Retail"],
+  [/aircraft|machinery|construction|industrial|engine|aerospace|defense/, "Industrials"],
+  [/beverage|food|soap|detergent|cosmetic|footwear|apparel|tobacco|household|amusement|recreation|motion picture|entertain/, "Consumer"],
+];
+
+export function coarseSector(industry: string | null | undefined): string {
+  const s = (industry || "").toLowerCase();
+  for (const [re, sector] of SECTOR_RULES) if (re.test(s)) return sector;
+  return "Other";
 }

@@ -967,6 +967,9 @@ input.input:focus {
   --t-alliance: #4bd6a0;
   --t-peer: #8793a5;
   --t-product: #707d8f;
+  /* Extracted-at-scale relations (co-mention, sector) — a calm cyan that reads as
+     "machine-derived" and stays clear of indigo (control) and amber (provenance). */
+  --t-reference: #6aa9bd;
   --t-mention: #5a6473;
 }
 
@@ -976,6 +979,7 @@ input.input:focus {
 .tier-alliance { --tc: var(--t-alliance); }
 .tier-peer { --tc: var(--t-peer); }
 .tier-product { --tc: var(--t-product); }
+.tier-reference { --tc: var(--t-reference); }
 .tier-mention { --tc: var(--t-mention); }
 
 .sr-only {
@@ -1111,9 +1115,17 @@ input.input:focus {
   stroke-dasharray: 1 5;
   stroke-linecap: round;
 }
+.redge.tier-reference {
+  stroke-dasharray: 2 4;
+}
 .redge.dim {
   opacity: 0.12;
   stroke-width: 1;
+}
+/* A traced path lights its edges full-strength over the dimmed field. */
+.redge.path {
+  opacity: 1;
+  stroke-width: 2.8;
 }
 
 .rnode {
@@ -1135,7 +1147,8 @@ input.input:focus {
 }
 .rnode:hover .rnode-disc,
 .rnode:focus-visible .rnode-disc,
-.rnode.picked .rnode-disc {
+.rnode.picked .rnode-disc,
+.rnode.path .rnode-disc {
   stroke-width: 3.4;
   filter: drop-shadow(0 0 9px var(--tc));
 }
@@ -1162,6 +1175,23 @@ input.input:focus {
 .rnode.tracked .rnode-glyph {
   fill: var(--accent);
 }
+/* Quiet ledger notch — a static count of material change-lines on a tracked
+   node. Indigo accent (change-presence), never amber (provenance) or red (risk).
+   No animation: reduced-motion-correct by construction. */
+.rnode-change-dot {
+  fill: var(--bg-elev);
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+.rnode-change-n {
+  fill: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+  text-anchor: middle;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
 .rnode-label-bg {
   fill: var(--bg);
   opacity: 0.72;
@@ -1206,6 +1236,9 @@ input.input:focus {
 }
 .relmap-swatch.tier-alliance {
   background: repeating-linear-gradient(90deg, var(--tc) 0 2px, transparent 2px 5px);
+}
+.relmap-swatch.tier-reference {
+  background: repeating-linear-gradient(90deg, var(--tc) 0 2px, transparent 2px 6px);
 }
 
 .relmap-caption {
@@ -1597,5 +1630,370 @@ input.input:focus {
   .rnode,
   .rnode-disc {
     transition: none;
+  }
+}
+
+/* ============================================================================
+   Atlas — the spatial spine. A full-bleed, camera-driven canvas of the
+   knowledge graph with an evidence rail. Reuses the relation visual-language
+   (.rnode / .redge / tier-*) and the existing tokens; adds only the shell.
+   ========================================================================== */
+
+:root {
+  --topbar-h: 58px;
+  --rail-w: 360px;
+}
+
+/* The Atlas route opts out of the centered, padded content column so the
+   canvas can fill the viewport. Only applied on /atlas (see App.tsx). */
+.content-full {
+  padding: 0;
+  max-width: none;
+  height: calc(100vh - var(--topbar-h));
+  overflow: hidden;
+}
+
+.atlas {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+}
+
+.atlas-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(90% 70% at 50% 0%, rgba(124, 140, 255, 0.07), transparent 60%),
+    var(--bg);
+}
+
+.atlas-loading {
+  display: grid;
+  place-items: center;
+  height: 100%;
+}
+
+/* Canvas ----------------------------------------------------------------- */
+.spatial {
+  position: absolute;
+  inset: 0;
+  outline: none;
+  cursor: grab;
+  touch-action: none; /* the camera owns pan/zoom gestures */
+}
+.spatial.panning {
+  cursor: grabbing;
+}
+.spatial:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent-border);
+}
+.spatial-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.spatial-sector-label {
+  fill: var(--text-faint);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.spatial-controls {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.spatial-btn {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--text-muted);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.13s ease, color 0.13s ease, border-color 0.13s ease;
+}
+.spatial-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.spatial-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.spatial-hint {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  z-index: 3;
+  padding: 5px 11px;
+  border-radius: var(--radius-pill);
+  background: rgba(9, 11, 15, 0.7);
+  border: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: 12px;
+  pointer-events: none;
+  backdrop-filter: blur(6px);
+}
+
+/* Header overlay (informational; lets drags pass through empty areas) ----- */
+.atlas-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  padding: 18px 22px 26px;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(9, 11, 15, 0.92) 0%, rgba(9, 11, 15, 0.55) 55%, transparent 100%);
+}
+.atlas-title h1 {
+  font-size: 20px;
+  margin-top: 5px;
+}
+.atlas-meta,
+.atlas-legend,
+.atlas-note {
+  pointer-events: auto;
+}
+.atlas-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.atlas-legend {
+  width: 100%;
+  margin-top: 2px;
+}
+.atlas-note {
+  width: 100%;
+}
+
+/* Evidence rail ---------------------------------------------------------- */
+.evidence-rail {
+  flex: none;
+  width: var(--rail-w);
+  height: 100%;
+  overflow-y: auto;
+  border-left: 1px solid var(--border);
+  background: var(--bg-elev);
+  padding: 18px 18px 36px;
+  animation: rail-in 0.16s ease-out;
+}
+@keyframes rail-in {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.rail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.rail-kind {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+}
+.rail-name {
+  font-size: 19px;
+  margin-top: 4px;
+}
+.rail-close {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.13s ease, color 0.13s ease;
+}
+.rail-close:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.rail-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+}
+.rail-actions .btn {
+  width: 100%;
+  justify-content: center;
+}
+.rail-expand-note {
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-faint);
+}
+.rail-section {
+  margin-top: 18px;
+}
+.rail-splitbar {
+  height: 6px;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  display: flex;
+  background: var(--bg-elev-2);
+}
+.rail-clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Pathfinding: pick banner + the traced chain in the rail. */
+.atlas-pickbanner {
+  position: absolute;
+  top: 86px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  padding: 8px 14px;
+  border-radius: var(--radius-pill);
+  background: rgba(17, 20, 26, 0.92);
+  border: 1px solid var(--accent-border);
+  box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow);
+  color: var(--text);
+  font-size: 13px;
+  white-space: nowrap;
+  backdrop-filter: blur(8px);
+}
+.atlas-pickbanner kbd {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-strong);
+}
+
+.path-chain {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.path-node {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding: 8px 11px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+}
+.path-glyph {
+  color: var(--accent);
+}
+.path-nm {
+  font-weight: 600;
+  color: var(--text);
+}
+.path-knd {
+  margin-left: auto;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+/* The connector segment: relation verb on a short rail between two nodes. The
+   rail lives on .path-step (NOT on .path-rel) so the verb chip keeps its own
+   ::before tier-colour dot from .relchip. */
+.path-step {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.path-step::before {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 0;
+  height: 22px;
+  width: 1px;
+  background: var(--border-strong);
+}
+.path-rel {
+  align-self: flex-start;
+  margin: 7px 0 7px 18px;
+}
+.rail-section-head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  margin-bottom: 10px;
+}
+.rail-prov {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-faint);
+}
+
+@media (max-width: 720px) {
+  .content-full {
+    height: auto;
+    overflow: visible;
+  }
+  .atlas {
+    flex-direction: column;
+    height: auto;
+  }
+  .atlas-stage {
+    height: 70vh;
+  }
+  .evidence-rail {
+    width: 100%;
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .evidence-rail {
+    animation: none;
   }
 }

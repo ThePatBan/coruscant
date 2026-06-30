@@ -4,6 +4,7 @@ import { api, NOTIFICATIONS_EVENT } from "./api";
 import { useAuth } from "./auth";
 import { useAsync } from "./hooks";
 import { AlertsPage } from "./pages/AlertsPage";
+import { AtlasPage } from "./pages/AtlasPage";
 import { AskPage } from "./pages/AskPage";
 import { CompaniesPage } from "./pages/CompaniesPage";
 import { CompanyDetailPage } from "./pages/CompanyDetailPage";
@@ -22,6 +23,7 @@ import { WatchlistsPage } from "./pages/WatchlistsPage";
 import { WorkspacesPage } from "./pages/WorkspacesPage";
 
 const NAV = [
+  { to: "/atlas", label: "Atlas", icon: "✦" },
   { to: "/dashboard", label: "Dashboard", icon: "◧" },
   { to: "/search", label: "Search", icon: "⌕" },
   { to: "/companies", label: "Companies", icon: "▤" },
@@ -38,6 +40,7 @@ const NAV = [
 ];
 
 const CRUMBS: Array<[RegExp, string]> = [
+  [/^\/atlas/, "Atlas"],
   [/^\/dashboard/, "Dashboard"],
   [/^\/search/, "Search the evidence"],
   [/^\/companies\/.+/, "Company"],
@@ -117,11 +120,14 @@ function ProtectedLayout() {
   }
 
   const crumb = CRUMBS.find(([re]) => re.test(location.pathname))?.[1] ?? "";
+  // Atlas is a full-bleed spatial surface: it opts out of the centered, padded
+  // content column so the canvas fills the viewport.
+  const fullBleed = /^\/atlas/.test(location.pathname);
 
   return (
     <div className="app">
       <aside className="sidebar">
-        <NavLink to="/dashboard" className="brand">
+        <NavLink to="/atlas" className="brand">
           <div className="logo" />
           <div>
             <div className="name">Coruscant</div>
@@ -158,7 +164,7 @@ function ProtectedLayout() {
             </button>
           </div>
         </header>
-        <div className="content">
+        <div className={fullBleed ? "content content-full" : "content"}>
           <Outlet />
         </div>
       </main>
@@ -172,6 +178,7 @@ export default function App() {
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route element={<ProtectedLayout />}>
+        <Route path="/atlas" element={<AtlasPage />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/search" element={<AskPage />} />
         <Route path="/companies" element={<CompaniesPage />} />
