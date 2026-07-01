@@ -1,8 +1,12 @@
 """JSON snapshot persistence for the in-memory knowledge graph.
 
-The MVP graph is rebuilt on every ingestion run and snapshotted to disk so the
-API can load it without re-running ingestion. Neo4j (see ADR-0001) is the
-intended production backend behind the same :class:`KnowledgeGraphStore` port.
+The graph is rebuilt on every ingestion run and snapshotted to disk (this JSON) so
+the API can load it without re-running ingestion. The JSON is also the portable,
+backend-neutral form the serving Kùzu store is materialized from — see
+:func:`coruscant.apps.runtime.load_graph_store` and
+:class:`coruscant.knowledge_graph.kuzu_store.KuzuKnowledgeGraphStore` (and ADR-0001
+for the Kùzu-now / Neo4j-later store decision). Both stay behind the same
+:class:`KnowledgeGraphStore` port.
 """
 
 from __future__ import annotations

@@ -47,8 +47,10 @@ from coruscant.intelligence.reliability import (
     score_source,
 )
 from coruscant.knowledge_graph.extraction import extract_relationships
+from coruscant.knowledge_graph.kuzu_store import KuzuKnowledgeGraphStore
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 from coruscant.knowledge_graph.persistence import load_graph, save_graph
+from coruscant.knowledge_graph.store import KnowledgeGraphStore
 from coruscant.enterprise.api_keys import SqliteApiKeyStore
 from coruscant.enterprise.audit import SqliteAuditStore
 from coruscant.infrastructure.dead_letter import SqliteDeadLetterStore
@@ -402,6 +404,16 @@ def load_engine(settings: Settings | None = None) -> HybridRetrievalEngine:
     return engine
 
 
-def load_graph_store(settings: Settings | None = None) -> InMemoryKnowledgeGraphStore:
+def load_graph_store(settings: Settings | None = None) -> KnowledgeGraphStore:
+    """Open the graph store for the serving/query path, per settings.graph_backend.
+
+    "kuzu" returns a read-only Kùzu store materialized from the JSON snapshot
+    (rebuilt only when the snapshot is newer); "memory" returns the in-process
+    prototype loaded straight from JSON. Ingestion is unaffected — it always
+    projects into the in-memory store and writes the JSON snapshot."""
     settings = settings or get_settings()
+    if settings.graph_backend == "kuzu":
+        return KuzuKnowledgeGraphStore.open_synced(
+            str(settings.graph_kuzu_path), settings.graph_snapshot_path
+        )
     return load_graph(settings.graph_snapshot_path)

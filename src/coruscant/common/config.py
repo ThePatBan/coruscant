@@ -95,6 +95,13 @@ class Settings(BaseSettings):
     config_dir: Path = Path("config")
     database_url: str = "sqlite:///data/coruscant.db"
     neo4j_url: str | None = None
+    # Graph-store backend for the SERVING/query path (the exposure engine + API).
+    # "kuzu" (default): an embedded, disk-based, Cypher-native graph DB built from
+    # the JSON snapshot — the scalable store and the Cypher on-ramp to a future
+    # Neo4j/Neptune. "memory": the in-process JSON-over-dict prototype, kept as the
+    # lightweight test double and golden-parity comparator. Ingestion always
+    # materializes the JSON snapshot regardless of backend.
+    graph_backend: str = "kuzu"
     edgar_user_agent: str = "Coruscant/0.1.0 contact@coruscant.local"
     # Sources that use their live (network) connector instead of the offline
     # reference connector. Empty by default so dev/test stays fully offline. In
@@ -137,6 +144,11 @@ class Settings(BaseSettings):
     @property
     def graph_snapshot_path(self) -> Path:
         return self.data_dir / "graph" / "graph.json"
+
+    @property
+    def graph_kuzu_path(self) -> Path:
+        """On-disk Kùzu database file (materialized from the JSON snapshot)."""
+        return self.data_dir / "graph" / "graph.kz"
 
     @property
     def status_path(self) -> Path:

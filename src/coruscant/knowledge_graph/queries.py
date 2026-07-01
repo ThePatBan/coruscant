@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from coruscant.common.types import GraphEdge
 from coruscant.knowledge_graph.entities import entity_key
-from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
+from coruscant.knowledge_graph.store import KnowledgeGraphStore
 
 
 class EntityRef(BaseModel):
@@ -145,7 +145,7 @@ class CoExecutiveResult(BaseModel):
     multi_company_people: list[BridgePerson] = []
 
 
-def _name(store: InMemoryKnowledgeGraphStore, kind: str, key: str) -> str:
+def _name(store: KnowledgeGraphStore, kind: str, key: str) -> str:
     node = store.get_node(kind, key)
     if node is not None:
         value = node.properties.get("name")
@@ -154,7 +154,7 @@ def _name(store: InMemoryKnowledgeGraphStore, kind: str, key: str) -> str:
     return key
 
 
-def _ref(store: InMemoryKnowledgeGraphStore, kind: str, key: str) -> EntityRef:
+def _ref(store: KnowledgeGraphStore, kind: str, key: str) -> EntityRef:
     return EntityRef(kind=kind, key=key, name=_name(store, kind, key))
 
 
@@ -191,7 +191,7 @@ def _detail_of(properties: dict[str, object]) -> str | None:
     return None
 
 
-def entity_profile(store: InMemoryKnowledgeGraphStore, kind: str, key: str) -> EntityProfile | None:
+def entity_profile(store: KnowledgeGraphStore, kind: str, key: str) -> EntityProfile | None:
     node = store.get_node(kind, key)
     if node is None:
         return None
@@ -230,16 +230,16 @@ def entity_profile(store: InMemoryKnowledgeGraphStore, kind: str, key: str) -> E
     )
 
 
-def list_entities(store: InMemoryKnowledgeGraphStore, kind: str | None = None) -> list[EntityRef]:
+def list_entities(store: KnowledgeGraphStore, kind: str | None = None) -> list[EntityRef]:
     refs = [
         EntityRef(kind=node.kind, key=node.key, name=_name(store, node.kind, node.key))
-        for node in store.nodes.values()
+        for node in store.all_nodes()
         if kind is None or node.kind == kind
     ]
     return sorted(refs, key=lambda r: (r.kind, r.name))
 
 
-def exposure_to_country(store: InMemoryKnowledgeGraphStore, country: str) -> ExposureResult:
+def exposure_to_country(store: KnowledgeGraphStore, country: str) -> ExposureResult:
     country_key = entity_key(country)
     result = ExposureResult(country=_name(store, "Country", country_key))
     # Entities that operate in the country (incoming operates_in edges).
@@ -262,7 +262,7 @@ def exposure_to_country(store: InMemoryKnowledgeGraphStore, country: str) -> Exp
     return result
 
 
-def list_jurisdictions(store: InMemoryKnowledgeGraphStore) -> list[JurisdictionCount]:
+def list_jurisdictions(store: KnowledgeGraphStore) -> list[JurisdictionCount]:
     """Jurisdictions where companies hold subsidiaries, by exposed-company count —
     the menu of "events" the exposure demo can fire on."""
     companies_by_juris: dict[str, set[str]] = {}
@@ -278,7 +278,7 @@ def list_jurisdictions(store: InMemoryKnowledgeGraphStore) -> list[JurisdictionC
 
 
 def jurisdiction_exposure(
-    store: InMemoryKnowledgeGraphStore, jurisdiction: str
+    store: KnowledgeGraphStore, jurisdiction: str
 ) -> JurisdictionExposure:
     """Who is exposed to an event in `jurisdiction`, on today's evidence.
 
@@ -330,7 +330,7 @@ def jurisdiction_exposure(
 _GICS_LEVELS = ("sector", "industry_group", "industry", "sub_industry")
 
 
-def _sector_of(store: InMemoryKnowledgeGraphStore, edge: GraphEdge) -> str:
+def _sector_of(store: KnowledgeGraphStore, edge: GraphEdge) -> str:
     """The GICS sector an `in_sector` edge rolls up to: the curated `sector`
     property, falling back to the target node's name (the SIC fallback case)."""
     sector = _str_prop(edge.properties, "sector")
@@ -339,7 +339,7 @@ def _sector_of(store: InMemoryKnowledgeGraphStore, edge: GraphEdge) -> str:
     return _name(store, edge.target_kind, edge.target_key).strip()
 
 
-def _classification_terms(store: InMemoryKnowledgeGraphStore, edge: GraphEdge) -> set[str]:
+def _classification_terms(store: KnowledgeGraphStore, edge: GraphEdge) -> set[str]:
     """Every taxonomy term an `in_sector` edge can be matched against, lowercased:
     each GICS level name, the 8-digit code, and the target node name (so an
     uncurated SIC fallback still matches by its raw label)."""
@@ -354,7 +354,7 @@ def _classification_terms(store: InMemoryKnowledgeGraphStore, edge: GraphEdge) -
     return terms
 
 
-def list_sectors(store: InMemoryKnowledgeGraphStore) -> list[SectorCount]:
+def list_sectors(store: KnowledgeGraphStore) -> list[SectorCount]:
     """GICS sectors with their company counts — the headline thematic menu. Reads
     the curated `sector` off each `in_sector` edge (or the target node name for an
     uncurated SIC fallback)."""
@@ -370,7 +370,7 @@ def list_sectors(store: InMemoryKnowledgeGraphStore) -> list[SectorCount]:
     return sorted(counts, key=lambda c: (-c.companies, c.sector))
 
 
-def gics_breakdown(store: InMemoryKnowledgeGraphStore) -> list[GicsSector]:
+def gics_breakdown(store: KnowledgeGraphStore) -> list[GicsSector]:
     """The portfolio's GICS composition as a sector -> sub-industry -> holdings
     tree, drillable on the World tab. Ordered by company count, descending."""
     # sector -> sub_industry -> (industry, code, {company keys})
@@ -403,7 +403,7 @@ def gics_breakdown(store: InMemoryKnowledgeGraphStore) -> list[GicsSector]:
     return sectors
 
 
-def sector_exposure(store: InMemoryKnowledgeGraphStore, sector: str) -> SectorExposure:
+def sector_exposure(store: KnowledgeGraphStore, sector: str) -> SectorExposure:
     """Thematic exposure to an event on a GICS level `sector` — a sector
     (Information Technology), an industry group, an industry, or a sub-industry
     (Semiconductors), matched at whatever level the term names. Returns the
@@ -446,7 +446,7 @@ def sector_exposure(store: InMemoryKnowledgeGraphStore, sector: str) -> SectorEx
 _TIER_ORDER = {"DM": 0, "EM": 1, "FM": 2}
 
 
-def _tier_code(store: InMemoryKnowledgeGraphStore, key: str) -> str:
+def _tier_code(store: KnowledgeGraphStore, key: str) -> str:
     node = store.get_node("MarketTier", key)
     if node is not None:
         code = node.properties.get("code")
@@ -455,7 +455,7 @@ def _tier_code(store: InMemoryKnowledgeGraphStore, key: str) -> str:
     return key.upper()
 
 
-def list_market_tiers(store: InMemoryKnowledgeGraphStore) -> list[MarketTierCount]:
+def list_market_tiers(store: KnowledgeGraphStore) -> list[MarketTierCount]:
     """The portfolio's MSCI Developed/Emerging/Frontier composition, by company
     count — the "you're X% EM" breakdown. Ordered DM -> EM -> FM."""
     companies_by_tier: dict[str, set[str]] = {}
@@ -472,7 +472,7 @@ def list_market_tiers(store: InMemoryKnowledgeGraphStore) -> list[MarketTierCoun
     return sorted(counts, key=lambda c: (_TIER_ORDER.get(c.tier, 9), c.tier))
 
 
-def market_tier_exposure(store: InMemoryKnowledgeGraphStore, tier: str) -> MarketTierExposure:
+def market_tier_exposure(store: KnowledgeGraphStore, tier: str) -> MarketTierExposure:
     """The holdings classified in MSCI market tier `tier` (a code like "EM" or a
     node key like "em"). An empty result is a real answer — no Frontier exposure
     is itself the insight."""
@@ -523,12 +523,12 @@ class CommodityExposure(BaseModel):
     holdings: list[EntityRef] = []  # equities in the affected sectors
 
 
-def _companies_in_sector(store: InMemoryKnowledgeGraphStore, sector: str) -> set[str]:
+def _companies_in_sector(store: KnowledgeGraphStore, sector: str) -> set[str]:
     target = sector.strip().lower()
     return {edge.source_key for edge in store.edges_by_relation("in_sector") if _sector_of(store, edge).lower() == target}
 
 
-def _affected_sectors(store: InMemoryKnowledgeGraphStore, commodity_key: str) -> list[str]:
+def _affected_sectors(store: KnowledgeGraphStore, commodity_key: str) -> list[str]:
     sectors: list[str] = []
     for edge in store.outgoing("Commodity", commodity_key):
         if edge.relation == "affects_sector":
@@ -536,7 +536,7 @@ def _affected_sectors(store: InMemoryKnowledgeGraphStore, commodity_key: str) ->
     return sectors
 
 
-def list_commodities(store: InMemoryKnowledgeGraphStore) -> list[CommodityRef]:
+def list_commodities(store: KnowledgeGraphStore) -> list[CommodityRef]:
     """The commodity inventory, with the GICS sectors each drives."""
     refs: list[CommodityRef] = []
     for node in store.nodes_of_kind("Commodity"):
@@ -552,7 +552,7 @@ def list_commodities(store: InMemoryKnowledgeGraphStore) -> list[CommodityRef]:
     return sorted(refs, key=lambda r: (r.category, r.name))
 
 
-def list_debt_instruments(store: InMemoryKnowledgeGraphStore) -> list[DebtRef]:
+def list_debt_instruments(store: KnowledgeGraphStore) -> list[DebtRef]:
     """The debt inventory, with each instrument's issuer country."""
     refs: list[DebtRef] = []
     for node in store.nodes_of_kind("DebtInstrument"):
@@ -568,7 +568,7 @@ def list_debt_instruments(store: InMemoryKnowledgeGraphStore) -> list[DebtRef]:
     return sorted(refs, key=lambda r: (r.issuer_country, r.name))
 
 
-def commodity_exposure(store: InMemoryKnowledgeGraphStore, commodity: str) -> CommodityExposure:
+def commodity_exposure(store: KnowledgeGraphStore, commodity: str) -> CommodityExposure:
     """Who is exposed to an event on `commodity` (slug or name): the equity
     holdings in the GICS sectors it drives. An empty result is a real answer."""
     target = commodity.strip().lower()
@@ -593,7 +593,7 @@ def commodity_exposure(store: InMemoryKnowledgeGraphStore, commodity: str) -> Co
     )
 
 
-def debt_for_country(store: InMemoryKnowledgeGraphStore, country: str) -> list[DebtRef]:
+def debt_for_country(store: KnowledgeGraphStore, country: str) -> list[DebtRef]:
     """Debt instruments issued by `country` — the debt side of a country event."""
     country_key = entity_key(country)
     refs: list[DebtRef] = []
@@ -616,7 +616,7 @@ def debt_for_country(store: InMemoryKnowledgeGraphStore, country: str) -> list[D
 
 
 def company_country_exposures(
-    store: InMemoryKnowledgeGraphStore, company_key: str
+    store: KnowledgeGraphStore, company_key: str
 ) -> list[tuple[str, str]]:
     """(country name, supplier name) the company is exposed to via its suppliers."""
 
@@ -632,7 +632,7 @@ def company_country_exposures(
     return exposures
 
 
-def co_executives(store: InMemoryKnowledgeGraphStore) -> CoExecutiveResult:
+def co_executives(store: KnowledgeGraphStore) -> CoExecutiveResult:
     # Build company -> people and person -> companies from employs / previously_at.
     company_people: dict[str, set[str]] = {}
     person_companies: dict[str, set[str]] = {}

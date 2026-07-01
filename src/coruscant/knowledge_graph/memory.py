@@ -54,25 +54,22 @@ class InMemoryKnowledgeGraphStore(KnowledgeGraphStore):
     def edges_by_relation(self, relation: str) -> list[GraphEdge]:
         return [edge for edge in self.edges if edge.relation == relation]
 
-    def neighbors(self, kind: str, key: str) -> list[tuple[GraphEdge, GraphNode | None]]:
-        return [
-            (edge, self.nodes.get((edge.target_kind, edge.target_key)))
-            for edge in self.outgoing(kind, key)
-        ]
+    def all_nodes(self) -> list[GraphNode]:
+        return list(self.nodes.values())
 
-    def neighbors_in(self, kind: str, key: str) -> list[tuple[GraphEdge, GraphNode | None]]:
-        return [
-            (edge, self.nodes.get((edge.source_kind, edge.source_key)))
-            for edge in self.incoming(kind, key)
-        ]
+    def all_edges(self) -> list[GraphEdge]:
+        return list(self.edges)
+
+    def node_count(self) -> int:
+        return len(self.nodes)
+
+    def edge_count(self) -> int:
+        return len(self.edges)
+
+    # `neighbors`, `neighbors_in`, and `to_dict` are inherited from the port —
+    # their default implementations already resolve through this store's dict.
 
     # -- serialization ---------------------------------------------------------
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "nodes": [node.model_dump() for node in self.nodes.values()],
-            "edges": [edge.model_dump() for edge in self.edges],
-        }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "InMemoryKnowledgeGraphStore":
