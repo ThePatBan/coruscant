@@ -93,6 +93,7 @@ from coruscant.knowledge_graph.queries import (
     market_tier_exposure,
     sector_exposure,
 )
+from coruscant.macro import CountryMacro, MacroService
 from coruscant.pricing import PortfolioPrices, PriceService, summarize
 from coruscant.search.hybrid import HybridRetrievalEngine
 from coruscant.search.reference import TemplateReasoningLayer
@@ -329,6 +330,7 @@ class _AppState:
     orgs: SqliteOrgStore | None = None
     usage: SqliteUsageStore | None = None
     prices: PriceService | None = None
+    macro: MacroService | None = None
 
 
 def _all_documents(engine: Any) -> list[NormalizedDocument]:
@@ -390,6 +392,7 @@ def create_app(
         orgs=org_store,
         usage=usage_store,
         prices=PriceService(enabled=settings.enable_live_prices),
+        macro=MacroService(enabled=settings.enable_live_macro),
     )
 
     @asynccontextmanager
@@ -843,6 +846,15 @@ def create_app(
             return summarize(holdings_meta, {}, total=len(companies), connected=False)
         quotes = service.quotes([symbol for _, _, symbol in holdings_meta])
         return summarize(holdings_meta, quotes, total=len(companies), connected=True)
+
+    @app.get("/macro", response_model=CountryMacro, dependencies=protected)
+    def country_macro(country: str) -> CountryMacro:
+        """Country macro for the World tab: World Bank GDP/inflation + the
+        benchmark-index move. Returns connected=false when the feed is off."""
+        service = state.macro
+        if service is None:
+            return CountryMacro(country=country, connected=False, note="Macro not configured.")
+        return service.country_macro(country)
 
     # ---- Watchlists & notifications ----------------------------------------
 

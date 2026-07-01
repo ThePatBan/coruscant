@@ -10,7 +10,14 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { EXCHANGES, marketStatus, localTime, TIER_LABEL, type Exchange } from "../world/exchanges";
-import { api, type GicsSector, type MarketTierCount, type PortfolioPrices } from "../api";
+import {
+  api,
+  type GicsSector,
+  type IndexQuote,
+  type MacroMetric,
+  type MarketTierCount,
+  type PortfolioPrices,
+} from "../api";
 import { useAsync } from "../hooks";
 
 // The globe pulls in three.js — lazy-load it so it lands in its own chunk (and
@@ -177,11 +184,36 @@ function PortfolioComposition({
   );
 }
 
+function MacroTile({ label, metric, connected }: { label: string; metric?: MacroMetric; connected: boolean }) {
+  const has = connected && metric && metric.value != null;
+  return (
+    <div className="ci-metric">
+      <div className="ci-metric-val">{has ? `${metric!.value!.toFixed(1)}${metric!.unit}` : "—"}</div>
+      <div className="ci-metric-label">
+        {label} {has ? <span className="muted">{metric!.period} · WB</span> : <StubBadge label="feed" />}
+      </div>
+    </div>
+  );
+}
+
+function IndexTile({ index, connected }: { index?: IndexQuote | null; connected: boolean }) {
+  const has = connected && index != null;
+  return (
+    <div className="ci-metric">
+      <div className={`ci-metric-val ${has ? (index!.change_pct >= 0 ? "up" : "down") : ""}`}>
+        {has ? signedPct(index!.change_pct) : "—"}
+      </div>
+      <div className="ci-metric-label">{has ? index!.name : <>Index today <StubBadge label="feed" /></>}</div>
+    </div>
+  );
+}
+
 function CountryInsight({ exchange, tiers }: { exchange: Exchange; tiers: MarketTierCount[] }) {
   const { data, loading, error } = useAsync(
     () => api.jurisdictionExposure(exchange.country),
     [exchange.country],
   );
+  const { data: macro } = useAsync(() => api.macro(exchange.country), [exchange.country]);
   const direct = data?.direct ?? [];
   const network = data?.network ?? [];
   const total = tiers.reduce((s, t) => s + t.companies, 0);
@@ -208,12 +240,9 @@ function CountryInsight({ exchange, tiers }: { exchange: Exchange; tiers: Market
       ) : null}
 
       <div className="ci-macro">
-        {["GDP growth", "Inflation", "Index today"].map((m) => (
-          <div key={m} className="ci-metric">
-            <div className="ci-metric-val">—</div>
-            <div className="ci-metric-label">{m} <StubBadge label="feed" /></div>
-          </div>
-        ))}
+        <MacroTile label="GDP growth" connected={!!macro?.connected} metric={macro?.metrics.find((m) => m.label === "GDP growth")} />
+        <MacroTile label="Inflation" connected={!!macro?.connected} metric={macro?.metrics.find((m) => m.label === "Inflation (CPI)")} />
+        <IndexTile connected={!!macro?.connected} index={macro?.index} />
       </div>
 
       <div className="ci-exposure">

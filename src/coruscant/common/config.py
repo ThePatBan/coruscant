@@ -77,6 +77,10 @@ class Settings(BaseSettings):
     # offline/test path never hits the network; set true to light up the World
     # tab's "since yesterday" prices.
     enable_live_prices: bool = False
+    # Live country macro (World Bank GDP/inflation + Yahoo benchmark index). OFF by
+    # default (same offline-first reason). Independent of prices — World Bank is
+    # slower/flakier, so it is gated separately.
+    enable_live_macro: bool = False
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
     # Empty by default: build_auth_service falls back to a per-process ephemeral
     # secret (never a committed constant). Set CORUSCANT_SECRET_KEY for stable,
