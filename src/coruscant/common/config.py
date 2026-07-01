@@ -81,6 +81,9 @@ class Settings(BaseSettings):
     # default (same offline-first reason). Independent of prices — World Bank is
     # slower/flakier, so it is gated separately.
     enable_live_macro: bool = False
+    # Live business-news headlines for the World tab (free GDELT DOC API, no key).
+    # OFF by default; GDELT rate-limits hard, so the service gates + caches.
+    enable_live_news: bool = False
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
     # Empty by default: build_auth_service falls back to a per-process ephemeral
     # secret (never a committed constant). Set CORUSCANT_SECRET_KEY for stable,
