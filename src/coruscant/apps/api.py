@@ -80,6 +80,8 @@ from coruscant.knowledge_graph.queries import (
     GicsSector,
     JurisdictionCount,
     JurisdictionExposure,
+    FundHoldings,
+    FundRef,
     MarketTierCount,
     MarketTierExposure,
     ResolutionOverview,
@@ -101,6 +103,8 @@ from coruscant.knowledge_graph.queries import (
     list_entities,
     list_jurisdictions,
     list_market_tiers,
+    fund_holdings,
+    list_funds,
     list_sectors,
     market_tier_exposure,
     resolution_overview,
@@ -891,6 +895,23 @@ def create_app(
         if not isinstance(graph, KnowledgeGraphStore):
             return ResolutionOverview(connected=False)
         return resolution_overview(graph, as_of=as_of)
+
+    @app.get("/graph/funds", response_model=list[FundRef], dependencies=protected)
+    def graph_funds() -> list[FundRef]:
+        """Funds whose 13F holdings have been ingested (the books events trace into)."""
+        graph = state.graph
+        if not isinstance(graph, KnowledgeGraphStore):
+            return []
+        return list_funds(graph)
+
+    @app.get("/graph/fund/{fund_key}", response_model=FundHoldings, dependencies=protected)
+    def graph_fund(fund_key: str, as_of: str | None = None) -> FundHoldings:
+        """A fund's covered holdings; optional ``as_of=YYYY-MM-DD``."""
+        graph = state.graph
+        result = fund_holdings(graph, fund_key, as_of=as_of) if isinstance(graph, KnowledgeGraphStore) else None
+        if result is None:
+            raise HTTPException(status_code=404, detail="fund not found")
+        return result
 
     @app.get("/instruments/commodities", response_model=list[CommodityRef], dependencies=protected)
     def instruments_commodities() -> list[CommodityRef]:

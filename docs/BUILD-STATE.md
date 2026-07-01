@@ -58,6 +58,15 @@ Two tabs: **`/world`** (Home/World — the exposure surface) and **`/atlas`** (t
   ("Microsoft Corp" → "MICROSOFT CORPORATION"), still core-gated so it never
   over-merges. *Live-validated:* 35/53 real companies anchored to their LEI (rest
   honestly unresolved). See ADR-0007.
+- **Portfolio front door — EDGAR 13F** (Phase 2, the holding primitive): parse a
+  13F-HR information table (`portfolio/thirteenf.py`) and project `Fund -holds->
+  Company` edges (`portfolio/holdings.py`) — issuer names resolved with the org
+  core matcher (13F names are SEC-conformed, like our nodes), multiple share-class
+  lines aggregated per company, out-of-coverage positions counted (never
+  fabricated). Edges carry provenance + access_tier + valid-time (13F period).
+  `GET /graph/funds` + `/graph/fund/{key}`, `coruscant portfolio --cik|--file`.
+  *Live-validated:* Berkshire Hathaway's 13F (90 positions) → Apple/Amex/Coca-Cola/
+  Chevron resolved into the book with real aggregated values. See ADR-0008.
 - **Taxonomy**: full GICS hierarchy (8-digit code) + MSCI DM/EM/FM, curated and
   verified against public MSCI/S&P sources.
 - **Instrument model**: commodities + debt as first-class instruments wired into
@@ -67,8 +76,9 @@ Two tabs: **`/world`** (Home/World — the exposure surface) and **`/atlas`** (t
   sector-ETF **proxy**, not the licensed MSCI index).
 - **Intelligence**: deterministic, cited change-detection / events / summaries;
   an LLM gateway + admin console (needs an API key to light up).
-- **Platform**: FastAPI API, CLI (`coruscant ingest|query|serve`), a worker for
-  scheduled ingestion, auth (JWT), watchlists, multi-tenant quotas.
+- **Platform**: FastAPI API, CLI (`coruscant ingest|query|serve|screen|anchor|
+  portfolio`), a worker for scheduled ingestion, auth (JWT), watchlists,
+  multi-tenant quotas.
 
 ## Storage (as-is)
 
@@ -93,11 +103,15 @@ Two tabs: **`/world`** (Home/World — the exposure surface) and **`/atlas`** (t
 
 ## Not built yet ❌ (say it plainly)
 
-- **Real portfolio upload** — the 53 companies are a *sample*; real upload = EDGAR
-  13F (Phase 2).
+- **User-forwarded portfolio upload** — 13F fund holdings now ingest as `holds`
+  edges (above); accepting a user's own forwarded portfolio (PDF/holdings) is the
+  remaining half of the front door.
 - **Real ownership / UBO edges** — no parent/`owns%`/beneficial-owner edge exists;
-  control is only ever an inferred, labelled proxy.
-- **PEP / sanctions** screening.
+  control is only ever an inferred, labelled proxy. (Identity is now anchored via
+  GLEIF LEI; ownership %/UBO is the next substrate — Phase 3, UK PSC first.)
+- **PEP / sanctions at scale + external serving** — the screen is built (deterministic
+  + yente sidecar); the *live* yente run + external demo await the OpenSanctions
+  license in writing.
 - **Group / UBO contagion** exposure pathway (needs the ownership substrate).
 - **Whole-exchange coverage** — only curated names; bulk SEC/Nifty/UK/Europe
   ingestion is future work. The store now scales (Kùzu serving; O(E) ingest); the
