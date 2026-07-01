@@ -1,6 +1,7 @@
 # Backend
 
-This directory is reserved for future backend services and APIs.
-
-No application code is included yet.
+The backend application code lives in **[`../src/coruscant/`](../src/coruscant/)**
+(FastAPI API, ingestion, knowledge graph + exposure engine, pricing/macro/news
+feeds, intelligence, auth, CLI, worker). This directory is a reserved placeholder;
+it holds no code.
 

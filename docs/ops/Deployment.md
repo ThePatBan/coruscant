@@ -24,8 +24,9 @@ The production overrides ([docker-compose.prod.yml](../../docker-compose.prod.ym
 - set `restart: always` on `api` and `web`.
 
 Scale-out path (documented seams, ADR-0005): point `CORUSCANT_DATABASE_URL` at
-PostgreSQL, put the graph behind Neo4j and embeddings behind pgvector, and front
-the API with multiple workers.
+PostgreSQL, put the graph behind a real graph store (vendor TBD — the current
+JSON-over-SQLite store won't scale to whole-exchange ingestion; ADR-0001), put
+embeddings behind pgvector, and front the API with multiple workers.
 
 ## Backups
 
