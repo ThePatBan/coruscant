@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { api, NOTIFICATIONS_EVENT } from "./api";
 import { useAuth } from "./auth";
@@ -27,27 +27,24 @@ import { WatchlistsPage } from "./pages/WatchlistsPage";
 import { WorkspacesPage } from "./pages/WorkspacesPage";
 import { WorldPage } from "./pages/WorldPage";
 
+// Primary nav = the design-pack product spine (World → Country → Company, plus
+// the analytical reads). Legacy surfaces are archived from the nav below.
 const NAV = [
-  { to: "/world", label: "World", icon: "◍" },
-  { to: "/country", label: "Country", icon: "⬡" },
-  { to: "/atlas", label: "Company graph", icon: "✦" },
   { to: "/dashboard", label: "Dashboard", icon: "◧" },
   { to: "/changes", label: "What changed", icon: "≢" },
-  { to: "/search", label: "Search", icon: "⌕" },
-  { to: "/companies", label: "Companies", icon: "▤" },
-  { to: "/graph", label: "Entity graph", icon: "◬" },
-  { to: "/portfolio", label: "Portfolio", icon: "▣" },
+  { to: "/world", label: "Live signals", icon: "◍" },
   { to: "/risk", label: "Risk concentration", icon: "▩" },
-  { to: "/alerts", label: "Alerts", icon: "🔔" },
-  { to: "/watchlists", label: "Watchlists", icon: "◎" },
-  { to: "/workspaces", label: "Workspaces", icon: "❏" },
-  { to: "/documents", label: "Documents", icon: "▦" },
-  { to: "/compare", label: "Compare", icon: "⇄" },
-  { to: "/sources", label: "Sources", icon: "⌥" },
-  { to: "/monitoring", label: "Monitoring", icon: "◉" },
-  { to: "/admin", label: "Admin", icon: "⌘" },
-  { to: "/settings", label: "Settings", icon: "⚙" },
+  { to: "/country", label: "Country", icon: "⬡" },
+  { to: "/atlas", label: "Company graph", icon: "✦" },
+  { to: "/search", label: "Find", icon: "⌕" },
 ];
+
+// TODO(retire): legacy surfaces superseded by the design-pack product. They stay
+// ROUTED (reachable by URL; Settings/Admin also reach via the profile menu, Alerts
+// via the bell) but are pulled from the primary nav pending final review. Archive
+// or delete these pages + routes once the new product is signed off:
+//   /companies /graph /portfolio /watchlists /workspaces /documents /compare
+//   /sources /monitoring   (+ their components under src/pages/)
 
 const CRUMBS: Array<[RegExp, string]> = [
   [/^\/world/, "World markets"],
@@ -119,9 +116,103 @@ function NotificationBell() {
   );
 }
 
+type Theme = "dark" | "light";
+
+function UserMenu({
+  email,
+  theme,
+  setTheme,
+  onLogout,
+}: {
+  email: string;
+  theme: Theme;
+  setTheme: (t: Theme) => void;
+  onLogout: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onEsc);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onEsc);
+    };
+  }, [open]);
+
+  const initials = (email.split("@")[0] || email).slice(0, 2).toUpperCase();
+
+  return (
+    <div className="usermenu" ref={ref}>
+      <button
+        className="usermenu-btn"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={email}
+      >
+        {initials}
+      </button>
+      {open ? (
+        <div className="usermenu-pop" role="menu">
+          <div className="usermenu-id">
+            <div className="usermenu-avatar">{initials}</div>
+            <div style={{ minWidth: 0 }}>
+              <div className="usermenu-email" title={email}>{email}</div>
+              <div className="usermenu-role mono">Signed in</div>
+            </div>
+          </div>
+
+          <div className="usermenu-sec">
+            <div className="usermenu-sec-l">Appearance</div>
+            <div className="segmented">
+              <button className={theme === "dark" ? "active" : ""} onClick={() => setTheme("dark")}>Dark</button>
+              <button className={theme === "light" ? "active" : ""} onClick={() => setTheme("light")}>Light</button>
+            </div>
+          </div>
+
+          <div className="usermenu-links">
+            <NavLink to="/settings" className="usermenu-item" role="menuitem" onClick={() => setOpen(false)}>
+              <span className="ico">⚙</span> Settings
+            </NavLink>
+            <NavLink to="/settings" className="usermenu-item" role="menuitem" onClick={() => setOpen(false)}>
+              <span className="ico">◈</span> Billing &amp; subscription
+            </NavLink>
+            <NavLink to="/admin" className="usermenu-item" role="menuitem" onClick={() => setOpen(false)}>
+              <span className="ico">⌘</span> Admin console
+            </NavLink>
+          </div>
+
+          <button className="usermenu-item danger" role="menuitem" onClick={onLogout}>
+            <span className="ico">⏻</span> Sign out
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ProtectedLayout() {
   const { email, ready, logout } = useAuth();
   const location = useLocation();
+  const [theme, setTheme] = useState<Theme>(() =>
+    (typeof localStorage !== "undefined" && localStorage.getItem("coruscant.theme")) === "light" ? "light" : "dark",
+  );
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      localStorage.setItem("coruscant.theme", theme);
+    } catch {
+      /* ignore */
+    }
+  }, [theme]);
 
   if (!ready) {
     return (
@@ -172,12 +263,7 @@ function ProtectedLayout() {
           <div className="stats">
             <HealthPills />
             <NotificationBell />
-            <span className="pill accent" title={email}>
-              {email}
-            </span>
-            <button className="btn ghost" onClick={logout} style={{ padding: "6px 12px" }}>
-              Sign out
-            </button>
+            <UserMenu email={email} theme={theme} setTheme={setTheme} onLogout={logout} />
           </div>
         </header>
         <div className={fullBleed ? "content content-full" : "content"}>

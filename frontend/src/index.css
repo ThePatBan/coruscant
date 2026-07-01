@@ -66,6 +66,55 @@
   --content-max: 1080px;
 }
 
+/* Light theme — a true re-theme (warm-corrected), not an inversion. Toggled from
+   the profile menu via [data-theme="light"] on <html>. Everything reads from
+   these vars, so surfaces re-theme in place. */
+[data-theme="light"] {
+  --bg: #f5f7fb;
+  --bg-elev: #ffffff;
+  --bg-elev-2: #eef1f7;
+  --bg-hover: #e7ecf4;
+  --border: #dde2ec;
+  --border-strong: #c5cdda;
+
+  --text: #1b2130;
+  --text-muted: #586173;
+  --text-faint: #8a93a4;
+
+  --accent: #4655d6;
+  --accent-strong: #3442c4;
+  --accent-soft: rgba(70, 85, 214, 0.1);
+  --accent-border: rgba(70, 85, 214, 0.28);
+
+  --evidence: #9a6a12;
+  --evidence-soft: rgba(243, 185, 77, 0.2);
+  --evidence-border: rgba(154, 106, 18, 0.38);
+
+  --good: #138a5e;
+  --danger: #d33b3b;
+
+  --proxy: #6a52c4;
+  --cat-supply: #9a5a12;
+  --cat-supply-soft: rgba(243, 150, 77, 0.16);
+  --cat-supply-border: rgba(154, 90, 18, 0.32);
+  --cat-disc: #c0392f;
+  --cat-disc-soft: rgba(211, 59, 59, 0.1);
+  --cat-disc-border: rgba(192, 57, 47, 0.3);
+  --cat-gov: #3a49b8;
+  --cat-gov-soft: rgba(70, 85, 214, 0.1);
+  --cat-gov-border: rgba(70, 85, 214, 0.28);
+  --cat-part: #0f7a52;
+  --cat-part-soft: rgba(19, 138, 94, 0.12);
+  --cat-part-border: rgba(15, 122, 82, 0.3);
+  --rel-competes: #5f6b7d;
+  --rel-country: #3f6f89;
+  --rel-tech: #6b7280;
+  --glass-bg: rgba(255, 255, 255, 0.82);
+  --glass-border: rgba(70, 85, 214, 0.18);
+
+  --shadow: 0 1px 2px rgba(30, 40, 70, 0.06), 0 8px 24px rgba(30, 40, 70, 0.08);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -4384,4 +4433,133 @@ button.changes-row.active {
   font-size: 12px;
   color: var(--text-muted);
   line-height: 1.5;
+}
+
+/* ---- Profile / user menu (top-right) ------------------------------------- */
+.usermenu {
+  position: relative;
+}
+.usermenu-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: box-shadow 0.13s ease;
+}
+.usermenu-btn:hover {
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.usermenu-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 200;
+  width: 260px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.usermenu-id {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 10px 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.usermenu-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  flex: none;
+  display: grid;
+  place-items: center;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+}
+.usermenu-email {
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 550;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.usermenu-role {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  margin-top: 1px;
+}
+.usermenu-sec {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+}
+.usermenu-sec-l {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.usermenu-sec .segmented {
+  padding: 2px;
+}
+.usermenu-sec .segmented button {
+  padding: 4px 10px;
+  font-size: 11.5px;
+}
+.usermenu-links {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+  margin: 4px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.usermenu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  text-decoration: none;
+  width: 100%;
+}
+.usermenu-item:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.usermenu-item.danger:hover {
+  color: var(--danger);
+}
+.usermenu-item .ico {
+  width: 16px;
+  text-align: center;
+  color: var(--text-faint);
 }
