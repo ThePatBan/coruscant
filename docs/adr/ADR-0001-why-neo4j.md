@@ -2,6 +2,20 @@
 
 ## Status
 
+**Superseded / aspirational (2026-07-01) — Neo4j was never implemented.** The
+shipping store is **JSON-over-SQLite**: an in-process `InMemoryKnowledgeGraphStore`
+persisted to `data/graph/graph.json`, alongside SQLite for the catalog /
+intelligence / users / embeddings. This ADR records the original intent and the
+requirements a graph store must meet; it does **not** describe the current system
+(see [../BUILD-STATE.md](../BUILD-STATE.md)).
+
+A real graph store remains the acknowledged next foundational step before
+whole-exchange ingestion — but the **vendor is undecided** (Neo4j is one option,
+not a committed choice). Where other docs cite "Neo4j as the graph backend," read
+that as this open, future decision, not a built component.
+
+_Original decision, retained for context:_
+
 Accepted
 
 ## Context
