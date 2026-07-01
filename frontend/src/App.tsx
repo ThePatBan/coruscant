@@ -5,7 +5,7 @@ import { useAuth } from "./auth";
 import { useAsync } from "./hooks";
 import { AdminPage } from "./pages/AdminPage";
 import { AlertsPage } from "./pages/AlertsPage";
-import { AtlasPage } from "./pages/AtlasPage";
+import { AtlasStakeholderPage } from "./pages/AtlasStakeholderPage";
 import { AskPage } from "./pages/AskPage";
 import { ChangesPage } from "./pages/ChangesPage";
 import { CompaniesPage } from "./pages/CompaniesPage";
@@ -284,7 +284,11 @@ export default function App() {
       <Route element={<ProtectedLayout />}>
         <Route path="/world" element={<LiveSignalsPage />} />
         <Route path="/country" element={<CountryPage />} />
-        <Route path="/atlas" element={<AtlasPage />} />
+        {/* TODO(retire): the 3D force-graph AtlasPage is superseded by the
+            labeled stakeholder map. File src/pages/AtlasPage.tsx (+ Atlas3D,
+            force3d, spatial, graph helpers it uses) kept for reference; delete
+            once the stakeholder map is signed off. */}
+        <Route path="/atlas" element={<AtlasStakeholderPage />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/changes" element={<ChangesPage />} />
         <Route path="/search" element={<AskPage />} />
