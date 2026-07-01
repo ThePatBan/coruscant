@@ -67,6 +67,14 @@ Two tabs: **`/world`** (Home/World — the exposure surface) and **`/atlas`** (t
   `GET /graph/funds` + `/graph/fund/{key}`, `coruscant portfolio --cik|--file`.
   *Live-validated:* Berkshire Hathaway's 13F (90 positions) → Apple/Amex/Coca-Cola/
   Chevron resolved into the book with real aggregated values. See ADR-0008.
+- **Fund-scoped exposure — the north-star query** ("an event happens; does it touch
+  *this* book, and how much?"): `portfolio_exposure(fund, pathway, term)` intersects
+  a pathway exposure (sector / jurisdiction / market_tier / commodity / country)
+  with a fund's `holds` edges and attaches the held value; `portfolio_profile`
+  gives the book's value-weighted sector/tier shape. `GET
+  /graph/fund/{key}/exposure` + `/profile`. *Live:* an Energy event → Berkshire's
+  Chevron ($17.5B, 12% of book); a Taiwan event → nothing (honest empty). This is
+  orientation + in-book magnitude, not a P&L estimate.
 - **Taxonomy**: full GICS hierarchy (8-digit code) + MSCI DM/EM/FM, curated and
   verified against public MSCI/S&P sources.
 - **Instrument model**: commodities + debt as first-class instruments wired into

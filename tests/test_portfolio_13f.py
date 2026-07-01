@@ -90,3 +90,39 @@ def test_fund_holdings_query_tier_asof_and_sorting() -> None:
     earlier = Q.fund_holdings(store, "fund-1067983", as_of="2020-01-01")
     assert earlier is not None and earlier.holdings == []
     assert Q.fund_holdings(store, "missing") is None
+
+
+def _exposure_store() -> InMemoryKnowledgeGraphStore:
+    from coruscant.common.types import GraphEdge
+    store = _store_with_company("Apple", "apple")
+    store.upsert_node(GraphNode(kind="Company", key="chevron", properties={"name": "Chevron Corp"}))
+    store.upsert_edge(GraphEdge(source_kind="Company", source_key="apple", relation="in_sector",
+                               target_kind="Industry", target_key="it",
+                               properties={"sector": "Information Technology"}))
+    store.upsert_edge(GraphEdge(source_kind="Company", source_key="chevron", relation="in_sector",
+                               target_kind="Industry", target_key="energy",
+                               properties={"sector": "Energy"}))
+    filing = FundFiling(cik="1067983", name="Berkshire Hathaway Inc", period="2024-12-31",
+                        holdings=[FundHolding(issuer="APPLE INC", value=75, shares=300),
+                                  FundHolding(issuer="CHEVRON CORP", value=180, shares=120)])
+    ingest_fund_holdings(store, filing, observed_at="2026-07-01")
+    return store
+
+
+def test_portfolio_exposure_scopes_event_to_the_fund() -> None:
+    store = _exposure_store()
+    # An Energy event touches only the fund's Chevron holding, with its value.
+    energy = Q.portfolio_exposure(store, "fund-1067983", pathway="sector", term="Energy")
+    assert energy is not None
+    assert [h.company.key for h in energy.exposed] == ["chevron"]
+    assert energy.exposed_value == 180 and energy.total_value == 255
+    # A sector the book doesn't touch is a real, empty answer.
+    assert Q.portfolio_exposure(store, "fund-1067983", pathway="sector", term="Utilities").exposed == []  # type: ignore[union-attr]
+    assert Q.portfolio_exposure(store, "missing", pathway="sector", term="Energy") is None
+
+
+def test_portfolio_profile_is_value_weighted() -> None:
+    profile = Q.portfolio_profile(_exposure_store(), "fund-1067983")
+    assert profile is not None and profile.total_value == 255
+    by_sector = {b.label: b.value for b in profile.by_sector}
+    assert by_sector == {"Energy": 180, "Information Technology": 75}

@@ -295,6 +295,23 @@ def test_parity_fund_holdings() -> None:
             == Q.fund_holdings(kz, "fund-1067983").model_dump_json())  # type: ignore[union-attr]
 
 
+@pytest.mark.parametrize("pathway,term", [
+    ("sector", "Energy"), ("sector", "Information Technology"), ("market_tier", "DM"),
+    ("country", "Taiwan"), ("jurisdiction", "Ireland"), ("commodity", "crude-oil")])
+def test_parity_portfolio_exposure(pathway: str, term: str) -> None:
+    mem, kz = _both_stores()
+    a = Q.portfolio_exposure(mem, "fund-1067983", pathway=pathway, term=term)
+    b = Q.portfolio_exposure(kz, "fund-1067983", pathway=pathway, term=term)
+    assert a is not None and b is not None
+    assert a.model_dump_json() == b.model_dump_json()
+
+
+def test_parity_portfolio_profile() -> None:
+    mem, kz = _both_stores()
+    assert (Q.portfolio_profile(mem, "fund-1067983").model_dump_json()  # type: ignore[union-attr]
+            == Q.portfolio_profile(kz, "fund-1067983").model_dump_json())  # type: ignore[union-attr]
+
+
 def test_parity_reachable_resolves_to() -> None:
     # The canonical-cluster traversal reuses the multi-hop primitive over a new
     # relation: acme-holdings -resolves_to-> Canonical <-resolves_to- acme-hldgs.

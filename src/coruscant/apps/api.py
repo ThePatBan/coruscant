@@ -84,6 +84,8 @@ from coruscant.knowledge_graph.queries import (
     FundRef,
     MarketTierCount,
     MarketTierExposure,
+    PortfolioExposure,
+    PortfolioProfile,
     ResolutionOverview,
     ScreeningOverview,
     SectorCount,
@@ -107,6 +109,8 @@ from coruscant.knowledge_graph.queries import (
     list_funds,
     list_sectors,
     market_tier_exposure,
+    portfolio_exposure,
+    portfolio_profile,
     resolution_overview,
     screening_overview,
     sector_exposure,
@@ -909,6 +913,28 @@ def create_app(
         """A fund's covered holdings; optional ``as_of=YYYY-MM-DD``."""
         graph = state.graph
         result = fund_holdings(graph, fund_key, as_of=as_of) if isinstance(graph, KnowledgeGraphStore) else None
+        if result is None:
+            raise HTTPException(status_code=404, detail="fund not found")
+        return result
+
+    @app.get("/graph/fund/{fund_key}/exposure", response_model=PortfolioExposure, dependencies=protected)
+    def graph_fund_exposure(fund_key: str, pathway: str, term: str, as_of: str | None = None) -> PortfolioExposure:
+        """Event → this fund's exposed holdings. ``pathway`` ∈ sector | jurisdiction
+        | market_tier | commodity | country; ``term`` is the event (e.g. "Energy",
+        "Taiwan", "crude-oil"). The north-star "does it touch my book?" query."""
+        graph = state.graph
+        result = (portfolio_exposure(graph, fund_key, pathway=pathway, term=term, as_of=as_of)
+                  if isinstance(graph, KnowledgeGraphStore) else None)
+        if result is None:
+            raise HTTPException(status_code=404, detail="fund not found")
+        return result
+
+    @app.get("/graph/fund/{fund_key}/profile", response_model=PortfolioProfile, dependencies=protected)
+    def graph_fund_profile(fund_key: str, as_of: str | None = None) -> PortfolioProfile:
+        """The shape of a fund's book — value-weighted by sector and market tier."""
+        graph = state.graph
+        result = (portfolio_profile(graph, fund_key, as_of=as_of)
+                  if isinstance(graph, KnowledgeGraphStore) else None)
         if result is None:
             raise HTTPException(status_code=404, detail="fund not found")
         return result
