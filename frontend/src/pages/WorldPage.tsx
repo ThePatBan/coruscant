@@ -16,6 +16,7 @@ import {
   type IndexQuote,
   type MacroMetric,
   type MarketTierCount,
+  type PortfolioBenchmark,
   type PortfolioPrices,
 } from "../api";
 import { useAsync } from "../hooks";
@@ -205,14 +206,44 @@ function GicsTree({ sectors }: { sectors: GicsSector[] }) {
   );
 }
 
+// Each GICS sector's holdings vs its sector-index (ETF) proxy, today.
+function BenchmarkTable({ data }: { data: PortfolioBenchmark }) {
+  if (!data.connected || data.sectors.length === 0) return null;
+  const fmt = (v?: number | null) => (v == null ? "—" : signedPct(v));
+  const cls = (v?: number | null) => (v == null ? "" : v >= 0 ? "up" : "down");
+  return (
+    <div className="pc-block">
+      <div className="ci-section-label">
+        Sector vs index <span className="muted">· you vs SPDR sector-ETF proxy, equal-weight</span>
+      </div>
+      <div className="bench">
+        <div className="bench-row bench-head muted">
+          <span>Sector</span><span>Wt</span><span>You</span><span>Index</span><span>Δ</span>
+        </div>
+        {data.sectors.map((s) => (
+          <div key={s.sector} className="bench-row" title={s.benchmark_name ?? undefined}>
+            <span className="bench-sector">{s.sector}</span>
+            <span className="muted">{Math.round(s.weight_pct)}%</span>
+            <span className={cls(s.portfolio_change_pct)}>{fmt(s.portfolio_change_pct)}</span>
+            <span className={cls(s.benchmark_change_pct)}>{fmt(s.benchmark_change_pct)}</span>
+            <span className={cls(s.delta_pct)}>{fmt(s.delta_pct)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PortfolioComposition({
   tiers,
   sectors,
   prices,
+  benchmark,
 }: {
   tiers: MarketTierCount[];
   sectors: GicsSector[];
   prices: PortfolioPrices | null;
+  benchmark: PortfolioBenchmark | null;
 }) {
   const total = tiers.reduce((s, t) => s + t.companies, 0);
   return (
@@ -227,6 +258,7 @@ function PortfolioComposition({
       </div>
       <MarketTierBar tiers={tiers} />
       {prices ? <Movers prices={prices} /> : null}
+      {benchmark ? <BenchmarkTable data={benchmark} /> : null}
       <GicsTree sectors={sectors} />
     </div>
   );
@@ -335,6 +367,7 @@ export function WorldPage() {
   const { data: tiers } = useAsync(() => api.marketTiers(), []);
   const { data: sectors } = useAsync(() => api.gicsBreakdown(), []);
   const { data: prices } = useAsync(() => api.portfolioPrices(), []);
+  const { data: benchmark } = useAsync(() => api.portfolioBenchmark(), []);
 
   // Re-evaluate open/closed each minute.
   useEffect(() => {
@@ -401,7 +434,12 @@ export function WorldPage() {
         {selected ? (
           <CountryInsight exchange={selected} tiers={tierList} />
         ) : (
-          <PortfolioComposition tiers={tierList} sectors={sectors ?? []} prices={prices ?? null} />
+          <PortfolioComposition
+            tiers={tierList}
+            sectors={sectors ?? []}
+            prices={prices ?? null}
+            benchmark={benchmark ?? null}
+          />
         )}
       </section>
     </div>
