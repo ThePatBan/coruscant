@@ -29,6 +29,36 @@ class CompanyConfig(BaseModel):
         return (self.ticker or self.slug).upper()
 
 
+class CommodityConfig(BaseModel):
+    slug: str
+    name: str
+    category: str  # Energy | Metals | Agriculture
+    # Yahoo futures symbol for the free live price (optional).
+    symbol: str | None = None
+    # GICS sectors whose holdings this commodity drives (curated, evidence-backed
+    # linkage — e.g. Crude Oil -> Energy). The exposure engine traverses these.
+    affects_sectors: list[str] = Field(default_factory=list)
+
+
+class DebtConfig(BaseModel):
+    slug: str
+    name: str
+    debt_type: str  # sovereign | corporate | aggregate
+    issuer_country: str  # links the instrument to a Country
+    # Yahoo yield-index or bond-ETF proxy symbol (optional).
+    symbol: str | None = None
+
+
+class InstrumentsConfig(BaseModel):
+    """Non-equity instruments in the inventory. Equities are the tracked
+    companies; commodities and debt are first-class instruments the exposure
+    engine reasons about (a commodity event reaches equity holdings via sector; a
+    country event reaches its sovereign/corporate debt)."""
+
+    commodities: list[CommodityConfig] = Field(default_factory=list)
+    debt: list[DebtConfig] = Field(default_factory=list)
+
+
 class SourceSetting(BaseModel):
     type: str
     enabled: bool = True
@@ -124,6 +154,13 @@ def load_companies(config_dir: Path | None = None) -> list[CompanyConfig]:
     data = yaml.safe_load(path.read_text()) if path.exists() else {}
     companies = data.get("companies", [])
     return [CompanyConfig.model_validate(company) for company in companies]
+
+
+def load_instruments(config_dir: Path | None = None) -> InstrumentsConfig:
+    base = config_dir or get_settings().config_dir
+    path = base / "instruments.yml"
+    data = yaml.safe_load(path.read_text()) if path.exists() else {}
+    return InstrumentsConfig.model_validate(data or {})
 
 
 def load_sources(config_dir: Path | None = None) -> list[SourceSetting]:

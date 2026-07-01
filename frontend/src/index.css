@@ -2889,6 +2889,42 @@ button.wp-tile.wp-cta:hover {
   font-variant-numeric: tabular-nums;
 }
 
+/* Commodity chips + debt line */
+.chip-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chip {
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.chip:hover {
+  border-color: var(--accent-border);
+  color: var(--text);
+}
+.chip.active {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: #c4ccff;
+}
+.commodity-exposure {
+  margin-top: 8px;
+  line-height: 1.5;
+}
+.ci-debt {
+  margin-top: 4px;
+}
+
 /* Sector vs index benchmark table */
 .bench {
   display: flex;

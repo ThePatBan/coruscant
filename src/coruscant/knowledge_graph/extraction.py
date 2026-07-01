@@ -22,7 +22,7 @@ import json
 import re
 from pathlib import Path
 
-from coruscant.common.config import CompanyConfig
+from coruscant.common.config import CompanyConfig, InstrumentsConfig
 from coruscant.common.types import GraphEdge, GraphNode, NormalizedDocument
 from coruscant.knowledge_graph.entities import entity_key
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
@@ -35,6 +35,9 @@ from coruscant.knowledge_graph.taxonomy import (
 _SECTOR_PROV = "sec-metadata"
 _GICS_PROV = "gics-curated"
 _MARKET_TIER_PROV = "msci-classification"
+_COMMODITY_PROV = "commodity-inventory"
+_COMMODITY_SECTOR_PROV = "commodity-sector-linkage"
+_DEBT_PROV = "debt-inventory"
 _COMENTION_PROV = "sec-co-mention"
 _SUBSIDIARY_PROV = "sec-exhibit21"
 _OFFICER_PROV = "sec-10k-officers"
@@ -407,6 +410,82 @@ def project_people_edges(
     return count
 
 
+def project_instrument_edges(
+    store: InMemoryKnowledgeGraphStore, instruments: InstrumentsConfig
+) -> dict[str, int]:
+    """Project the non-equity inventory so the exposure engine reaches it.
+
+    Commodity -affects_sector-> Sector links a commodity to the GICS sectors it
+    drives (a commodity event then reaches the equity holdings in those sectors).
+    DebtInstrument -issued_by-> Country links debt to its issuer (a country event
+    then reaches its sovereign/corporate debt). Every node/edge carries its
+    provenance, distinct from the SEC-derived edges."""
+    commodities = 0
+    for commodity in instruments.commodities:
+        store.upsert_node(
+            GraphNode(
+                kind="Commodity",
+                key=commodity.slug,
+                properties={
+                    "name": commodity.name,
+                    "category": commodity.category,
+                    "symbol": commodity.symbol,
+                    "source": _COMMODITY_PROV,
+                },
+            )
+        )
+        for sector in commodity.affects_sectors:
+            sector_key = entity_key(sector)
+            if store.get_node("Sector", sector_key) is None:
+                store.upsert_node(
+                    GraphNode(kind="Sector", key=sector_key, properties={"name": sector, "source": _COMMODITY_SECTOR_PROV})
+                )
+            store.upsert_edge(
+                GraphEdge(
+                    source_kind="Commodity",
+                    source_key=commodity.slug,
+                    relation="affects_sector",
+                    target_kind="Sector",
+                    target_key=sector_key,
+                    properties={"source": _COMMODITY_SECTOR_PROV, "commodity": commodity.name, "sector": sector},
+                )
+            )
+        commodities += 1
+
+    debt = 0
+    for instrument in instruments.debt:
+        store.upsert_node(
+            GraphNode(
+                kind="DebtInstrument",
+                key=instrument.slug,
+                properties={
+                    "name": instrument.name,
+                    "debt_type": instrument.debt_type,
+                    "issuer_country": instrument.issuer_country,
+                    "symbol": instrument.symbol,
+                    "source": _DEBT_PROV,
+                },
+            )
+        )
+        country_key = entity_key(instrument.issuer_country)
+        if store.get_node("Country", country_key) is None:
+            store.upsert_node(
+                GraphNode(kind="Country", key=country_key, properties={"name": instrument.issuer_country, "source": _DEBT_PROV})
+            )
+        store.upsert_edge(
+            GraphEdge(
+                source_kind="DebtInstrument",
+                source_key=instrument.slug,
+                relation="issued_by",
+                target_kind="Country",
+                target_key=country_key,
+                properties={"source": _DEBT_PROV, "debt_type": instrument.debt_type, "issuer_country": instrument.issuer_country},
+            )
+        )
+        debt += 1
+    return {"commodities": commodities, "debt": debt}
+
+
 def project_holdings_edges(
     store: InMemoryKnowledgeGraphStore, company_slug: str, holdings: list[dict[str, object]]
 ) -> int:
@@ -465,6 +544,7 @@ def extract_relationships(
     store: InMemoryKnowledgeGraphStore,
     companies: list[CompanyConfig],
     data_dir: Path,
+    instruments: InstrumentsConfig | None = None,
 ) -> dict[str, int]:
     """Run the deterministic extractors and project their edges. Returns counts."""
     documents = load_normalized_documents(data_dir)
@@ -474,11 +554,16 @@ def extract_relationships(
     references = project_cross_company_references(store, companies, documents)
     subsidiaries = project_subsidiary_edges(store, companies, documents)
     people = project_people_edges(store, companies, documents)
+    instrument_counts = (
+        project_instrument_edges(store, instruments) if instruments is not None else {"commodities": 0, "debt": 0}
+    )
     return {
         "in_sector": sector,
         "market_tiers": market_tiers,
         "references": references,
         "subsidiaries": subsidiaries,
         "people": people,
+        "commodities": instrument_counts["commodities"],
+        "debt": instrument_counts["debt"],
         "documents": len(documents),
     }
