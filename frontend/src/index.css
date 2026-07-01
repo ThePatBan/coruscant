@@ -70,25 +70,28 @@
    the profile menu via [data-theme="light"] on <html>. Everything reads from
    these vars, so surfaces re-theme in place. */
 [data-theme="light"] {
-  --bg: #f5f7fb;
-  --bg-elev: #ffffff;
-  --bg-elev-2: #eef1f7;
-  --bg-hover: #e7ecf4;
-  --border: #dde2ec;
-  --border-strong: #c5cdda;
+  /* Warm-neutral "paper", not a cool inversion. Panels are a hair off pure white
+     so the surface reads calm rather than clinical; accent fills are light so
+     indigo never sits in heavy blocks. */
+  --bg: #f3f3f1;
+  --bg-elev: #fbfbfa;
+  --bg-elev-2: #edeef0;
+  --bg-hover: #e8e8e6;
+  --border: #e4e3df;
+  --border-strong: #cfcec8;
 
-  --text: #1b2130;
-  --text-muted: #586173;
-  --text-faint: #8a93a4;
+  --text: #21242b;
+  --text-muted: #5d626c;
+  --text-faint: #8b8f98;
 
-  --accent: #4655d6;
-  --accent-strong: #3442c4;
-  --accent-soft: rgba(70, 85, 214, 0.1);
-  --accent-border: rgba(70, 85, 214, 0.28);
+  --accent: #4a57cf;
+  --accent-strong: #3b48bf;
+  --accent-soft: rgba(74, 87, 207, 0.08);
+  --accent-border: rgba(74, 87, 207, 0.22);
 
-  --evidence: #9a6a12;
-  --evidence-soft: rgba(243, 185, 77, 0.2);
-  --evidence-border: rgba(154, 106, 18, 0.38);
+  --evidence: #8a5d12;
+  --evidence-soft: rgba(184, 128, 40, 0.15);
+  --evidence-border: rgba(138, 93, 18, 0.34);
 
   --good: #138a5e;
   --danger: #d33b3b;
@@ -109,10 +112,10 @@
   --rel-competes: #5f6b7d;
   --rel-country: #3f6f89;
   --rel-tech: #6b7280;
-  --glass-bg: rgba(255, 255, 255, 0.82);
-  --glass-border: rgba(70, 85, 214, 0.18);
+  --glass-bg: rgba(251, 251, 250, 0.82);
+  --glass-border: rgba(74, 87, 207, 0.16);
 
-  --shadow: 0 1px 2px rgba(30, 40, 70, 0.06), 0 8px 24px rgba(30, 40, 70, 0.08);
+  --shadow: 0 1px 2px rgba(40, 38, 30, 0.05), 0 10px 28px rgba(40, 38, 30, 0.08);
 }
 
 * {
@@ -299,8 +302,11 @@ button {
   gap: 16px;
   padding: 14px 28px;
   border-bottom: 1px solid var(--border);
-  background: rgba(9, 11, 15, 0.78);
+  /* themeable translucent bar — re-themes with the token set instead of a
+     hardcoded near-black, so light mode stays consistent with the content. */
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
   backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 .topbar .crumb {
   font-size: 13px;
