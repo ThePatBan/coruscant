@@ -16,6 +16,7 @@ from coruscant.apps.runtime import (
     load_engine,
     load_graph_store,
     run_ingestion,
+    run_screening,
     seed_demo_user,
 )
 from coruscant.common.config import get_settings, load_companies
@@ -98,6 +99,26 @@ def cmd_graph(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_screen(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    configure_logging()
+    dataset = Path(args.dataset) if args.dataset else None
+    try:
+        summary = run_screening(dataset_path=dataset)
+    except FileNotFoundError as error:
+        print(str(error))
+        return 1
+    print(
+        f"Screened {summary.screened} people against {summary.candidates} candidate "
+        f"match(es): {summary.confirmed} confirmed ({summary.pep} PEP, "
+        f"{summary.sanctioned} sanctioned), {summary.needs_review} in review."
+    )
+    if summary.confirmed == 0:
+        print("No corroborated hits — an honest, expected result for public-company officers.")
+    return 0
+
+
 def cmd_backup(args: argparse.Namespace) -> int:
     from pathlib import Path
 
@@ -136,6 +157,14 @@ def build_parser() -> argparse.ArgumentParser:
     graph = sub.add_parser("graph", help="Show graph neighbors for a company")
     graph.add_argument("company", help="Company slug")
     graph.set_defaults(func=cmd_graph)
+
+    screen = sub.add_parser("screen", help="Screen graph people for PEP/sanctions (OpenSanctions)")
+    screen.add_argument(
+        "--dataset",
+        default=None,
+        help="Path to an OpenSanctions export (bulk targets.nested.json or a JSON array)",
+    )
+    screen.set_defaults(func=cmd_screen)
 
     backup_p = sub.add_parser("backup", help="Back up the data directory to a tar.gz")
     backup_p.add_argument("--out", default=None, help="Output archive path")

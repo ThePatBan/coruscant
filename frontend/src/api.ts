@@ -617,6 +617,33 @@ export interface Customer {
   api_calls: number;
 }
 
+export interface ScreeningHit {
+  person: EntityRef;
+  listing: EntityRef;
+  relation: string;
+  review_status: string;
+  score: number | null;
+  matched_name: string | null;
+  dataset: string | null;
+  source: string | null;
+  source_url: string | null;
+  valid_from: string | null;
+  access_tier: string;
+}
+
+export interface ScreeningOverview {
+  connected: boolean;
+  provider: string | null;
+  dataset: string | null;
+  screened: number;
+  candidates: number;
+  pep: number;
+  sanctioned: number;
+  confirmed: ScreeningHit[];
+  needs_review: ScreeningHit[];
+  note: string;
+}
+
 export const api = {
   // data
   health: () => get<Health>("/health"),
@@ -667,6 +694,7 @@ export const api = {
   exposure: (country: string) =>
     get<ExposureResult>(`/graph/exposure?country=${encodeURIComponent(country)}`),
   coExecutives: () => get<CoExecutiveResult>("/graph/co-executives"),
+  screening: () => get<ScreeningOverview>("/graph/screening"),
   // watchlists
   watchlists: () => get<Watchlist[]>("/watchlists"),
   createWatchlist: (name: string, items: WatchItem[]) =>

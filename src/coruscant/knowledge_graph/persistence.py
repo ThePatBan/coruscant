@@ -15,6 +15,7 @@ import json
 from pathlib import Path
 
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
+from coruscant.knowledge_graph.resolution import Resolver
 
 
 def save_graph(store: InMemoryKnowledgeGraphStore, path: Path) -> None:
@@ -27,3 +28,15 @@ def load_graph(path: Path) -> InMemoryKnowledgeGraphStore:
         return InMemoryKnowledgeGraphStore()
     data = json.loads(path.read_text())
     return InMemoryKnowledgeGraphStore.from_dict(data)
+
+
+def save_resolver(resolver: Resolver, path: Path) -> None:
+    """Persist the append-only judgement log (the reversible ER source of truth)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(resolver.to_list(), indent=2))
+
+
+def load_resolver(path: Path) -> Resolver:
+    if not path.exists():
+        return Resolver()
+    return Resolver.from_list(json.loads(path.read_text()))

@@ -82,6 +82,7 @@ from coruscant.knowledge_graph.queries import (
     JurisdictionExposure,
     MarketTierCount,
     MarketTierExposure,
+    ScreeningOverview,
     SectorCount,
     CompanyNetwork,
     SectorExposure,
@@ -101,6 +102,7 @@ from coruscant.knowledge_graph.queries import (
     list_market_tiers,
     list_sectors,
     market_tier_exposure,
+    screening_overview,
     sector_exposure,
 )
 from coruscant.macro import CountryMacro, MacroService
@@ -866,6 +868,17 @@ def create_app(
         if not isinstance(graph, KnowledgeGraphStore):
             return CoExecutiveResult()
         return co_executives(graph)
+
+    @app.get("/graph/screening", response_model=ScreeningOverview, dependencies=protected)
+    def graph_screening(as_of: str | None = None) -> ScreeningOverview:
+        """PEP/sanctions screening of the people in the graph. ``connected: false``
+        until a screen has run; optional ``as_of=YYYY-MM-DD`` answers "was this
+        flagged on that date?". Clearance is server-decided (public tier) — never a
+        client-supplied parameter."""
+        graph = state.graph
+        if not isinstance(graph, KnowledgeGraphStore):
+            return ScreeningOverview(connected=False)
+        return screening_overview(graph, as_of=as_of)
 
     @app.get("/instruments/commodities", response_model=list[CommodityRef], dependencies=protected)
     def instruments_commodities() -> list[CommodityRef]:

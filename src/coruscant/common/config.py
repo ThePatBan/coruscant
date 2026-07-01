@@ -136,6 +136,11 @@ class Settings(BaseSettings):
     # only (no email delivery); never expose it on an untrusted deployment.
     expose_reset_token: bool = False
     ingest_max_attempts: int = 3
+    # Path to an OpenSanctions export (bulk `targets.nested.json` or a JSON array)
+    # for PEP/sanctions screening. Unset by default so the offline/test path never
+    # depends on it and the screening panel honestly reports `connected: false`
+    # until an operator wires a dataset (see `coruscant screen`).
+    screening_dataset_path: Path | None = None
     # Enforce per-plan daily API + watchlist quotas. Only takes effect in a
     # multi-tenant deployment (when an organization store is configured); single
     # -tenant/offline use is never throttled. Set false to disable enforcement.
@@ -149,6 +154,11 @@ class Settings(BaseSettings):
     def graph_kuzu_path(self) -> Path:
         """On-disk Kùzu database file (materialized from the JSON snapshot)."""
         return self.data_dir / "graph" / "graph.kz"
+
+    @property
+    def resolver_snapshot_path(self) -> Path:
+        """Append-only entity-resolution judgement log (reversible + versioned)."""
+        return self.data_dir / "graph" / "resolver.json"
 
     @property
     def status_path(self) -> Path:

@@ -274,6 +274,66 @@ function CommoditiesBlock() {
   );
 }
 
+function ScreeningPanel() {
+  const { data, loading } = useAsync(() => api.screening(), []);
+  return (
+    <div className="pc-block">
+      <div className="ci-section-label">
+        PEP / sanctions screening <span className="muted">· people in the graph vs. OpenSanctions</span>
+      </div>
+      {loading ? (
+        <div className="muted small">Screening…</div>
+      ) : !data || !data.connected ? (
+        <div className="muted small">
+          Not screened yet — no watchlist dataset is wired. Run <code>coruscant screen</code> with an
+          OpenSanctions export to populate this. No placeholder is shown until it runs.
+        </div>
+      ) : (
+        <>
+          <div className="small">
+            <strong>{data.screened}</strong> screened · <strong>{data.confirmed.length}</strong> confirmed
+            ({data.pep} PEP · {data.sanctioned} sanctioned) · <strong>{data.needs_review.length}</strong> in
+            review
+          </div>
+          {data.confirmed.length === 0 ? (
+            <div className="muted small">
+              No corroborated hits — expected for public-company officers, itself the insight.
+            </div>
+          ) : (
+            <ul className="ci-list">
+              {data.confirmed.map((h, i) => (
+                <li key={`${h.person.key}-${h.relation}-${i}`}>
+                  <strong>{h.person.name}</strong>{" "}
+                  <span className={`chip ${h.relation === "sanctioned" ? "active" : ""}`}>{h.relation}</span>{" "}
+                  <span className="muted">
+                    {h.matched_name}
+                    {h.score != null ? ` · ${Math.round(h.score * 100)}%` : ""}
+                    {h.valid_from ? ` · since ${h.valid_from}` : ""}
+                  </span>
+                  {h.source_url ? (
+                    <>
+                      {" · "}
+                      <a href={h.source_url} target="_blank" rel="noreferrer">
+                        source
+                      </a>
+                    </>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+          {data.needs_review.length > 0 ? (
+            <div className="muted small">
+              {data.needs_review.length} candidate{data.needs_review.length === 1 ? "" : "s"} awaiting review —
+              name-only and unconfirmed, a candidate not a determination.
+            </div>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+}
+
 function PortfolioComposition({
   tiers,
   sectors,
@@ -301,6 +361,7 @@ function PortfolioComposition({
       {benchmark ? <BenchmarkTable data={benchmark} /> : null}
       <CommoditiesBlock />
       <GicsTree sectors={sectors} />
+      <ScreeningPanel />
     </div>
   );
 }
