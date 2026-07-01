@@ -135,9 +135,10 @@ function ProtectedLayout() {
   }
 
   const crumb = CRUMBS.find(([re]) => re.test(location.pathname))?.[1] ?? "";
-  // Atlas and World are full-bleed spatial surfaces: they opt out of the centered,
-  // padded content column so the canvas/globe fills the viewport.
-  const fullBleed = /^\/(atlas|world)/.test(location.pathname);
+  // Spatial surfaces opt out of the centered, padded content column so the
+  // canvas/globe/wide layouts fill the viewport (they carry their own padding via
+  // .spatial-page, or a full-bleed canvas for atlas/world).
+  const fullBleed = /^\/(atlas|world|dashboard|changes|risk|country)/.test(location.pathname);
 
   return (
     <div className="app">

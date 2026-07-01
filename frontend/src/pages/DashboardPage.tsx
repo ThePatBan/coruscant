@@ -1,361 +1,368 @@
-import { useMemo, type ReactNode } from "react";
+// Orientation — the post-login World view (design-pack Screen 1). In one screen:
+// what the book is, what changed, where the risk concentrates, what to do first.
+// Hybrid data policy: the layout is faithful to the pack, but every figure is
+// real or clearly labelled. The portfolio value is an explicit equal-weight
+// SAMPLE (a stated assumption until a portfolio is uploaded); "Today's read" is
+// computed from the real change stream + concentration matrix, not written by
+// hand; the % move is live only when the price feed is connected, else a stub.
+
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, type ChangeSet, type EntityProfile } from "../api";
-import { ErrorView, PanelHead, Skeleton } from "../components";
-import { buildGraph, graphStats, GraphIncompleteNote, RelationMap, type GNode, type RelGraph } from "../graph";
+import { api, type Dashboard, type PortfolioPrices, type TimelineEvent } from "../api";
+import { ErrorView, Skeleton } from "../components";
 import { useAsync } from "../hooks";
-import { kindGlyph } from "../relations";
-import { buildCommits, ProgressLog, type Commit } from "../progress";
+import { densestCell, loadRiskMatrix, REGIONS, type RiskMatrix } from "../riskmatrix";
+import { SignalGlobe } from "../SignalGlobe";
 
-interface BridgeController {
-  person: GNode;
-  companies: Array<{ key: string; name: string }>;
-}
-interface SharedDependency {
-  supplier: GNode;
-  companies: Array<{ key: string; name: string }>;
-}
+type Dir = "risk" | "opp" | "event";
+const DIR_GLYPH: Record<Dir, string> = { risk: "▼", opp: "▲", event: "◍" };
+const catAttr = (c: string | null | undefined) => (c ?? "").toLowerCase().replace(/\s+/g, "_");
 
-interface DashData {
-  ribbon: { companies: number; documents: number; events: number; material: number; links: number };
-  graph: RelGraph;
-  controllers: BridgeController[];
-  dependencies: SharedDependency[];
-  movements: Array<ChangeSet & { companyName: string }>;
-  commits: Commit[];
-  failed: number;
+// Transparent equal-weight assumption used only for the labelled SAMPLE hero.
+// Stated on screen; replaced the moment a real portfolio + price feed connect.
+const ASSUMED_PER_HOLDING = 250_000_000;
+
+interface Row extends TimelineEvent {
+  dir: Dir;
+  id: string;
 }
 
-async function loadDashboard(): Promise<DashData> {
-  const [dash, companies] = await Promise.all([api.dashboard(), api.companies()]);
-  const trackedKeys = new Set(companies.map((c) => c.slug));
-  const nameFor = (slug: string) => companies.find((c) => c.slug === slug)?.name ?? slug;
+interface OrientData {
+  dash: Dashboard;
+  prices: PortfolioPrices;
+  matrix: RiskMatrix;
+  rows: Row[];
+}
 
-  const [profiles, changesPer, timelinePer] = await Promise.all([
-    Promise.all(companies.map((c) => api.entity("Company", c.slug).catch(() => null))),
-    Promise.all(companies.map((c) => api.companyChanges(c.slug).catch(() => [] as ChangeSet[]))),
-    Promise.all(companies.map((c) => api.companyTimeline(c.slug).catch(() => []))),
+async function loadOrientation(): Promise<OrientData> {
+  const [dash, prices, matrix] = await Promise.all([
+    api.dashboard(),
+    api.portfolioPrices().catch(
+      () => ({ connected: false, priced: 0, total: 0, gainers: 0, losers: 0, holdings: [] }) as PortfolioPrices,
+    ),
+    loadRiskMatrix(),
   ]);
-
-  const validProfiles = profiles.filter((p): p is EntityProfile => Boolean(p));
-  const failed = profiles.length - validProfiles.length;
-  const graph = buildGraph(validProfiles, trackedKeys);
-  const byId = new Map(graph.nodes.map((n) => [n.id, n]));
-  const named = (key: string) => ({ key, name: nameFor(key) });
-
-  // Control proxies, derived only from *current* leadership (employs edges) of
-  // tracked companies — never from prior tenure, which is not current control.
-  const employsMap = new Map<string, Set<string>>();
-  for (const e of graph.edges) {
-    if (e.relation !== "employs") continue;
-    const s = byId.get(e.source)!;
-    const t = byId.get(e.target)!;
-    const company = s.tracked ? s : t;
-    const person = s.kind === "Person" ? s : t;
-    if (!company.tracked || person.kind !== "Person") continue;
-    (employsMap.get(person.id) ?? employsMap.set(person.id, new Set()).get(person.id)!).add(company.key);
-  }
-  const controllers: BridgeController[] = [...employsMap.entries()]
-    .filter(([, set]) => set.size >= 2)
-    .map(([id, set]) => ({ person: byId.get(id)!, companies: [...set].map(named) }))
-    .sort((a, b) => b.companies.length - a.companies.length);
-
-  // Shared critical suppliers: one supplier relied on by ≥2 tracked companies.
-  const supMap = new Map<string, Set<string>>();
-  for (const e of graph.edges) {
-    if (e.relation !== "relies_on_supplier") continue;
-    const s = byId.get(e.source)!;
-    const t = byId.get(e.target)!;
-    const company = s.tracked ? s : t;
-    const supplier = s.tracked ? t : s;
-    if (!company.tracked) continue;
-    (supMap.get(supplier.id) ?? supMap.set(supplier.id, new Set()).get(supplier.id)!).add(company.key);
-  }
-  const dependencies: SharedDependency[] = [...supMap.entries()]
-    .filter(([, set]) => set.size >= 2)
-    .map(([id, set]) => ({ supplier: byId.get(id)!, companies: [...set].map(named) }));
-
-  const allChanges = changesPer.flat();
-  const allEvents = timelinePer.flat();
-
-  const dateMap = new Map<string, string | null>();
-  for (const d of dash.latest_documents) dateMap.set(d.canonical_id, d.published_at);
-  for (const e of allEvents) if (e.occurred_at && !dateMap.has(e.canonical_id)) dateMap.set(e.canonical_id, e.occurred_at);
-  const dateFor = (id: string | null) => (id ? dateMap.get(id) ?? null : null);
-
-  const movements = allChanges
-    .filter((c) => c.material)
-    .map((c) => ({ ...c, companyName: nameFor(c.company_slug) }))
-    .sort((a, b) => b.added_count + b.removed_count - (a.added_count + a.removed_count));
-
-  return {
-    ribbon: {
-      companies: dash.companies,
-      documents: dash.documents,
-      events: dash.events,
-      material: dash.material_changes,
-      links: graph.edges.length,
-    },
-    graph,
-    controllers,
-    dependencies,
-    movements,
-    commits: buildCommits(allChanges, allEvents, nameFor, dateFor),
-    failed,
+  const rows: Row[] = [];
+  const seen = new Set<string>();
+  const add = (evts: TimelineEvent[], dir: Dir) => {
+    for (const e of evts) {
+      const id = `${e.canonical_id}|${e.section_title}|${e.title}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      rows.push({ ...e, dir, id });
+    }
   };
+  add(dash.recent_risks, "risk");
+  add(dash.recent_opportunities, "opp");
+  add(dash.recent_events, "event");
+  return { dash, prices, matrix, rows };
 }
+
+type Period = "yesterday" | "mtd" | "ytd";
 
 export function DashboardPage() {
-  const { data, error, loading } = useAsync(loadDashboard, []);
-  const stats = useMemo(() => (data ? graphStats(data.graph) : null), [data]);
+  const { data, error, loading } = useAsync(loadOrientation, []);
+  const [period, setPeriod] = useState<Period>("yesterday");
+  const [filter, setFilter] = useState<"all" | Dir>("all");
+  const [openId, setOpenId] = useState<string | null>(null);
+
+  const holdings = data ? data.matrix.sectors.reduce((a, s) => a + s.companies, 0) : 0;
+  const assumedAum = holdings * ASSUMED_PER_HOLDING;
+
+  const counts = useMemo(() => {
+    const r = data?.rows ?? [];
+    return {
+      all: r.length,
+      risk: r.filter((x) => x.dir === "risk").length,
+      opp: r.filter((x) => x.dir === "opp").length,
+      event: r.filter((x) => x.dir === "event").length,
+    };
+  }, [data]);
+
+  const dense = data ? densestCell(data.matrix) : null;
+
+  // "Today's read" — grounded synthesis, not hand-written copy.
+  const todaysRead = useMemo(() => {
+    if (!data) return null;
+    const total = counts.all;
+    const risks = counts.risk;
+    const clusterPart = dense ? ` your deepest cluster is ${dense.sector} in ${dense.region.full} (${dense.count} holding${dense.count === 1 ? "" : "s"})` : "";
+    return { risks, total, clusterPart, sector: dense?.sector };
+  }, [data, counts, dense]);
+
+  const list = data ? (filter === "all" ? data.rows : data.rows.filter((r) => r.dir === filter)) : [];
+
+  const move =
+    period === "yesterday" && data?.prices.connected && typeof data.prices.avg_change_pct === "number"
+      ? data.prices.avg_change_pct
+      : null;
 
   return (
-    <div className="stack gap-lg">
-      <div className="page-head">
-        <h1>Intelligence overview</h1>
-        <p className="sub">
-          The monitored universe as a connected system: how its companies relate, who plausibly controls
-          what, and how each has progressed disclosure by disclosure. Every line traces back to its source.
-        </p>
-      </div>
-
+    <div className="orient spatial-page">
       {error ? <ErrorView error={error} /> : null}
-      {loading ? <DashboardSkeleton /> : null}
+      {loading ? <OrientSkeleton /> : null}
 
       {data ? (
         <>
-          <div className="ribbon">
-            <Cell num={data.ribbon.companies} label="Companies" />
-            <Cell num={data.ribbon.documents} label="Documents" />
-            <Cell num={data.ribbon.events} label="Events extracted" />
-            <Cell num={data.ribbon.material} label="Material changes" alert />
-            <Cell num={data.ribbon.links} label="Graph connections" />
+          {/* HERO */}
+          <div className="orient-hero">
+            <div className="orient-hero-left">
+              <div className="orient-hero-kick">
+                Portfolio value <span className="stub-badge">sample</span>
+              </div>
+              <div className="orient-hero-val">
+                ${(assumedAum / 1e9).toFixed(2)}B <span className="orient-hero-cur">USD</span>
+              </div>
+              <div className="orient-hero-sub mono">
+                {holdings} holdings · equal-weight · assumes ${(ASSUMED_PER_HOLDING / 1e6).toFixed(0)}M/holding until portfolio upload
+              </div>
+            </div>
+            <div className="orient-hero-right">
+              <div className="segmented">
+                {(["yesterday", "mtd", "ytd"] as Period[]).map((p) => (
+                  <button key={p} className={period === p ? "active" : ""} onClick={() => setPeriod(p)}>
+                    {p === "yesterday" ? "Yesterday" : p.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+              {move !== null ? (
+                <div className={`orient-hero-pct ${move >= 0 ? "up" : "down"}`}>
+                  {move >= 0 ? "+" : ""}
+                  {move.toFixed(2)}%
+                </div>
+              ) : (
+                <div className="orient-hero-pct pending">pending price feed</div>
+              )}
+              <div className="orient-hero-prov mono">
+                <span className={`dot ${data.prices.connected ? "" : "off"}`} />
+                {period === "yesterday"
+                  ? data.prices.connected
+                    ? "equal-weight · Yahoo · live"
+                    : "equal-weight · price feed off"
+                  : "sample · pending price history"}
+              </div>
+            </div>
           </div>
 
-          {/* Orientation — the three spatial reads, one click away. */}
-          <nav className="orient-strip" aria-label="Orientation">
-            <Link className="orient-card" to="/changes">
-              <span className="oc-kicker"><span className="idx">01</span> What changed</span>
-              <span className="oc-title">{data.ribbon.material} material changes</span>
-              <span className="oc-sub">Overnight risks, opportunities and events — evidence first, with the line-level diff behind each.</span>
-            </Link>
-            <Link className="orient-card" to="/risk">
-              <span className="oc-kicker"><span className="idx">02</span> Where risk concentrates</span>
-              <span className="oc-title">Sector × region matrix</span>
-              <span className="oc-sub">Where the book clusters by GICS sector and Exhibit-21 legal footprint. Drill to the named holdings.</span>
-            </Link>
-            <Link className="orient-card" to="/country">
-              <span className="oc-kicker"><span className="idx">03</span> Country exposure</span>
-              <span className="oc-title">The World → Country → Company rung</span>
-              <span className="oc-sub">Per-country footprint, chokepoints and what changed among the holdings tied there.</span>
-            </Link>
-          </nav>
+          {/* TODAY'S READ */}
+          {todaysRead ? (
+            <div className="orient-read">
+              <span className="orient-read-tag">Today's read —</span>
+              <span>
+                {todaysRead.total > 0 ? (
+                  <>
+                    <span className="danger-em">
+                      {todaysRead.risks} of {todaysRead.total} recent changes raise risk;
+                    </span>
+                    {todaysRead.clusterPart ? (
+                      <>
+                        {todaysRead.clusterPart}.{" "}
+                        <Link to="/risk" className="accent-em">
+                          Start with {todaysRead.sector}.
+                        </Link>
+                      </>
+                    ) : (
+                      " review the change stream below."
+                    )}
+                  </>
+                ) : (
+                  "No material changes in the current window — the book is quiet. Scan concentrations while it lasts."
+                )}
+              </span>
+            </div>
+          ) : null}
 
-          {/* TIER 1 — relationship map (focal) */}
-          <section className="stack gap">
-            <PanelHead
-              idx="01"
-              kicker="Relationship map"
-              title="How the universe connects"
-              sub="Tracked companies and the bridges between them — a shared executive, a shared supplier, a shared technology. Color encodes the kind of tie."
-              right={
-                stats ? (
-                  <div className="wrap" style={{ justifyContent: "flex-end" }}>
-                    <span className="pill">{stats.companies} companies</span>
-                    <span className="pill">{stats.bridges} bridges</span>
-                    <Link to="/graph" className="pill accent">
-                      Open full graph →
-                    </Link>
+          {/* GRID */}
+          <div className="orient-grid">
+            {/* 01 WHAT CHANGED */}
+            <section className="orient-01">
+              <div className="orient-panel-head">
+                <Link to="/changes" className="orient-panel-link">
+                  <span className="idx">01</span> What changed <span className="arr">→</span>
+                </Link>
+                <Link to="/changes" className="orient-panel-all">
+                  all insights →
+                </Link>
+              </div>
+              <div className="segmented orient-filters">
+                {([["all", "All"], ["risk", "Risk"], ["opp", "Opportunity"], ["event", "Events"]] as const).map(
+                  ([k, label]) => (
+                    <button key={k} className={filter === k ? "active" : ""} onClick={() => setFilter(k)}>
+                      {label} <span className="ct">{counts[k]}</span>
+                    </button>
+                  ),
+                )}
+              </div>
+              <div className="orient-triage">
+                {list.length === 0 ? (
+                  <div className="muted small" style={{ padding: "14px 4px" }}>
+                    Nothing in this filter.
                   </div>
-                ) : null
-              }
-            />
-            <RelationMap graph={data.graph} mode="core" />
-            <GraphIncompleteNote failed={data.failed} />
-          </section>
+                ) : (
+                  list.map((c) => {
+                    const on = openId === c.id;
+                    return (
+                      <div key={c.id} className={`orient-trow${on ? " open" : ""}`}>
+                        <button className="orient-trow-main" onClick={() => setOpenId(on ? null : c.id)}>
+                          <span className="mono orient-trow-when">
+                            {c.occurred_at ? c.occurred_at.slice(0, 10) : "—"}
+                          </span>
+                          <span className={`dir-${c.dir} orient-trow-glyph`}>{DIR_GLYPH[c.dir]}</span>
+                          <span className="orient-trow-hl">{c.title || c.description}</span>
+                          <span className="dp-cat" data-c={catAttr(c.category)}>
+                            {(c.category || "general").replace(/_/g, " ")}
+                          </span>
+                          <span className="mono orient-trow-co">{c.company_slug.toUpperCase()}</span>
+                        </button>
+                        {on ? (
+                          <div className="orient-trow-ev">
+                            <div className="orient-trow-ev-line">
+                              <span className="mono arrow" style={{ color: "var(--evidence)" }}>
+                                {c.dir === "opp" ? "+" : c.dir === "risk" ? "–" : "·"}
+                              </span>
+                              {c.description || c.title}
+                            </div>
+                            <div className="orient-trow-ev-foot">
+                              {c.source_uri ? (
+                                <a className="src-link" href={c.source_uri} target="_blank" rel="noreferrer">
+                                  <span className="arrow">↳</span> {c.section_title || "source"}
+                                </a>
+                              ) : null}
+                              <span style={{ flex: 1 }} />
+                              <Link className="btn ghost" to="/changes">
+                                Trace evidence ↳
+                              </Link>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+              <div className="orient-hints mono">
+                <span>↑↓ move</span>
+                <span>↵ open</span>
+                <span>↳ evidence</span>
+              </div>
+            </section>
 
-          {/* TIER 2 — control proxies + material movements */}
-          <div className="dash-split">
-            <ControlPanel controllers={data.controllers} dependencies={data.dependencies} />
-            <MovementsPanel movements={data.movements} />
+            {/* SIDE: 02 globe · 03 matrix · investigate */}
+            <aside className="orient-side">
+              <div>
+                <div className="orient-panel-head">
+                  <Link to="/world" className="orient-panel-link">
+                    <span className="idx">02</span> Live signals <span className="arr">→</span>
+                  </Link>
+                  <span className="orient-feedbadge mono">
+                    <span className="dot off" /> GDELT · RSS <span className="stub-badge">soon</span>
+                  </span>
+                </div>
+                <Link to="/world" className="orient-globe">
+                  <SignalGlobe />
+                  <span className="orient-globe-cap mono">news + flagged changes · open World →</span>
+                </Link>
+              </div>
+
+              <div>
+                <div className="orient-panel-head">
+                  <Link to="/risk" className="orient-panel-link">
+                    <span className="idx">03</span> Where your risk concentrates <span className="arr">→</span>
+                  </Link>
+                  <span className="src-link">
+                    <span className="arrow">↳</span> Exhibit-21
+                  </span>
+                </div>
+                <MiniMatrix m={data.matrix} />
+              </div>
+
+              {dense ? (
+                <div className="orient-investigate">
+                  <div style={{ flex: 1 }}>
+                    <div className="orient-investigate-kick">Investigate first</div>
+                    <div className="orient-investigate-body">
+                      {dense.sector} exposure — {dense.count} holding{dense.count === 1 ? "" : "s"} concentrated in{" "}
+                      {dense.region.full}.
+                    </div>
+                  </div>
+                  <Link to="/risk" className="btn">
+                    Open thread →
+                  </Link>
+                </div>
+              ) : null}
+            </aside>
           </div>
-
-          {/* TIER 3 — git-log progress history */}
-          <section className="stack gap">
-            <PanelHead
-              idx="03"
-              kicker="Progress history"
-              title="What changed, in order"
-              sub="Material disclosure diffs and extracted events as one commit log. Filter by lens; open any commit for its evidence."
-            />
-            <ProgressLog commits={data.commits} />
-          </section>
         </>
       ) : null}
     </div>
   );
 }
 
-function Cell({ num, label, alert }: { num: number; label: string; alert?: boolean }) {
+/** Compact sector × region heatmap (top sectors) — links out to full /risk. */
+function MiniMatrix({ m }: { m: RiskMatrix }) {
+  // show sectors that have any footprint first, capped, so the panel stays tight
+  const order = m.sectors
+    .map((s, ri) => ({ s, ri, tot: m.matrix[ri].reduce((a, b) => a + b, 0) }))
+    .sort((a, b) => b.tot - a.tot)
+    .slice(0, 5);
+  const colTotals = REGIONS.map((_, ci) => m.regionKeys.get(REGIONS[ci].key)!.size);
   return (
-    <div className="cell">
-      <div className={`num${alert ? " alert" : ""}`}>{num}</div>
-      <div className="lbl">{label}</div>
-    </div>
-  );
-}
-
-function CompanyChip({ company }: { company: { key: string; name: string } }) {
-  return (
-    <Link to={`/companies/${company.key}`} className="pill accent">
-      {company.name}
-    </Link>
-  );
-}
-
-function ControlPanel({
-  controllers,
-  dependencies,
-}: {
-  controllers: BridgeController[];
-  dependencies: SharedDependency[];
-}) {
-  const hasAny = controllers.length > 0 || dependencies.length > 0;
-  return (
-    <section className="stack gap">
-      <PanelHead
-        idx="02"
-        kicker="Ownership & control"
-        title="Who plausibly controls what"
-        sub="No disclosure in scope declares ultimate ownership. These are the strongest control proxies the graph supports, shown as inferences."
-      />
-      <div className="card stack gap">
-        {!hasAny ? (
-          <span className="faint">No cross-company control signals in the current graph.</span>
-        ) : null}
-
-        {controllers.length > 0 ? (
-          <div>
-            <SubHead>Bridge controllers</SubHead>
-            {controllers.map((c) => (
-              <div className="ctrl-row" key={c.person.id}>
-                <span className="ctrl-actor tier-proxy">
-                  <span className="glyph">{kindGlyph(c.person.kind)}</span>
-                  <span className="nm">{c.person.name}</span>
-                </span>
-                <span className="ctrl-arrow">leads →</span>
-                <div className="ctrl-targets">
-                  {c.companies.map((co) => (
-                    <CompanyChip company={co} key={co.key} />
-                  ))}
-                </div>
-              </div>
-            ))}
-            <div className="ctrl-note">
-              <span className="inf">inferred</span>
-              Control implied by leading more than one company; projected from the curated entity graph, not a
-              declared ownership relationship. Open a company for its source disclosures.
-            </div>
+    <div className="orient-matrix">
+      <div className="orient-mrow orient-mhead">
+        <div className="orient-mlabel" />
+        {REGIONS.map((r) => (
+          <div key={r.key} className="orient-mcolh">
+            {r.short}
           </div>
-        ) : null}
-
-        {dependencies.length > 0 ? (
-          <div>
-            <SubHead>Shared dependency</SubHead>
-            {dependencies.map((d) => (
-              <div className="ctrl-row" key={d.supplier.id}>
-                <span className="ctrl-actor tier-supply">
-                  <span className="glyph">{kindGlyph(d.supplier.kind)}</span>
-                  <span className="nm">{d.supplier.name}</span>
-                </span>
-                <span className="ctrl-arrow">supplies →</span>
-                <div className="ctrl-targets">
-                  {d.companies.map((co) => (
-                    <CompanyChip company={co} key={co.key} />
-                  ))}
-                </div>
-              </div>
-            ))}
-            <div className="ctrl-note">
-              <span className="inf">exposure</span>
-              A single supplier that several companies depend on: a shared point of failure, not a controller.
-            </div>
-          </div>
-        ) : null}
+        ))}
+        <div className="orient-msig">hold</div>
       </div>
-    </section>
-  );
-}
-
-function MovementsPanel({ movements }: { movements: Array<ChangeSet & { companyName: string }> }) {
-  return (
-    <section className="stack gap">
-      <PanelHead
-        idx="—"
-        kicker="Material movements"
-        title="Biggest disclosure shifts"
-        sub="Ranked by how much each disclosure rewrote the prior one."
-      />
-      <div className="card stack gap-sm">
-        {movements.length === 0 ? (
-          <span className="faint">No material changes detected across the universe.</span>
-        ) : (
-          movements.slice(0, 5).map((m) => {
-            const total = m.added_count + m.removed_count || 1;
+      {order.map(({ s, ri, tot }) => (
+        <div className="orient-mrow" key={s.sector}>
+          <div className="orient-mlabel" title={s.sector}>
+            {s.sector}
+          </div>
+          {m.matrix[ri].map((v, ci) => {
+            const pct = v > 0 ? Math.round(12 + (v / m.max) * 68) : 0;
             return (
-              <Link
-                to={`/companies/${m.company_slug}`}
-                className="stack gap-sm"
-                key={m.current_canonical_id}
-                style={{ padding: "10px 0", borderTop: "1px solid var(--border)" }}
-              >
-                <div className="row-between">
-                  <span className="commit-co">{m.companyName}</span>
-                  <span className="wrap" style={{ gap: 6 }}>
-                    <span className="pill" style={{ color: "var(--good)" }}>+{m.added_count}</span>
-                    <span className="pill" style={{ color: "var(--danger)" }}>−{m.removed_count}</span>
-                  </span>
-                </div>
-                <div
-                  style={{ height: 6, borderRadius: 999, overflow: "hidden", display: "flex", background: "var(--bg-elev-2)" }}
-                  aria-hidden="true"
-                >
-                  <span style={{ width: `${(m.added_count / total) * 100}%`, background: "var(--good)" }} />
-                  <span style={{ width: `${(m.removed_count / total) * 100}%`, background: "var(--danger)" }} />
-                </div>
-                <div className="faint truncate" style={{ fontSize: 13 }}>
-                  {m.current_title ?? `${m.added_count} added · ${m.removed_count} removed`}
-                </div>
-              </Link>
+              <div
+                key={ci}
+                className="orient-mcell"
+                title={`${s.sector} × ${REGIONS[ci].full} — ${v} holding${v === 1 ? "" : "s"}`}
+                style={{ background: v > 0 ? `color-mix(in oklab, var(--accent) ${pct}%, transparent)` : "var(--bg-elev-2)" }}
+              />
             );
-          })
-        )}
+          })}
+          <div className="orient-msig mono">{tot}</div>
+        </div>
+      ))}
+      <div className="orient-mrow orient-mfoot">
+        <div className="orient-mlabel">Region Σ</div>
+        {colTotals.map((n, i) => (
+          <div className="orient-msig mono" key={i}>
+            {n}
+          </div>
+        ))}
+        <div className="orient-msig" />
       </div>
-    </section>
-  );
-}
-
-function SubHead({ children }: { children: ReactNode }) {
-  return (
-    <div className="relgroup-head" style={{ marginBottom: 11 }}>
-      <h4>{children}</h4>
     </div>
   );
 }
 
-function DashboardSkeleton() {
+function OrientSkeleton() {
   return (
-    <div className="stack gap-lg" aria-hidden="true">
-      <Skeleton h={74} />
-      <div className="stack gap">
-        <Skeleton h={18} w={220} />
+    <div aria-hidden="true">
+      <Skeleton h={92} />
+      <div style={{ height: 16 }} />
+      <Skeleton h={28} w="70%" />
+      <div style={{ height: 20 }} />
+      <div className="orient-grid">
         <Skeleton h={420} />
+        <div className="stack gap">
+          <Skeleton h={190} />
+          <Skeleton h={190} />
+        </div>
       </div>
-      <div className="dash-split">
-        <Skeleton h={260} />
-        <Skeleton h={260} />
-      </div>
-      <Skeleton h={320} />
     </div>
   );
 }

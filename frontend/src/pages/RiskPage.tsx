@@ -6,90 +6,10 @@
 // their source. No weights, no fabricated numbers — a curated 53-company sample.
 
 import { useMemo, useState } from "react";
-import { api, type EntityRef, type GicsSector, type JurisdictionExposure } from "../api";
+import { type EntityRef } from "../api";
 import { ErrorView, PanelHead, Skeleton } from "../components";
 import { useAsync } from "../hooks";
-
-interface Region {
-  key: string;
-  short: string;
-  full: string;
-  countries: string[];
-}
-
-// Region → member jurisdictions (all confirmed to carry EX-21 footprints in the
-// graph). Geography is a static classification, not fabricated data.
-const REGIONS: Region[] = [
-  { key: "na", short: "N.Am", full: "North America", countries: ["United States", "Canada", "Mexico"] },
-  { key: "eu", short: "Europe", full: "Europe", countries: ["United Kingdom", "Germany", "France", "Ireland", "Netherlands", "Switzerland", "Luxembourg"] },
-  { key: "ea", short: "E.Asia", full: "East Asia", countries: ["China", "Japan", "Singapore"] },
-  { key: "sa", short: "S.Asia", full: "South Asia", countries: ["India"] },
-  { key: "la", short: "LatAm", full: "Latin America", countries: ["Brazil"] },
-];
-
-const ALL_COUNTRIES = Array.from(new Set(REGIONS.flatMap((r) => r.countries)));
-
-interface Derived {
-  sectors: GicsSector[];
-  sectorOf: Map<string, string>; // company key → sector name
-  sectorCompanies: Map<string, EntityRef[]>; // sector → distinct companies
-  regionKeys: Map<string, Set<string>>; // region key → company keys w/ footprint
-  // company key → region key → { countries where it has a footprint, EX-21 source }
-  info: Map<string, Map<string, { countries: string[]; source: string | null }>>;
-  matrix: number[][]; // [sectorIdx][regionIdx]
-  max: number;
-}
-
-function derive(gics: GicsSector[], results: Array<readonly [string, JurisdictionExposure]>): Derived {
-  const countryRegion = new Map<string, string>();
-  for (const r of REGIONS) for (const c of r.countries) countryRegion.set(c, r.key);
-
-  const sectorOf = new Map<string, string>();
-  const sectorCompanies = new Map<string, EntityRef[]>();
-  for (const s of gics) {
-    const seen = new Set<string>();
-    const list: EntityRef[] = [];
-    for (const sub of s.sub_industries) {
-      for (const co of sub.companies) {
-        if (!sectorOf.has(co.key)) sectorOf.set(co.key, s.sector);
-        if (!seen.has(co.key)) {
-          seen.add(co.key);
-          list.push(co);
-        }
-      }
-    }
-    sectorCompanies.set(s.sector, list);
-  }
-
-  const regionKeys = new Map<string, Set<string>>();
-  for (const r of REGIONS) regionKeys.set(r.key, new Set());
-  const info = new Map<string, Map<string, { countries: string[]; source: string | null }>>();
-
-  for (const [country, expo] of results) {
-    const rk = countryRegion.get(country);
-    if (!rk) continue;
-    for (const f of expo.direct) {
-      regionKeys.get(rk)!.add(f.company.key);
-      let byRegion = info.get(f.company.key);
-      if (!byRegion) info.set(f.company.key, (byRegion = new Map()));
-      let cell = byRegion.get(rk);
-      if (!cell) byRegion.set(rk, (cell = { countries: [], source: null }));
-      if (!cell.countries.includes(country)) cell.countries.push(country);
-      if (!cell.source && f.source) cell.source = f.source;
-    }
-  }
-
-  const matrix = gics.map((s) =>
-    REGIONS.map((r) => {
-      const keys = regionKeys.get(r.key)!;
-      let n = 0;
-      for (const co of sectorCompanies.get(s.sector) ?? []) if (keys.has(co.key)) n++;
-      return n;
-    }),
-  );
-  const max = Math.max(1, ...matrix.flat());
-  return { sectors: gics, sectorOf, sectorCompanies, regionKeys, info, matrix, max };
-}
+import { loadRiskMatrix, REGIONS, type RiskMatrix } from "../riskmatrix";
 
 interface DrillRow {
   co: EntityRef;
@@ -99,19 +19,8 @@ interface DrillRow {
 }
 
 export function RiskPage() {
-  const load = useAsync(
-    () =>
-      Promise.all([
-        api.gicsBreakdown(),
-        Promise.all(ALL_COUNTRIES.map((c) => api.jurisdictionExposure(c).then((r) => [c, r] as const))),
-      ]),
-    [],
-  );
-
-  const d = useMemo<Derived | null>(() => {
-    if (!load.data) return null;
-    return derive(load.data[0], load.data[1]);
-  }, [load.data]);
+  const load = useAsync(() => loadRiskMatrix(), []);
+  const d: RiskMatrix | null = load.data;
 
   // selected {r,c}; -1 means "whole row/column". Default to the densest cell.
   const [sel, setSel] = useState<{ r: number; c: number } | null>(null);
@@ -169,7 +78,7 @@ export function RiskPage() {
   }, [d]);
 
   return (
-    <div className="risk-page">
+    <div className="risk-page spatial-page">
       <div className="page-head">
         <div className="kicker">
           <span className="idx">01</span> Risk concentration

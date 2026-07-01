@@ -93,7 +93,7 @@ export function CountryPage() {
         (networkN ? `, and ${networkN} more are referenced in filings here.` : ".");
 
   return (
-    <div className="country-page">
+    <div className="country-page spatial-page">
       <div className="page-head row-between" style={{ display: "flex", alignItems: "flex-end", gap: 16 }}>
         <div>
           <div className="kicker">Country · exposure &amp; economic intelligence</div>
