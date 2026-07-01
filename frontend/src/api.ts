@@ -285,6 +285,29 @@ export interface PortfolioPrices {
   note?: string | null;
 }
 
+// Country macro (World Bank GDP/inflation + benchmark-index move).
+export interface MacroMetric {
+  label: string;
+  value?: number | null;
+  unit: string;
+  period?: string | null;
+  source: string;
+}
+export interface IndexQuote {
+  name: string;
+  symbol: string;
+  price: number;
+  change_pct: number;
+  as_of?: string | null;
+}
+export interface CountryMacro {
+  country: string;
+  connected: boolean;
+  metrics: MacroMetric[];
+  index?: IndexQuote | null;
+  note?: string | null;
+}
+
 export interface EntityProfile {
   entity: EntityRef;
   properties: Record<string, unknown>;
@@ -559,6 +582,7 @@ export const api = {
   marketTierExposure: (tier: string) =>
     get<MarketTierExposure>(`/graph/market-tier-exposure?tier=${encodeURIComponent(tier)}`),
   portfolioPrices: () => get<PortfolioPrices>("/portfolio/prices"),
+  macro: (country: string) => get<CountryMacro>(`/macro?country=${encodeURIComponent(country)}`),
   retrieve: (query: string, topK = 6) => post<RetrieveResponse>("/retrieve", { query, top_k: topK }),
   // intelligence
   dashboard: () => get<Dashboard>("/dashboard"),
