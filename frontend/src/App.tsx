@@ -1,20 +1,40 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { api, NOTIFICATIONS_EVENT } from "./api";
 import { useAuth } from "./auth";
 import { useAsync } from "./hooks";
+import {
+  type Icon,
+  IconBell,
+  IconCard,
+  IconChanged,
+  IconChevrons,
+  IconCompany,
+  IconCountry,
+  IconDashboard,
+  IconFind,
+  IconGear,
+  IconLogout,
+  IconRisk,
+  IconShield,
+  IconSignals,
+} from "./icons";
 import { AdminPage } from "./pages/AdminPage";
 import { AlertsPage } from "./pages/AlertsPage";
-import { AtlasPage } from "./pages/AtlasPage";
+import { AtlasStakeholderPage } from "./pages/AtlasStakeholderPage";
 import { AskPage } from "./pages/AskPage";
+import { ChangesPage } from "./pages/ChangesPage";
 import { CompaniesPage } from "./pages/CompaniesPage";
 import { CompanyDetailPage } from "./pages/CompanyDetailPage";
 import { ComparePage } from "./pages/ComparePage";
+import { CountryPage } from "./pages/CountryPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { RiskPage } from "./pages/RiskPage";
 import { DocumentsPage } from "./pages/DocumentsPage";
 import { DocumentDetailPage } from "./pages/DocumentDetailPage";
 import { GraphPage } from "./pages/GraphPage";
 import { LandingPage } from "./pages/LandingPage";
+import { LiveSignalsPage } from "./pages/LiveSignalsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MonitoringPage } from "./pages/MonitoringPage";
 import { PortfolioPage } from "./pages/PortfolioPage";
@@ -22,36 +42,40 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { SourcesPage } from "./pages/SourcesPage";
 import { WatchlistsPage } from "./pages/WatchlistsPage";
 import { WorkspacesPage } from "./pages/WorkspacesPage";
-import { WorldPage } from "./pages/WorldPage";
+// TODO(retire): WorldPage was the markets-globe World view, superseded by
+// LiveSignalsPage at /world. File kept for reference; delete once signed off.
 
-const NAV = [
-  { to: "/world", label: "World", icon: "◍" },
-  { to: "/atlas", label: "Company graph", icon: "✦" },
-  { to: "/dashboard", label: "Dashboard", icon: "◧" },
-  { to: "/search", label: "Search", icon: "⌕" },
-  { to: "/companies", label: "Companies", icon: "▤" },
-  { to: "/graph", label: "Entity graph", icon: "◬" },
-  { to: "/portfolio", label: "Portfolio", icon: "▣" },
-  { to: "/alerts", label: "Alerts", icon: "🔔" },
-  { to: "/watchlists", label: "Watchlists", icon: "◎" },
-  { to: "/workspaces", label: "Workspaces", icon: "❏" },
-  { to: "/documents", label: "Documents", icon: "▦" },
-  { to: "/compare", label: "Compare", icon: "⇄" },
-  { to: "/sources", label: "Sources", icon: "⌥" },
-  { to: "/monitoring", label: "Monitoring", icon: "◉" },
-  { to: "/admin", label: "Admin", icon: "⌘" },
-  { to: "/settings", label: "Settings", icon: "⚙" },
+// Primary nav = the design-pack product spine (World → Country → Company, plus
+// the analytical reads). Legacy surfaces are archived from the nav below.
+const NAV: { to: string; label: string; Icon: Icon }[] = [
+  { to: "/dashboard", label: "Dashboard", Icon: IconDashboard },
+  { to: "/changes", label: "What changed", Icon: IconChanged },
+  { to: "/world", label: "Live signals", Icon: IconSignals },
+  { to: "/risk", label: "Risk concentration", Icon: IconRisk },
+  { to: "/country", label: "Country", Icon: IconCountry },
+  { to: "/atlas", label: "Company graph", Icon: IconCompany },
+  { to: "/search", label: "Find", Icon: IconFind },
 ];
+
+// TODO(retire): legacy surfaces superseded by the design-pack product. They stay
+// ROUTED (reachable by URL; Settings/Admin also reach via the profile menu, Alerts
+// via the bell) but are pulled from the primary nav pending final review. Archive
+// or delete these pages + routes once the new product is signed off:
+//   /companies /graph /portfolio /watchlists /workspaces /documents /compare
+//   /sources /monitoring   (+ their components under src/pages/)
 
 const CRUMBS: Array<[RegExp, string]> = [
   [/^\/world/, "World markets"],
+  [/^\/country/, "Country exposure"],
   [/^\/atlas/, "Company graph"],
   [/^\/dashboard/, "Dashboard"],
+  [/^\/changes/, "What changed"],
   [/^\/search/, "Search the evidence"],
   [/^\/companies\/.+/, "Company"],
   [/^\/companies$/, "Companies"],
   [/^\/graph/, "Entity graph"],
   [/^\/portfolio/, "Portfolio"],
+  [/^\/risk/, "Risk concentration"],
   [/^\/alerts/, "Alerts"],
   [/^\/watchlists/, "Watchlists"],
   [/^\/workspaces/, "Workspaces"],
@@ -104,15 +128,120 @@ function NotificationBell() {
       aria-label={unread > 0 ? `Alerts, ${unread} unread` : "Alerts"}
       title={unread > 0 ? `${unread} unread alert${unread === 1 ? "" : "s"}` : "Alerts"}
     >
-      <span aria-hidden="true">🔔</span>
+      <IconBell />
       {unread > 0 ? <span className="bell-badge">{unread > 99 ? "99+" : unread}</span> : null}
     </NavLink>
+  );
+}
+
+type Theme = "dark" | "light";
+
+function UserMenu({
+  email,
+  theme,
+  setTheme,
+  onLogout,
+}: {
+  email: string;
+  theme: Theme;
+  setTheme: (t: Theme) => void;
+  onLogout: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onEsc);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onEsc);
+    };
+  }, [open]);
+
+  const initials = (email.split("@")[0] || email).slice(0, 2).toUpperCase();
+
+  return (
+    <div className="usermenu" ref={ref}>
+      <button
+        className="usermenu-btn"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={email}
+      >
+        {initials}
+      </button>
+      {open ? (
+        <div className="usermenu-pop" role="menu">
+          <div className="usermenu-id">
+            <div className="usermenu-avatar">{initials}</div>
+            <div style={{ minWidth: 0 }}>
+              <div className="usermenu-email" title={email}>{email}</div>
+              <div className="usermenu-role mono">Signed in</div>
+            </div>
+          </div>
+
+          <div className="usermenu-sec">
+            <div className="usermenu-sec-l">Appearance</div>
+            <div className="segmented">
+              <button className={theme === "dark" ? "active" : ""} onClick={() => setTheme("dark")}>Dark</button>
+              <button className={theme === "light" ? "active" : ""} onClick={() => setTheme("light")}>Light</button>
+            </div>
+          </div>
+
+          <div className="usermenu-links">
+            <NavLink to="/settings" className="usermenu-item" role="menuitem" onClick={() => setOpen(false)}>
+              <IconGear /> Settings
+            </NavLink>
+            <NavLink to="/settings" className="usermenu-item" role="menuitem" onClick={() => setOpen(false)}>
+              <IconCard /> Billing &amp; subscription
+            </NavLink>
+            <NavLink to="/admin" className="usermenu-item" role="menuitem" onClick={() => setOpen(false)}>
+              <IconShield /> Admin console
+            </NavLink>
+          </div>
+
+          <button className="usermenu-item danger" role="menuitem" onClick={onLogout}>
+            <IconLogout /> Sign out
+          </button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
 function ProtectedLayout() {
   const { email, ready, logout } = useAuth();
   const location = useLocation();
+  const [theme, setTheme] = useState<Theme>(() =>
+    (typeof localStorage !== "undefined" && localStorage.getItem("coruscant.theme")) === "light" ? "light" : "dark",
+  );
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      localStorage.setItem("coruscant.theme", theme);
+    } catch {
+      /* ignore */
+    }
+  }, [theme]);
+
+  const [navCollapsed, setNavCollapsed] = useState<boolean>(
+    () => (typeof localStorage !== "undefined" && localStorage.getItem("coruscant.navCollapsed")) === "1",
+  );
+  useEffect(() => {
+    try {
+      localStorage.setItem("coruscant.navCollapsed", navCollapsed ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [navCollapsed]);
 
   if (!ready) {
     return (
@@ -125,17 +254,24 @@ function ProtectedLayout() {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
 
+  // The active nav already names the page, so we don't repeat it in the bar —
+  // the crumb only drives the browser tab title.
   const crumb = CRUMBS.find(([re]) => re.test(location.pathname))?.[1] ?? "";
-  // Atlas and World are full-bleed spatial surfaces: they opt out of the centered,
-  // padded content column so the canvas/globe fills the viewport.
-  const fullBleed = /^\/(atlas|world)/.test(location.pathname);
+  useEffect(() => {
+    document.title = crumb ? `Coruscant · ${crumb}` : "Coruscant";
+  }, [crumb]);
+
+  // Spatial surfaces opt out of the centered, padded content column so the
+  // canvas/globe/wide layouts fill the viewport (they carry their own padding via
+  // .spatial-page, or a full-bleed canvas for atlas/world).
+  const fullBleed = /^\/(atlas|world|dashboard|changes|risk|country)/.test(location.pathname);
 
   return (
-    <div className="app">
+    <div className={`app${navCollapsed ? " nav-collapsed" : ""}`}>
       <aside className="sidebar">
-        <NavLink to="/world" className="brand">
+        <NavLink to="/world" className="brand" title="Coruscant">
           <div className="logo" />
-          <div>
+          <div className="brand-text">
             <div className="name">Coruscant</div>
             <div className="tag">Intelligence</div>
           </div>
@@ -144,9 +280,9 @@ function ProtectedLayout() {
         <nav className="nav">
           <div className="label">Workspace</div>
           {NAV.map((item) => (
-            <NavLink key={item.to} to={item.to}>
-              <span className="ico">{item.icon}</span>
-              {item.label}
+            <NavLink key={item.to} to={item.to} title={item.label}>
+              <item.Icon />
+              <span className="nav-label">{item.label}</span>
             </NavLink>
           ))}
         </nav>
@@ -158,16 +294,19 @@ function ProtectedLayout() {
 
       <main className="main">
         <header className="topbar">
-          <div className="crumb">{crumb}</div>
+          <button
+            className="nav-toggle"
+            onClick={() => setNavCollapsed((c) => !c)}
+            title={navCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label={navCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-pressed={navCollapsed}
+          >
+            <IconChevrons />
+          </button>
           <div className="stats">
             <HealthPills />
             <NotificationBell />
-            <span className="pill accent" title={email}>
-              {email}
-            </span>
-            <button className="btn ghost" onClick={logout} style={{ padding: "6px 12px" }}>
-              Sign out
-            </button>
+            <UserMenu email={email} theme={theme} setTheme={setTheme} onLogout={logout} />
           </div>
         </header>
         <div className={fullBleed ? "content content-full" : "content"}>
@@ -184,14 +323,21 @@ export default function App() {
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route element={<ProtectedLayout />}>
-        <Route path="/world" element={<WorldPage />} />
-        <Route path="/atlas" element={<AtlasPage />} />
+        <Route path="/world" element={<LiveSignalsPage />} />
+        <Route path="/country" element={<CountryPage />} />
+        {/* TODO(retire): the 3D force-graph AtlasPage is superseded by the
+            labeled stakeholder map. File src/pages/AtlasPage.tsx (+ Atlas3D,
+            force3d, spatial, graph helpers it uses) kept for reference; delete
+            once the stakeholder map is signed off. */}
+        <Route path="/atlas" element={<AtlasStakeholderPage />} />
         <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/changes" element={<ChangesPage />} />
         <Route path="/search" element={<AskPage />} />
         <Route path="/companies" element={<CompaniesPage />} />
         <Route path="/companies/:slug" element={<CompanyDetailPage />} />
         <Route path="/graph" element={<GraphPage />} />
         <Route path="/portfolio" element={<PortfolioPage />} />
+        <Route path="/risk" element={<RiskPage />} />
         <Route path="/alerts" element={<AlertsPage />} />
         <Route path="/watchlists" element={<WatchlistsPage />} />
         <Route path="/workspaces" element={<WorkspacesPage />} />

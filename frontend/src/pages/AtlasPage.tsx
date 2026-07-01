@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { api, type ChangeSet, type Company, type EntityProfile, type Relationship } from "../api";
+import { api, type AnalysisReport, type ChangeSet, type Company, type EntityProfile, type Relationship } from "../api";
 import { Cat, Loading, RelationGroups, Skeleton } from "../components";
 import { graphStats, GraphIncompleteNote, type GEdge, type GNode, useRelGraph } from "../graph";
 import { useAsync } from "../hooks";
@@ -1002,6 +1002,8 @@ function EvidenceRail({
 
       {node.tracked ? <WhatChanged slug={node.key} changeSets={changeSets} /> : null}
 
+      {node.kind === "Company" ? <AtlasAsk slug={node.key} name={node.name} /> : null}
+
       {loading ? (
         <div className="stack gap-sm" style={{ marginTop: 14 }}>
           <Skeleton h={16} w={140} />
@@ -1016,6 +1018,99 @@ function EvidenceRail({
         </span>
       )}
     </aside>
+  );
+}
+
+// Grounded "ask" — the flagship pack interaction, reconciled into the Atlas
+// rail. Answers strictly from the evidence graph via /analyst (never fabricated:
+// a company with no material signal says so). Every concern carries its source.
+const ATLAS_ASK_EXAMPLES = ["What are the key risks?", "What changed recently?", "What are the opportunities?"];
+
+function AtlasAsk({ slug, name }: { slug: string; name: string }) {
+  const [q, setQ] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [report, setReport] = useState<AnalysisReport | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const run = async (question: string) => {
+    const query = question.trim();
+    if (!query || loading) return;
+    setLoading(true);
+    setErr(null);
+    try {
+      setReport(await api.analyst(slug, query));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="rail-section atlas-ask">
+      <div className="rail-section-head">Ask · grounded in the evidence</div>
+      <div className="atlas-ask-bar">
+        <input
+          className="atlas-ask-input"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") run(q);
+          }}
+          placeholder={`Ask about ${name}…`}
+          aria-label={`Ask about ${name}`}
+        />
+        <button className="btn" onClick={() => run(q)} disabled={loading}>
+          {loading ? "…" : "Ask"}
+        </button>
+      </div>
+      {!report && !loading && !err ? (
+        <div className="atlas-ask-ex">
+          {ATLAS_ASK_EXAMPLES.map((ex) => (
+            <button
+              key={ex}
+              className="chip"
+              onClick={() => {
+                setQ(ex);
+                run(ex);
+              }}
+            >
+              {ex}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {loading ? <p className="rail-expand-note">Coruscant is reading the evidence…</p> : null}
+      {err ? (
+        <p className="rail-expand-note" style={{ color: "var(--danger)" }}>
+          Could not reach the analyst: {err}
+        </p>
+      ) : null}
+      {report ? (
+        <div className="atlas-ask-card">
+          <div className="atlas-ask-headline">{report.headline}</div>
+          {report.concerns.slice(0, 4).map((c, i) => (
+            <div className="atlas-ask-concern" key={i}>
+              <div className="atlas-ask-concern-top">
+                <span className="atlas-ask-sev" data-sev={c.severity}>
+                  {c.severity}
+                </span>
+                <span className="atlas-ask-concern-title">{c.title}</span>
+              </div>
+              <div className="muted small">{c.rationale}</div>
+              {c.evidence[0]?.source_uri ? (
+                <a className="src-link" href={c.evidence[0].source_uri} target="_blank" rel="noreferrer">
+                  <span className="arrow">↳</span> {c.evidence[0].section_title || "source"}
+                </a>
+              ) : null}
+            </div>
+          ))}
+          <div className="atlas-ask-foot mono">
+            {report.disclaimer} · {report.generator}
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
