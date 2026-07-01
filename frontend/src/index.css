@@ -3754,3 +3754,140 @@ button.changes-row.active {
     border-bottom: 1px solid var(--border);
   }
 }
+
+/* ---- Atlas grounded ask-bar (reconciled into the evidence rail) ----------- */
+.atlas-ask-bar {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.atlas-ask-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 8px 11px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  outline: none;
+}
+.atlas-ask-input:focus {
+  border-color: var(--accent-border);
+}
+.atlas-ask .btn {
+  padding: 8px 15px;
+}
+.atlas-ask-ex {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.atlas-ask-ex .chip {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+.atlas-ask-card {
+  margin-top: 10px;
+  border: 1px solid var(--accent-border);
+  background: var(--accent-soft);
+  border-radius: var(--radius-sm);
+  padding: 11px 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.atlas-ask-headline {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text);
+}
+.atlas-ask-concern {
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.atlas-ask-concern-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.atlas-ask-concern-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.atlas-ask-sev {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: var(--text-faint);
+  border: 1px solid var(--border-strong);
+}
+.atlas-ask-sev[data-sev="high"] {
+  color: var(--danger);
+  border-color: var(--cat-disc-border);
+}
+.atlas-ask-sev[data-sev="medium"] {
+  color: var(--evidence);
+  border-color: var(--evidence-border);
+}
+.atlas-ask-foot {
+  font-size: 10px;
+  color: var(--text-faint);
+  line-height: 1.5;
+}
+
+/* ---- Dashboard orientation strip (deep-links to the spatial surfaces) ----- */
+.orient-strip {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+.orient-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+  text-decoration: none;
+  transition: box-shadow 0.13s ease, transform 0.13s ease;
+}
+.orient-card:hover {
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+  transform: translateY(-1px);
+}
+.orient-card .oc-kicker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 650;
+}
+.orient-card .oc-title {
+  font-size: 14px;
+  color: var(--text);
+  font-weight: 560;
+}
+.orient-card .oc-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+@media (max-width: 900px) {
+  .orient-strip {
+    grid-template-columns: 1fr;
+  }
+}

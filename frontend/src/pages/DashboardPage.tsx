@@ -132,6 +132,25 @@ export function DashboardPage() {
             <Cell num={data.ribbon.links} label="Graph connections" />
           </div>
 
+          {/* Orientation — the three spatial reads, one click away. */}
+          <nav className="orient-strip" aria-label="Orientation">
+            <Link className="orient-card" to="/changes">
+              <span className="oc-kicker"><span className="idx">01</span> What changed</span>
+              <span className="oc-title">{data.ribbon.material} material changes</span>
+              <span className="oc-sub">Overnight risks, opportunities and events — evidence first, with the line-level diff behind each.</span>
+            </Link>
+            <Link className="orient-card" to="/risk">
+              <span className="oc-kicker"><span className="idx">02</span> Where risk concentrates</span>
+              <span className="oc-title">Sector × region matrix</span>
+              <span className="oc-sub">Where the book clusters by GICS sector and Exhibit-21 legal footprint. Drill to the named holdings.</span>
+            </Link>
+            <Link className="orient-card" to="/country">
+              <span className="oc-kicker"><span className="idx">03</span> Country exposure</span>
+              <span className="oc-title">The World → Country → Company rung</span>
+              <span className="oc-sub">Per-country footprint, chokepoints and what changed among the holdings tied there.</span>
+            </Link>
+          </nav>
+
           {/* TIER 1 — relationship map (focal) */}
           <section className="stack gap">
             <PanelHead
