@@ -14,24 +14,31 @@ export interface Region {
 }
 
 // Region → member jurisdictions (all confirmed to carry EX-21 footprints in the
-// graph). Geography is a static classification, not fabricated data.
+// graph). Ordered E.Asia-first to match the design pack; geography is a static
+// classification, not fabricated data.
 export const REGIONS: Region[] = [
+  { key: "ea", short: "E.Asia", full: "East Asia", countries: ["China", "Japan", "Singapore", "South Korea", "Hong Kong", "Taiwan"] },
   { key: "na", short: "N.Am", full: "North America", countries: ["United States", "Canada", "Mexico"] },
   { key: "eu", short: "Europe", full: "Europe", countries: ["United Kingdom", "Germany", "France", "Ireland", "Netherlands", "Switzerland", "Luxembourg"] },
-  { key: "ea", short: "E.Asia", full: "East Asia", countries: ["China", "Japan", "Singapore"] },
   { key: "sa", short: "S.Asia", full: "South Asia", countries: ["India"] },
-  { key: "la", short: "LatAm", full: "Latin America", countries: ["Brazil"] },
+  { key: "la", short: "LatAm", full: "Latin America", countries: ["Brazil", "Argentina", "Chile"] },
 ];
 
 export const ALL_COUNTRIES = Array.from(new Set(REGIONS.flatMap((r) => r.countries)));
 
+interface CellInfo {
+  countries: string[];
+  subs: number; // EX-21 subsidiaries in this region
+  source: string | null;
+}
+
 export interface RiskMatrix {
   sectors: GicsSector[];
   sectorOf: Map<string, string>; // company key → sector name
+  subOf: Map<string, { sub: string; code: string | null }>; // company key → GICS sub-industry
   sectorCompanies: Map<string, EntityRef[]>; // sector → distinct companies
   regionKeys: Map<string, Set<string>>; // region key → company keys w/ footprint
-  // company key → region key → { countries where it has a footprint, EX-21 source }
-  info: Map<string, Map<string, { countries: string[]; source: string | null }>>;
+  info: Map<string, Map<string, CellInfo>>; // company key → region key → footprint detail
   matrix: number[][]; // [sectorIdx][regionIdx]
   max: number;
 }
@@ -50,6 +57,7 @@ export function derive(gics: GicsSector[], results: Array<readonly [string, Juri
   for (const r of REGIONS) for (const c of r.countries) countryRegion.set(c, r.key);
 
   const sectorOf = new Map<string, string>();
+  const subOf = new Map<string, { sub: string; code: string | null }>();
   const sectorCompanies = new Map<string, EntityRef[]>();
   for (const s of gics) {
     const seen = new Set<string>();
@@ -57,6 +65,7 @@ export function derive(gics: GicsSector[], results: Array<readonly [string, Juri
     for (const sub of s.sub_industries) {
       for (const co of sub.companies) {
         if (!sectorOf.has(co.key)) sectorOf.set(co.key, s.sector);
+        if (!subOf.has(co.key)) subOf.set(co.key, { sub: sub.sub_industry, code: sub.code ?? null });
         if (!seen.has(co.key)) {
           seen.add(co.key);
           list.push(co);
@@ -68,7 +77,7 @@ export function derive(gics: GicsSector[], results: Array<readonly [string, Juri
 
   const regionKeys = new Map<string, Set<string>>();
   for (const r of REGIONS) regionKeys.set(r.key, new Set());
-  const info = new Map<string, Map<string, { countries: string[]; source: string | null }>>();
+  const info = new Map<string, Map<string, CellInfo>>();
 
   for (const [country, expo] of results) {
     const rk = countryRegion.get(country);
@@ -78,8 +87,9 @@ export function derive(gics: GicsSector[], results: Array<readonly [string, Juri
       let byRegion = info.get(f.company.key);
       if (!byRegion) info.set(f.company.key, (byRegion = new Map()));
       let cell = byRegion.get(rk);
-      if (!cell) byRegion.set(rk, (cell = { countries: [], source: null }));
+      if (!cell) byRegion.set(rk, (cell = { countries: [], subs: 0, source: null }));
       if (!cell.countries.includes(country)) cell.countries.push(country);
+      cell.subs += f.subsidiaries.length;
       if (!cell.source && f.source) cell.source = f.source;
     }
   }
@@ -93,7 +103,7 @@ export function derive(gics: GicsSector[], results: Array<readonly [string, Juri
     }),
   );
   const max = Math.max(1, ...matrix.flat());
-  return { sectors: gics, sectorOf, sectorCompanies, regionKeys, info, matrix, max };
+  return { sectors: gics, sectorOf, subOf, sectorCompanies, regionKeys, info, matrix, max };
 }
 
 /** The single densest (sector, region) cell — used for "investigate first". */
