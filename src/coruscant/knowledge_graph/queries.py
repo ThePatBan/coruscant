@@ -1060,3 +1060,130 @@ def fund_holdings(
         )
     holdings.sort(key=lambda h: (-h.value, h.company.name))
     return FundHoldings(fund=_fund_ref(store, fund_key), holdings=holdings)
+
+
+# -- Fund-scoped exposure (the north-star query) -------------------------------
+# "An event happens somewhere — does it touch THIS fund's book, and how?"
+# Reuses the pathway exposure queries and intersects with a fund's holds edges,
+# attaching the held value so the answer carries in-book magnitude (orientation,
+# not a P&L estimate).
+_EXPOSURE_PATHWAYS = ("sector", "jurisdiction", "market_tier", "commodity", "country")
+
+
+class PortfolioExposureHit(BaseModel):
+    company: EntityRef
+    value: int = 0  # the fund's holding value in this exposed company
+
+
+class PortfolioExposure(BaseModel):
+    fund: FundRef
+    pathway: str  # one of _EXPOSURE_PATHWAYS
+    event: str  # the queried term (a sector, country, commodity …)
+    exposed: list[PortfolioExposureHit] = []
+    exposed_value: int = 0  # summed value of exposed holdings
+    total_value: int = 0  # the fund's total covered value
+    holdings_in_coverage: int = 0
+    note: str = "Which of this fund's covered holdings the event touches — orientation, not a P&L estimate."
+
+
+def _exposed_company_keys(store: KnowledgeGraphStore, pathway: str, term: str) -> list[str]:
+    if pathway == "sector":
+        return [r.key for r in sector_exposure(store, term).direct]
+    if pathway == "market_tier":
+        return [r.key for r in market_tier_exposure(store, term).direct]
+    if pathway == "commodity":
+        return [r.key for r in commodity_exposure(store, term).holdings]
+    if pathway == "jurisdiction":
+        return [f.company.key for f in jurisdiction_exposure(store, term).direct]
+    if pathway == "country":
+        return [r.key for r in exposure_to_country(store, term).direct]
+    return []
+
+
+def portfolio_exposure(
+    store: KnowledgeGraphStore,
+    fund_key: str,
+    *,
+    pathway: str,
+    term: str,
+    clearance: substrate.AccessTier | str = substrate.AccessTier.PUBLIC,
+    as_of: date | str | None = None,
+) -> PortfolioExposure | None:
+    """The exposed subset of a fund's holdings for an event on ``pathway``/``term``."""
+
+    holdings = fund_holdings(store, fund_key, clearance=clearance, as_of=as_of)
+    if holdings is None:
+        return None
+    value_by = {h.company.key: h.value for h in holdings.holdings}
+    exposed_keys = _exposed_company_keys(store, pathway, term) if pathway in _EXPOSURE_PATHWAYS else []
+    hits: list[PortfolioExposureHit] = []
+    seen: set[str] = set()
+    for key in exposed_keys:
+        if key in value_by and key not in seen:
+            seen.add(key)
+            hits.append(PortfolioExposureHit(company=_ref(store, "Company", key), value=value_by[key]))
+    hits.sort(key=lambda h: (-h.value, h.company.name))
+    return PortfolioExposure(
+        fund=holdings.fund, pathway=pathway, event=term, exposed=hits,
+        exposed_value=sum(h.value for h in hits), total_value=sum(value_by.values()),
+        holdings_in_coverage=len(value_by),
+    )
+
+
+class ProfileBucket(BaseModel):
+    label: str
+    value: int = 0  # summed holding value in this bucket
+    companies: int = 0
+
+
+class PortfolioProfile(BaseModel):
+    """The shape of a fund's covered book — value-weighted by GICS sector and MSCI
+    market tier — so a manager sees what an event *could* touch before it happens."""
+
+    fund: FundRef
+    total_value: int = 0
+    by_sector: list[ProfileBucket] = []
+    by_market_tier: list[ProfileBucket] = []
+
+
+def _buckets(val: dict[str, int], cos: dict[str, set[str]]) -> list[ProfileBucket]:
+    out = [ProfileBucket(label=label, value=val[label], companies=len(cos[label])) for label in val]
+    out.sort(key=lambda b: (-b.value, b.label))
+    return out
+
+
+def portfolio_profile(
+    store: KnowledgeGraphStore,
+    fund_key: str,
+    *,
+    clearance: substrate.AccessTier | str = substrate.AccessTier.PUBLIC,
+    as_of: date | str | None = None,
+) -> PortfolioProfile | None:
+    """A fund's book broken down by sector and market tier, value-weighted."""
+
+    holdings = fund_holdings(store, fund_key, clearance=clearance, as_of=as_of)
+    if holdings is None:
+        return None
+    value_by = {h.company.key: h.value for h in holdings.holdings}
+    sector_val: dict[str, int] = {}
+    sector_cos: dict[str, set[str]] = {}
+    tier_val: dict[str, int] = {}
+    tier_cos: dict[str, set[str]] = {}
+    for key, value in value_by.items():
+        for edge in store.outgoing("Company", key):
+            if edge.relation == "in_sector":
+                sector = _sector_of(store, edge)
+                sector_val[sector] = sector_val.get(sector, 0) + value
+                sector_cos.setdefault(sector, set()).add(key)
+                break
+        for edge in store.outgoing("Company", key):
+            if edge.relation == "in_market_tier":
+                tier = _tier_code(store, edge.target_key)
+                tier_val[tier] = tier_val.get(tier, 0) + value
+                tier_cos.setdefault(tier, set()).add(key)
+                break
+    return PortfolioProfile(
+        fund=holdings.fund, total_value=sum(value_by.values()),
+        by_sector=_buckets(sector_val, sector_cos),
+        by_market_tier=_buckets(tier_val, tier_cos),
+    )

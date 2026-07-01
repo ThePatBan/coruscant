@@ -49,8 +49,13 @@ accession → info-table document). Design choices:
   operator-invoked. Live-validated: Berkshire Hathaway's 13F (90 positions) →
   Apple / American Express / Coca-Cola / Chevron resolved with real aggregated
   values, 61 positions honestly out of coverage.
-- The exposure queries can now be scoped to a *fund's* holdings (the next step),
-  turning "an event happened — does it touch my book?" from sample into real.
+- The exposure queries are now scoped to a *fund's* holdings —
+  `portfolio_exposure(fund, pathway, term)` intersects any pathway exposure
+  (sector / jurisdiction / market_tier / commodity / country) with the fund's
+  `holds` edges and attaches the held value, and `portfolio_profile` gives the
+  book's value-weighted shape. This turns "an event happened — does it touch my
+  book, and how much?" from sample into real (orientation + in-book magnitude, not
+  a P&L estimate). `GET /graph/fund/{key}/exposure` + `/profile`.
 - Value-unit caveat: 13F historically reports values in USD thousands, whole
   dollars since 2023; we store the reported integer and do not reinterpret it.
 - User-forwarded portfolios (PDF/holdings) are the other half of the front door,
