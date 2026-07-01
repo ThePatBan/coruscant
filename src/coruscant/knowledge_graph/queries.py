@@ -832,6 +832,105 @@ def _hit(store: KnowledgeGraphStore, edge: GraphEdge) -> ScreeningHit:
     )
 
 
+# -- GLEIF LEI anchoring panel --------------------------------------------------
+# Graph vocabulary written by coruscant.anchoring.pipeline (mirrored here to keep
+# the knowledge_graph layer independent of the anchoring layer).
+_LEGAL_ENTITY_KIND = "LegalEntity"
+_ANCHOR_RUN_KIND = "AnchorRun"
+_ANCHOR_RUN_KEY = "latest"
+_HAS_LEI = "has_lei"
+_LEI_CANDIDATE = "lei_candidate"
+
+
+class LeiAnchor(BaseModel):
+    """One node ↔ LEI edge with the evidence to trust or review it."""
+
+    entity: EntityRef
+    lei: str
+    legal_name: str | None = None
+    country: str | None = None
+    review_status: str = ""
+    score: float | None = None
+    matched_name: str | None = None
+    source_url: str | None = None
+    valid_from: str | None = None
+    access_tier: str = "public"
+
+
+class ResolutionOverview(BaseModel):
+    """The identity/keys panel: how much of the graph is anchored to a stable LEI.
+    ``connected: false`` before a run; an unresolved majority among the thin
+    subsidiary records is the honest, expected outcome (§4.2), not a gap to hide."""
+
+    connected: bool
+    provider: str | None = None
+    considered: int = 0
+    resolved: int = 0
+    review: int = 0
+    unresolved: int = 0
+    companies_resolved: int = 0
+    subsidiaries_resolved: int = 0
+    anchors: list[LeiAnchor] = []
+    review_queue: list[LeiAnchor] = []
+    note: str = "LEI is an anchor, never the primary key; unmatched nodes stay explicitly unresolved."
+
+
+def _lei_anchor(store: KnowledgeGraphStore, edge: GraphEdge) -> LeiAnchor:
+    props = edge.properties
+    legal = store.get_node(edge.target_kind, edge.target_key)
+    legal_props = legal.properties if legal is not None else {}
+    raw_score = props.get("score")
+    return LeiAnchor(
+        entity=_ref(store, edge.source_kind, edge.source_key),
+        lei=edge.target_key,
+        legal_name=_str_prop(legal_props, "name"),
+        country=_str_prop(legal_props, "country"),
+        review_status=_str_prop(props, "review_status") or "",
+        score=float(raw_score) if isinstance(raw_score, (int, float)) else None,
+        matched_name=_str_prop(props, "matched_name"),
+        source_url=_str_prop(legal_props, "source_url"),
+        valid_from=_str_prop(props, substrate.VALID_FROM),
+        access_tier=substrate.tier_of(props).value,
+    )
+
+
+def resolution_overview(
+    store: KnowledgeGraphStore,
+    *,
+    clearance: substrate.AccessTier | str = substrate.AccessTier.PUBLIC,
+    as_of: date | str | None = None,
+) -> ResolutionOverview:
+    """The GLEIF LEI-anchoring panel, tier-enforced and optionally as-of a date."""
+
+    run = store.get_node(_ANCHOR_RUN_KIND, _ANCHOR_RUN_KEY)
+    if run is None:
+        return ResolutionOverview(connected=False)
+
+    anchor_edges = store.edges_by_relation(_HAS_LEI)
+    review_edges = store.edges_by_relation(_LEI_CANDIDATE)
+    if as_of is not None:
+        anchor_edges = substrate.as_of(anchor_edges, on=as_of)
+        review_edges = substrate.as_of(review_edges, on=as_of)
+    anchor_edges = substrate.visible(anchor_edges, clearance=clearance)
+    review_edges = substrate.visible(review_edges, clearance=clearance)
+
+    props = run.properties
+    return ResolutionOverview(
+        connected=True,
+        provider=_str_prop(props, "provider"),
+        considered=int(props.get("considered") or 0),
+        # resolved/review reflect the tier- and as-of-filtered edges (like the
+        # screening panel); considered/unresolved/breakdown are the run summary.
+        resolved=len(anchor_edges),
+        review=len(review_edges),
+        unresolved=int(props.get("unresolved") or 0),
+        companies_resolved=int(props.get("companies_resolved") or 0),
+        subsidiaries_resolved=int(props.get("subsidiaries_resolved") or 0),
+        anchors=[_lei_anchor(store, e) for e in anchor_edges],
+        review_queue=[_lei_anchor(store, e) for e in review_edges],
+    )
+
+
 def screening_overview(
     store: KnowledgeGraphStore,
     *,

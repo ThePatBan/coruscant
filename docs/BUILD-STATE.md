@@ -45,6 +45,16 @@ Two tabs: **`/world`** (Home/World — the exposure surface) and **`/atlas`** (t
   /graph/screening` (honest `connected:false` until run) + `coruscant screen
   [--provider deterministic|yente]`. Opt-in; internal-only pending the OpenSanctions
   license (gates the live yente run, not the build). See ADR-0007.
+- **GLEIF LEI anchoring** (identity/keys pillar): resolve Company/Subsidiary nodes
+  to a stable **LEI anchor** (never the PK) via the same provider seam — `gleif-api`
+  (free, CC0 public API) or `gleif-local` (an export file). A suffix-aware org-name
+  **core matcher** (our "Apple" ↔ GLEIF "Apple Inc.") with a per-kind precision
+  gate: companies confirm on an exact/core match to an *active* LEI; subsidiaries
+  (thin records) also need jurisdiction↔country corroboration. Confirmed → `has_lei`
+  edge + `LegalEntity` anchor node + `lei` on the node; the rest are **explicitly
+  `lei_status:unresolved`**, never dropped. `GET /graph/resolution` + `coruscant
+  anchor [--provider gleif-api|gleif-local]`. *Live-validated:* 27/53 real companies
+  anchored to their LEI (rest honestly unresolved). See ADR-0007.
 - **Taxonomy**: full GICS hierarchy (8-digit code) + MSCI DM/EM/FM, curated and
   verified against public MSCI/S&P sources.
 - **Instrument model**: commodities + debt as first-class instruments wired into

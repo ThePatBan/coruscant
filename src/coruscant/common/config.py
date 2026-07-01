@@ -149,6 +149,10 @@ class Settings(BaseSettings):
     yente_dataset: str = "default"  # yente collection ("default" | "sanctions" | "peps")
     yente_cutoff: float = 0.7  # minimum score for yente to return a candidate
     yente_limit: int = 5  # max candidates per person
+    # GLEIF LEI anchoring: "gleif-api" (free, CC0 public API) or "gleif-local"
+    # (an operator-supplied GLEIF export at gleif_dataset_path).
+    anchor_provider: str = "gleif-api"
+    gleif_dataset_path: Path | None = None
     # Enforce per-plan daily API + watchlist quotas. Only takes effect in a
     # multi-tenant deployment (when an organization store is configured); single
     # -tenant/offline use is never throttled. Set false to disable enforcement.
