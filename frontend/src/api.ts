@@ -308,6 +308,24 @@ export interface CountryMacro {
   note?: string | null;
 }
 
+// Business-news headlines (free GDELT). `connected` false ⇒ show the stub.
+export interface Article {
+  title: string;
+  url: string;
+  domain?: string | null;
+  published_at?: string | null;
+  source_country?: string | null;
+  language?: string | null;
+  image?: string | null;
+}
+export interface NewsFeed {
+  connected: boolean;
+  scope: string;
+  country?: string | null;
+  articles: Article[];
+  note?: string | null;
+}
+
 export interface EntityProfile {
   entity: EntityRef;
   properties: Record<string, unknown>;
@@ -583,6 +601,8 @@ export const api = {
     get<MarketTierExposure>(`/graph/market-tier-exposure?tier=${encodeURIComponent(tier)}`),
   portfolioPrices: () => get<PortfolioPrices>("/portfolio/prices"),
   macro: (country: string) => get<CountryMacro>(`/macro?country=${encodeURIComponent(country)}`),
+  news: (country?: string) =>
+    get<NewsFeed>(`/news${country ? `?country=${encodeURIComponent(country)}` : ""}`),
   retrieve: (query: string, topK = 6) => post<RetrieveResponse>("/retrieve", { query, top_k: topK }),
   // intelligence
   dashboard: () => get<Dashboard>("/dashboard"),

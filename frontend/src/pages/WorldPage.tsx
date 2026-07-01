@@ -64,6 +64,54 @@ function StubBadge({ label }: { label: string }) {
   return <span className="stub-badge" title="Not yet connected to a live source">{label}</span>;
 }
 
+function timeAgo(iso?: string | null): string {
+  if (!iso) return "";
+  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+// Business-news rail: global, or scoped to the selected market's country (GDELT).
+function NewsRail({ selected }: { selected: Exchange | null }) {
+  const country = selected?.country;
+  const { data, loading } = useAsync(() => api.news(country), [country ?? ""]);
+  return (
+    <aside className="world-news">
+      <div className="wn-head">
+        {selected ? `${selected.flag} ${selected.country} — business news` : "Business news"}
+        {data && !data.connected ? <StubBadge label="feed" /> : null}
+      </div>
+      {loading ? (
+        <div className="wn-empty muted">Loading headlines…</div>
+      ) : !data || !data.connected ? (
+        <div className="wn-empty muted">
+          {selected
+            ? `Country news for ${selected.country} mounts here once the news feed is connected.`
+            : "A global business-news stream mounts here once the news feed is connected. Click a market to scope it to a country."}
+        </div>
+      ) : data.articles.length === 0 ? (
+        <div className="wn-empty muted">{data.note ?? "No headlines right now."}</div>
+      ) : (
+        <ul className="wn-list">
+          {data.articles.map((a) => (
+            <li key={a.url}>
+              <a href={a.url} target="_blank" rel="noreferrer" className="wn-item">
+                <div className="wn-title">{a.title}</div>
+                <div className="wn-meta muted">
+                  {a.domain}
+                  {a.published_at ? ` · ${timeAgo(a.published_at)}` : ""}
+                </div>
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+    </aside>
+  );
+}
+
 // MSCI market-tier composition (pathway 4): a stacked DM/EM/FM bar + legend.
 function MarketTierBar({ tiers }: { tiers: MarketTierCount[] }) {
   const total = tiers.reduce((s, t) => s + t.companies, 0);
@@ -346,17 +394,7 @@ export function WorldPage() {
           </div>
         </div>
 
-        <aside className="world-news">
-          <div className="wn-head">
-            {selected ? `${selected.flag} ${selected.country} — business news` : "Business news"}
-            <StubBadge label="feed" />
-          </div>
-          <div className="wn-empty muted">
-            {selected
-              ? `A country-specific news stream for ${selected.country} mounts here once a news source is connected.`
-              : "A global business-news stream mounts here once a news source is connected. Click a market to scope it to a country."}
-          </div>
-        </aside>
+        <NewsRail selected={selected} />
       </section>
 
       <section className="world-insights">

@@ -94,6 +94,7 @@ from coruscant.knowledge_graph.queries import (
     sector_exposure,
 )
 from coruscant.macro import CountryMacro, MacroService
+from coruscant.news import NewsFeed, NewsService
 from coruscant.pricing import PortfolioPrices, PriceService, summarize
 from coruscant.search.hybrid import HybridRetrievalEngine
 from coruscant.search.reference import TemplateReasoningLayer
@@ -331,6 +332,7 @@ class _AppState:
     usage: SqliteUsageStore | None = None
     prices: PriceService | None = None
     macro: MacroService | None = None
+    news: NewsService | None = None
 
 
 def _all_documents(engine: Any) -> list[NormalizedDocument]:
@@ -393,6 +395,7 @@ def create_app(
         usage=usage_store,
         prices=PriceService(enabled=settings.enable_live_prices),
         macro=MacroService(enabled=settings.enable_live_macro),
+        news=NewsService(enabled=settings.enable_live_news),
     )
 
     @asynccontextmanager
@@ -855,6 +858,15 @@ def create_app(
         if service is None:
             return CountryMacro(country=country, connected=False, note="Macro not configured.")
         return service.country_macro(country)
+
+    @app.get("/news", response_model=NewsFeed, dependencies=protected)
+    def news(country: str | None = None) -> NewsFeed:
+        """Business-news headlines: global, or scoped to `country` (free GDELT).
+        Returns connected=false when the feed is off — never fabricated headlines."""
+        service = state.news
+        if service is None:
+            return NewsFeed(connected=False, scope="global", note="News not configured.")
+        return service.headlines(scope="country" if country else "global", country=country)
 
     # ---- Watchlists & notifications ----------------------------------------
 

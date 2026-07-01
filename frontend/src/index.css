@@ -2559,6 +2559,37 @@ button.wp-tile.wp-cta:hover {
   font-size: 13px;
   line-height: 1.5;
 }
+.wn-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.wn-list li {
+  border-top: 1px solid var(--border);
+}
+.wn-list li:first-child {
+  border-top: none;
+}
+.wn-item {
+  display: block;
+  padding: 9px 4px;
+  text-decoration: none;
+  color: inherit;
+  border-radius: 6px;
+}
+.wn-item:hover {
+  background: var(--bg-hover);
+}
+.wn-title {
+  font-size: 13px;
+  line-height: 1.4;
+}
+.wn-meta {
+  font-size: 11px;
+  margin-top: 3px;
+}
 
 .world-insights {
   min-height: 96px;
