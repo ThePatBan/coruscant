@@ -38,13 +38,22 @@ Two tabs: **`/world`** (Home/World — the exposure surface) and **`/atlas`** (t
 
 ## Storage (as-is)
 
-**JSON-over-SQLite** — a prototype, not Neo4j/Postgres.
+**SQLite catalog + a Kùzu graph store behind the `KnowledgeGraphStore` port.**
 - SQLite `data/coruscant.db`: catalog · intelligence · users · embeddings.
-- JSON `data/graph/graph.json`: the in-process `InMemoryKnowledgeGraphStore`,
-  rebuilt by ingestion.
+- Graph: **Kùzu** (`graph_backend="kuzu"`, the default) — an embedded, disk-based,
+  Cypher-native property-graph DB (free/MIT, no server). The exposure engine + API
+  query it through the port. It is the Cypher on-ramp to a future Neo4j/Neptune:
+  the same queries repoint with a driver change, not a rewrite (see ADR-0001).
+- `data/graph/graph.json`: the portable snapshot **ingestion writes** (via the
+  in-process `InMemoryKnowledgeGraphStore`, still the ingest-side store + the
+  `memory` backend / golden-parity comparator). Serving materializes the Kùzu DB
+  `data/graph/graph.kz` from that snapshot, rebuilt only when the snapshot changes.
+  A golden test asserts the two backends return byte-identical exposure results.
 - `docker-compose.yml` runs ingest/api/web over a named volume (SQLite); local
   dev runs on the host `./data/`. `data/` and `deploy/` are gitignored; `config/`
   is the tracked default.
+- *Still O(N²) on the ingest side:* ingestion materializes the in-memory store then
+  bulk-loads Kùzu; direct-to-Kùzu `COPY` projection is the whole-exchange step.
 
 ## Not built yet ❌ (say it plainly)
 
@@ -55,16 +64,18 @@ Two tabs: **`/world`** (Home/World — the exposure surface) and **`/atlas`** (t
 - **PEP / sanctions** screening.
 - **Group / UBO contagion** exposure pathway (needs the ownership substrate).
 - **Whole-exchange coverage** — only curated names; bulk SEC/Nifty/UK/Europe
-  ingestion is future work and needs a real graph store first (the JSON/SQLite
-  store will not scale).
+  ingestion is future work. The serving store now scales (Kùzu); the remaining
+  gap is direct-to-Kùzu bulk `COPY` ingestion (the current ingest still builds
+  the in-memory store first).
 - **Commodity/debt live prices in the UI** — the price client resolves their
   symbols (CL=F, GC=F, ^TNX, LQD…) but they are not surfaced yet.
 - **Licensed MSCI index data** — benchmarking uses a free ETF proxy.
 
 ## Sequenced next
 
-1. **Real graph store** (Phase 0 prerequisite; the ADR-0001 destination).
-2. **Whole-exchange coverage** + auto-add on portfolio upload.
+1. **Real graph store** — ✅ done (Kùzu behind the port; Neo4j/Neptune deferred).
+2. **Whole-exchange coverage** + auto-add on portfolio upload (needs direct-to-Kùzu
+   bulk `COPY` ingestion to retire the in-memory ingest step).
 3. **Portfolio front door** (13F → holding edges, then user upload).
 4. **Ownership → UBO** and **PEP/sanctions** edges (free registries first).
 

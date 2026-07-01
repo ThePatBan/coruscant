@@ -66,6 +66,7 @@ from coruscant.intelligence.models import ChangeSet
 from coruscant.intelligence.models import DocumentSummary as AISummary
 from coruscant.intelligence.models import ExtractedEvent
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
+from coruscant.knowledge_graph.store import KnowledgeGraphStore
 from coruscant import llm
 from coruscant.llm import LLMGateway
 from coruscant.knowledge_graph.queries import (
@@ -333,7 +334,7 @@ class EvaluateAllResult(BaseModel):
 @dataclass
 class _AppState:
     engine: Any
-    graph: InMemoryKnowledgeGraphStore
+    graph: KnowledgeGraphStore
     intelligence: SqliteIntelligenceStore | None = None
     auth: AuthService | None = None
     watchlists: SqliteWatchlistStore | None = None
@@ -373,7 +374,7 @@ def _to_summary(document: NormalizedDocument) -> DocumentSummary:
 
 def create_app(
     retrieval_engine: Any | None = None,
-    graph_store: InMemoryKnowledgeGraphStore | None = None,
+    graph_store: KnowledgeGraphStore | None = None,
     *,
     intelligence_store: SqliteIntelligenceStore | None = None,
     auth_service: AuthService | None = None,
@@ -548,7 +549,7 @@ def create_app(
     def _evaluate_watchlist(email: str, watchlist: Watchlist) -> int:
         if state.intelligence is None:
             return 0
-        graph = state.graph if isinstance(state.graph, InMemoryKnowledgeGraphStore) else None
+        graph = state.graph if isinstance(state.graph, KnowledgeGraphStore) else None
         notifications = match_watch_items(
             watchlist.items,
             events=state.intelligence.list_events(),
@@ -623,7 +624,7 @@ def create_app(
         return HealthResponse(
             status="ok",
             documents=_document_count(state.engine),
-            graph_nodes=len(state.graph.nodes),
+            graph_nodes=state.graph.node_count(),
         )
 
     @app.get("/companies", response_model=list[CompanyOut], dependencies=protected)
@@ -756,7 +757,7 @@ def create_app(
     @app.get("/entities", response_model=list[EntityRef], dependencies=protected)
     def entities(kind: str | None = None) -> list[EntityRef]:
         graph = state.graph
-        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+        if not isinstance(graph, KnowledgeGraphStore):
             return []
         return list_entities(graph, kind)
 
@@ -765,7 +766,7 @@ def create_app(
         graph = state.graph
         profile = (
             entity_profile(graph, kind, key)
-            if isinstance(graph, InMemoryKnowledgeGraphStore)
+            if isinstance(graph, KnowledgeGraphStore)
             else None
         )
         if profile is None:
@@ -775,7 +776,7 @@ def create_app(
     @app.get("/graph/exposure", response_model=ExposureResult, dependencies=protected)
     def exposure(country: str) -> ExposureResult:
         graph = state.graph
-        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+        if not isinstance(graph, KnowledgeGraphStore):
             return ExposureResult(country=country)
         return exposure_to_country(graph, country)
 
@@ -784,7 +785,7 @@ def create_app(
         """The menu of geographic 'events' — jurisdictions where holdings have a
         legal footprint, by exposed-company count."""
         graph = state.graph
-        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+        if not isinstance(graph, KnowledgeGraphStore):
             return []
         return list_jurisdictions(graph)
 
@@ -796,7 +797,7 @@ def create_app(
     def jurisdiction_exposure_endpoint(jurisdiction: str) -> JurisdictionExposure:
         """Event in `jurisdiction` -> who is exposed, with the Exhibit-21 evidence."""
         graph = state.graph
-        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+        if not isinstance(graph, KnowledgeGraphStore):
             return JurisdictionExposure(jurisdiction=jurisdiction)
         return jurisdiction_exposure(graph, jurisdiction)
 
@@ -804,7 +805,7 @@ def create_app(
     def sectors() -> list[SectorCount]:
         """The menu of thematic 'events' — sectors by company count."""
         graph = state.graph
-        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+        if not isinstance(graph, KnowledgeGraphStore):
             return []
         return list_sectors(graph)
 
@@ -813,7 +814,7 @@ def create_app(
         """Thematic event on a GICS level `sector` (a sector like Information
         Technology or a sub-industry like Semiconductors) -> who is in it."""
         graph = state.graph
-        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+        if not isinstance(graph, KnowledgeGraphStore):
             return SectorExposure(sector=sector)
         return sector_exposure(graph, sector)
 
@@ -821,7 +822,7 @@ def create_app(
     def gics_breakdown_endpoint() -> list[GicsSector]:
         """The portfolio's GICS composition: sector -> sub-industry -> holdings."""
         graph = state.graph
-        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+        if not isinstance(graph, KnowledgeGraphStore):
             return []
         return gics_breakdown(graph)
 
@@ -829,7 +830,7 @@ def create_app(
     def market_tiers() -> list[MarketTierCount]:
         """The portfolio's MSCI Developed/Emerging/Frontier composition (pathway 4)."""
         graph = state.graph
-        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+        if not isinstance(graph, KnowledgeGraphStore):
             return []
         return list_market_tiers(graph)
 
@@ -841,14 +842,14 @@ def create_app(
     def market_tier_exposure_endpoint(tier: str) -> MarketTierExposure:
         """The holdings classified in MSCI market tier `tier` (DM/EM/FM)."""
         graph = state.graph
-        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+        if not isinstance(graph, KnowledgeGraphStore):
             return MarketTierExposure(tier=tier, label="")
         return market_tier_exposure(graph, tier)
 
     @app.get("/graph/co-executives", response_model=CoExecutiveResult, dependencies=protected)
     def graph_co_executives() -> CoExecutiveResult:
         graph = state.graph
-        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+        if not isinstance(graph, KnowledgeGraphStore):
             return CoExecutiveResult()
         return co_executives(graph)
 
@@ -856,7 +857,7 @@ def create_app(
     def instruments_commodities() -> list[CommodityRef]:
         """The commodity inventory, each with the GICS sectors it drives."""
         graph = state.graph
-        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+        if not isinstance(graph, KnowledgeGraphStore):
             return []
         return list_commodities(graph)
 
@@ -864,7 +865,7 @@ def create_app(
     def instruments_debt() -> list[DebtRef]:
         """The debt inventory (sovereign/corporate), each with its issuer country."""
         graph = state.graph
-        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+        if not isinstance(graph, KnowledgeGraphStore):
             return []
         return list_debt_instruments(graph)
 
@@ -872,7 +873,7 @@ def create_app(
     def commodity_exposure_endpoint(commodity: str) -> CommodityExposure:
         """Event on `commodity` -> the equity holdings exposed via the sectors it drives."""
         graph = state.graph
-        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+        if not isinstance(graph, KnowledgeGraphStore):
             return CommodityExposure(slug=commodity, commodity=commodity, category="")
         return commodity_exposure(graph, commodity)
 
@@ -880,7 +881,7 @@ def create_app(
     def country_debt_endpoint(country: str) -> list[DebtRef]:
         """Debt instruments issued by `country` — the debt side of a country event."""
         graph = state.graph
-        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+        if not isinstance(graph, KnowledgeGraphStore):
             return []
         return debt_for_country(graph, country)
 
@@ -1300,7 +1301,7 @@ def create_app(
         events = state.intelligence.list_events(company_slug=slug) if state.intelligence else []
         exposures = (
             company_country_exposures(state.graph, slug)
-            if isinstance(state.graph, InMemoryKnowledgeGraphStore)
+            if isinstance(state.graph, KnowledgeGraphStore)
             else []
         )
         def _run(analyst: LLMAnalyst | ReferenceAnalyst) -> AnalysisReport:
@@ -1333,7 +1334,7 @@ def create_app(
         events = state.intelligence.list_events(company_slug=slug) if state.intelligence else []
         exposures = (
             company_country_exposures(state.graph, slug)
-            if isinstance(state.graph, InMemoryKnowledgeGraphStore)
+            if isinstance(state.graph, KnowledgeGraphStore)
             else []
         )
         return ReferenceSignalEngine().signals_for(
