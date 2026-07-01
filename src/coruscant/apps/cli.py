@@ -169,18 +169,18 @@ def cmd_coverage(args: argparse.Namespace) -> int:
         report = resolve_positions(store, parse_brokerage_csv(Path(args.resolve).read_text()))
         print(
             f"Resolved {report.resolved}/{report.total} positions ({report.rate:.0%}): "
-            f"{report.by_ticker} by ticker, {report.by_isin} by ISIN, {report.by_name} by name, "
-            f"{report.unresolved} unresolved."
+            f"{report.by_ticker} by ticker, {report.by_isin} by ISIN, {report.by_sedol} by SEDOL, "
+            f"{report.by_name} by name, {report.unresolved} unresolved."
         )
         if report.unresolved:
-            misses = [p.input_ticker or p.input_isin or p.input_name
+            misses = [p.input_ticker or p.input_isin or p.input_sedol or p.input_name
                       for p in report.positions if p.method == "unresolved"]
             print("Unresolved (labelled, not fabricated): " + ", ".join(str(m) for m in misses[:20]))
         return 0
 
     sources = {
         role: Path(getattr(args, role))
-        for role in ("nse", "bse", "nifty", "sensex")
+        for role in ("nse", "bse", "nifty", "sensex", "lse", "ftse100", "ftse250")
         if getattr(args, role, None)
     }
     file_path = Path(args.file) if args.file else None
@@ -277,7 +277,7 @@ def build_parser() -> argparse.ArgumentParser:
     coverage = sub.add_parser(
         "coverage", help="Ingest a market's listed-issuer universe (whole-exchange coverage)"
     )
-    coverage.add_argument("--market", default="us", help="Market to ingest: us | in (UK is next)")
+    coverage.add_argument("--market", default="us", help="Market to ingest: us | in | gb")
     coverage.add_argument(
         "--file", default=None,
         help="US: path to a downloaded company_tickers_exchange.json (offline/operator path)",
@@ -286,6 +286,9 @@ def build_parser() -> argparse.ArgumentParser:
     coverage.add_argument("--bse", default=None, help="India: path to the BSE active-equity scrip CSV")
     coverage.add_argument("--nifty", default=None, help="India: path to ind_nifty50list.csv (index)")
     coverage.add_argument("--sensex", default=None, help="India: path to a BSE Sensex constituents CSV")
+    coverage.add_argument("--lse", default=None, help="UK: path to the LSE 'List of all companies' CSV")
+    coverage.add_argument("--ftse100", default=None, help="UK: path to a FTSE 100 constituents CSV (index)")
+    coverage.add_argument("--ftse250", default=None, help="UK: path to a FTSE 250 constituents CSV (index)")
     coverage.add_argument(
         "--resolve", default=None,
         help="Resolve a brokerage holdings CSV against current coverage and report the rate",

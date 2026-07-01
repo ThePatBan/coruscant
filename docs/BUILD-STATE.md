@@ -115,6 +115,27 @@ Two tabs: **`/world`** (Home/World — the exposure surface) and **`/atlas`** (t
   linked; a 12-line sample book resolved **9/12 (75%)** — misses honest (a mutual fund,
   a bogus symbol, and the post-demerger-retired `TATAMOTORS` symbol, present as
   TMCV/TMPV and resolvable by ISIN). See ADR-0009 + ADR-0010.
+- **UK coverage — LSE, ISIN-identified** (the third and last market on the seam):
+  `UkLseCoverageProvider` parses the LSE "List of all companies" CSV into one Company
+  node **per ISIN** (`gb-<isin>`), with `exchange` reflecting the segment (LSE Main
+  Market vs LSE AIM). The handoff's **ISIN / SEDOL / company-number** identity set rides
+  as anchors: ISIN is the identity + dedup key, the TIDM becomes the `ticker` anchor,
+  and SEDOL + the Companies House number are attached **when the export carries them**,
+  never fabricated. `_MARKET_IDENTITY_SCHEME["GB"]="isin"`. The curated UK **ADRs**
+  (`bp`, `hsbc`, `shel`, `azn`, …, US-listed, keyed by US ticker) are *not* merged with
+  the domestic LSE listing — reconciliation flows through the shared GLEIF LEI.
+  **FTSE 100 / FTSE 250** are `Index` nodes + `constituent_of` edges (ADR-0010, same
+  generic shape as Nifty/Sensex). **SEDOL resolution** added to `resolve.py` (UK exports
+  — HL / AJ Bell — often key by SEDOL); order ticker → ISIN → SEDOL → org-name.
+  `coruscant coverage --market gb [--lse --ftse100 --ftse250]` (`uk` accepted as an
+  alias). The LSE site is JS-heavy (no scriptable CSV — confirmed), so the operator
+  `--lse` download is the primary path, exactly like NSE's 403. *Live-validated* (mechanics
+  on verified-real FTSE mega-cap identifiers; full-universe ingest is operator `--file`):
+  15 real LSE issuers → all 15 FTSE 100-linked; BP carries the full isin/ticker/sedol/
+  company-number anchor set while Shell carries only isin/ticker (SEDOL/reg-no absent →
+  not fabricated); the `bp`/`shel`/`vod`/`azn` ADRs verified **distinct** from their
+  domestic `gb-<isin>` nodes; a sample book resolved 5/7 by ticker/ISIN/SEDOL (2 honest
+  misses: a unit trust and a bogus symbol). See ADR-0009 + ADR-0010.
 - **Taxonomy**: full GICS hierarchy (8-digit code) + MSCI DM/EM/FM, curated and
   verified against public MSCI/S&P sources.
 - **Instrument model**: commodities + debt as first-class instruments wired into
@@ -161,10 +182,11 @@ Two tabs: **`/world`** (Home/World — the exposure surface) and **`/atlas`** (t
   + yente sidecar); the *live* yente run + external demo await the OpenSanctions
   license in writing.
 - **Group / UBO contagion** exposure pathway (needs the ownership substrate).
-- **Whole-exchange coverage beyond the US** — US + India universes now ingest (above);
-  **UK (FTSE/LSE)** is the last of the three `CoverageProvider`s (identity ISIN/SEDOL/
-  company-number, LSE lists + GLEIF/OpenFIGI). The universe pass is lightweight by
-  design; deep filing ingestion (10-K/Exhibit-21/officers) stays curated/on-demand.
+- **Whole-exchange coverage** — all three target markets now ingest as `CoverageProvider`s:
+  **US** (EDGAR/CIK), **India** (NSE+BSE/ISIN), **UK** (LSE/ISIN) — see above. The universe
+  pass is lightweight by design; deep filing ingestion (10-K/Exhibit-21/officers) stays
+  curated/on-demand. Further markets (EU/JP/…) drop in as new providers on the same seam;
+  the operator-`--file` path covers registries that block scripted bulk downloads.
 - **Commodity/debt live prices in the UI** — the price client resolves their
   symbols (CL=F, GC=F, ^TNX, LQD…) but they are not surfaced yet.
 - **Licensed MSCI index data** — benchmarking uses a free ETF proxy.

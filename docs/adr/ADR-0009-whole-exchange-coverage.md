@@ -128,6 +128,41 @@ labelled) → graph 53 → **5,088 companies**; all 50 Nifty constituents linked
 symbol, and the post-demerger-retired `TATAMOTORS` symbol (present as TMCV/TMPV,
 resolvable by ISIN — we do not fuzzy-match a retired ticker).
 
+## Addendum — UK (LSE), 2026-07-01
+
+The third and last target market, again a new provider with no seam change.
+
+- **`UkLseCoverageProvider`** parses the LSE "List of all companies" CSV into one
+  `IssuerRecord` **per ISIN** (`gb-<isin>`); `_MARKET_IDENTITY_SCHEME["GB"]="isin"`.
+  `exchange` reflects the segment — `LSE Main Market` vs `LSE AIM`.
+- **Identity set = ISIN / SEDOL / company-number (as anchors).** ISIN is the identity
+  and dedup key; the TIDM becomes the `ticker` anchor (so `resolve.py` resolves a UK
+  book unchanged); SEDOL and the Companies House number are attached **only when the
+  export carries them** — absent columns yield no anchor, never a fabricated one
+  (validated: BP carried all four, Shell only isin/ticker).
+- **ADR ≠ domestic** (as with India): the curated UK ADRs (`bp`, `hsbc`, `shel`, `azn`,
+  …, US-listed, keyed by US ticker, no GB ISIN anchor) stay distinct from the domestic
+  LSE listing; exact-ISIN dedup can't touch them, and reconciliation flows through the
+  shared GLEIF LEI. Cleaner than India here — the curated ADR nodes carry no ticker, so
+  there is not even a ticker-index collision.
+- **SEDOL resolution** added to `resolve.py` (UK exports — HL / AJ Bell — often key by
+  SEDOL); precision order is now ticker → ISIN → SEDOL → org-name. `parse_brokerage_csv`
+  gained SEDOL/TIDM/EPIC tolerances.
+- **FTSE 100 / FTSE 250** are `Index` nodes + `constituent_of` edges (ADR-0010), the
+  same generic shape as Nifty/Sensex — a second market exercising it.
+- Wired as `coruscant coverage --market gb [--lse --ftse100 --ftse250 | --resolve]`
+  (`uk` accepted as an alias for `gb`), `run_coverage(market="gb"/"uk", sources=…)`.
+
+*Live constraint (honest):* the LSE site is JS-heavy and exposes no scriptable CSV
+(confirmed: the report page returns an HTML shell; the instrument API is POST-only) — so
+the operator `--lse` download is the primary path, exactly like NSE's 403. The mechanics
+were live-validated on **verified-real FTSE mega-cap identifiers**: 15 real LSE issuers →
+all 15 FTSE 100-linked; BP's full isin/ticker/sedol/company-number anchor set vs Shell's
+isin/ticker only (no fabrication); the `bp`/`shel`/`vod`/`azn` ADRs verified distinct
+from their domestic `gb-<isin>` nodes; a sample book resolved 5/7 by ticker/ISIN/SEDOL
+(2 honest misses: a unit trust and a bogus symbol). The full-universe pull is operator-
+driven by design.
+
 ## Date
 
-2026-07-01 (India addendum same day)
+2026-07-01 (India + UK addenda same day)

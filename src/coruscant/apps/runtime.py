@@ -524,9 +524,16 @@ def _build_coverage_provider(
     * ``in`` — the NSE + BSE equity scrip lists, ISIN-unified, plus optional
       Nifty/Sensex constituent lists (``sources`` keyed by nse/bse/nifty/sensex).
       NSE blocks scripts, so the operator ``--file`` downloads are the primary path;
-      the live fetch is best-effort. UK (FTSE/LSE) is the next provider."""
+      the live fetch is best-effort.
+    * ``gb``/``uk`` — the LSE "List of all companies" CSV, ISIN-identified, plus
+      optional FTSE 100 / FTSE 250 constituent lists (``sources`` keyed by
+      lse/ftse100/ftse250). The LSE site is JS-heavy, so ``--lse`` is the primary path."""
 
-    from coruscant.coverage.provider import IndiaCoverageProvider, UsEdgarCoverageProvider
+    from coruscant.coverage.provider import (
+        IndiaCoverageProvider,
+        UkLseCoverageProvider,
+        UsEdgarCoverageProvider,
+    )
 
     key = market.lower()
     files = dict(sources or {})
@@ -544,10 +551,22 @@ def _build_coverage_provider(
                 "with downloaded EQUITY_L.csv / BSE scrip-list CSVs (the primary path)."
             )
         return provider_in
+    if key in ("gb", "uk"):
+        if any(files.values()):
+            return UkLseCoverageProvider.from_files(
+                lse=files.get("lse"), ftse100=files.get("ftse100"), ftse250=files.get("ftse250"),
+                user_agent=settings.edgar_user_agent,
+            )
+        provider_gb = UkLseCoverageProvider(user_agent=settings.edgar_user_agent)
+        if not provider_gb.connected():
+            raise ConnectionError(
+                "The LSE list is not reachable for coverage (JS-heavy site). Pass --lse "
+                "with a downloaded 'List of all companies' CSV (the primary path)."
+            )
+        return provider_gb
     if key != "us":
         raise ValueError(
-            f"No coverage provider for market {market!r} yet. Implemented: us, in "
-            "(UK FTSE/LSE is the next provider)."
+            f"No coverage provider for market {market!r} yet. Implemented: us, in, gb."
         )
     # One shared limiter keeps the aggregate SEC request rate under the fair-access
     # cap (the US feed is a single request, but the seam stays consistent).

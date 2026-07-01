@@ -292,6 +292,16 @@ def test_cli_coverage_parser_wires_india_files() -> None:
     assert ns.nifty == "n50.csv" and ns.sensex == "sx.csv"
 
 
+def test_cli_coverage_parser_wires_uk_files() -> None:
+    from coruscant.apps import cli
+
+    ns = cli.build_parser().parse_args(
+        ["coverage", "--market", "gb", "--lse", "lse.csv",
+         "--ftse100", "f100.csv", "--ftse250", "f250.csv"])
+    assert ns.market == "gb" and ns.lse == "lse.csv"
+    assert ns.ftse100 == "f100.csv" and ns.ftse250 == "f250.csv"
+
+
 # == India: NSE + BSE, ISIN-unified; Nifty/Sensex index membership ==============
 #
 # Fixtures mirror the real files in miniature: NSE keeps EQ/BE + drops a bond and a
@@ -529,4 +539,136 @@ def test_run_coverage_india_offline_files_idempotent(tmp_path) -> None:  # type:
     assert graph.get_node("Company", "in-INE009A01021") is not None
 
     run_coverage(settings, market="in", sources={"nse": nse, "bse": bse, "nifty": nifty})  # re-run
+    assert len(load_graph(settings.graph_snapshot_path).nodes_of_kind("Company")) == 4
+
+
+# == UK: London Stock Exchange, ISIN-identified; FTSE 100/250 index membership ==
+#
+# Fixtures mirror the LSE "List of all companies" in miniature: Main Market + AIM
+# rows, a SEDOL + Companies House number as extra anchors, and a blank-ISIN drop.
+_LSE_LIST = (
+    "Company,TIDM,ISIN,SEDOL,Company Number,Market,ICB Industry,Country of Incorporation\n"
+    "BP p.l.c.,BP,GB0007980591,0798059,00102498,Main Market,Energy,United Kingdom\n"
+    "HSBC Holdings plc,HSBA,GB0005405286,0540528,00617987,Main Market,Financials,United Kingdom\n"
+    "Vodafone Group plc,VOD,GB00BH4HKS39,BH4HKS3,03371853,Main Market,Telecommunications,United Kingdom\n"
+    "boohoo group plc,BOO,JE00BG6L7297,BG6L729,,AIM,Consumer Discretionary,Jersey\n"
+    "Blank Co,BLNK,,,,Main Market,Misc,United Kingdom\n"           # blank ISIN → drop
+)
+_FTSE100 = (
+    "Company,EPIC,ISIN\n"
+    "BP p.l.c.,BP,GB0007980591\n"
+    "HSBC Holdings plc,HSBA,GB0005405286\n"
+    "Vodafone Group plc,VOD,GB00BH4HKS39\n"
+)
+
+
+def _uk_provider():  # type: ignore[no-untyped-def]
+    from coruscant.coverage.provider import UkLseCoverageProvider
+
+    return UkLseCoverageProvider(lse_text=_LSE_LIST, ftse100_text=_FTSE100)
+
+
+def test_parse_lse_list_anchors_and_segment_and_blank_isin() -> None:
+    from coruscant.coverage.provider import parse_lse_company_list
+
+    records, drops = parse_lse_company_list(_LSE_LIST)
+    assert [r.ticker for r in records] == ["BP", "HSBA", "VOD", "BOO"]  # blank-ISIN row dropped
+    assert drops["gb_blank_isin"] == 1
+    bp = records[0]
+    assert bp.market == "GB" and bp.exchange == "LSE Main Market"
+    assert bp.anchor("isin") == "GB0007980591" and bp.anchor("ticker") == "BP"
+    assert bp.anchor("sedol") == "0798059" and bp.anchor("company_number") == "00102498"
+    boo = records[3]
+    assert boo.exchange == "LSE AIM"  # segment mapping
+    assert boo.anchor("company_number") is None  # absent column value → no fabricated anchor
+
+
+def test_uk_ingest_creates_isin_nodes_gics_unresolved_and_ftse_index() -> None:
+    from coruscant.coverage.pipeline import CONSTITUENT_OF, INDEX_KIND, ingest_coverage
+
+    store = InMemoryKnowledgeGraphStore()
+    summary = ingest_coverage(store, _uk_provider(), observed_at="2026-07-01")
+    assert summary.market == "GB" and summary.created == 4
+    assert summary.by_exchange == {"LSE Main Market": 3, "LSE AIM": 1}
+    assert summary.indices == {"FTSE 100": 3}
+
+    bp = store.get_node("Company", "gb-GB0007980591")
+    assert bp is not None
+    assert bp.properties["ticker"] == "BP" and bp.properties["exchange"] == "LSE Main Market"
+    assert bp.properties["market"] == "GB" and bp.properties["gics_status"] == "unresolved"
+    schemes = {a["scheme"] for a in bp.properties["anchors"]}
+    assert schemes == {"isin", "ticker", "sedol", "company_number"}
+
+    ftse = store.get_node(INDEX_KIND, "ftse-100")
+    assert ftse is not None and ftse.properties["constituents"] == 3
+    edges = {(e.source_key, e.target_key) for e in store.edges_by_relation(CONSTITUENT_OF)}
+    assert ("gb-GB0007980591", "ftse-100") in edges
+
+
+def test_uk_reingest_is_idempotent() -> None:
+    from coruscant.coverage.pipeline import ingest_coverage
+
+    store = InMemoryKnowledgeGraphStore()
+    ingest_coverage(store, _uk_provider(), observed_at="2026-07-01")
+    keys1 = {n.key for n in store.nodes_of_kind("Company")}
+    ingest_coverage(store, _uk_provider(), observed_at="2026-07-02")  # re-run
+    assert keys1 == {n.key for n in store.nodes_of_kind("Company")}
+
+
+def test_uk_domestic_not_merged_with_us_adr() -> None:
+    """The curated BP ADR (US-listed, slug 'bp', US ADR ISIN) must NOT merge with the
+    domestic LSE listing (GB0007980591). Exact-ISIN dedup won't touch it."""
+
+    from coruscant.coverage.pipeline import ingest_coverage
+
+    store = InMemoryKnowledgeGraphStore()
+    store.upsert_node(GraphNode(kind="Company", key="bp", properties={
+        "name": "BP p.l.c.", "source": "tracked", "ticker": "BP",
+        "anchors": [{"scheme": "isin", "value": "US0556221044"}]}))  # US ADR ISIN, not GB
+    ingest_coverage(store, _uk_provider(), observed_at="2026-07-01")
+    assert store.get_node("Company", "bp") is not None
+    domestic = store.get_node("Company", "gb-GB0007980591")
+    assert domestic is not None and domestic.properties["ticker"] == "BP"
+
+
+def test_resolve_uk_book_by_ticker_isin_and_sedol() -> None:
+    from coruscant.coverage.pipeline import ingest_coverage
+    from coruscant.coverage.resolve import build_sedol_index, parse_brokerage_csv, resolve_positions
+
+    store = InMemoryKnowledgeGraphStore()
+    ingest_coverage(store, _uk_provider(), observed_at="2026-07-01")
+    # A Hargreaves-Lansdown-style export: TIDM + SEDOL + ISIN columns.
+    csv_text = (
+        "TIDM,SEDOL,ISIN,Quantity\n"
+        "BP,,,100\n"                    # ticker hit
+        ",0540528,,50\n"               # SEDOL-only hit (HSBC)
+        ",,GB00BH4HKS39,25\n"          # ISIN-only hit (Vodafone)
+        "ZZZ,,,1\n"                    # miss
+    )
+    report = resolve_positions(store, parse_brokerage_csv(csv_text))
+    assert report.total == 4 and report.resolved == 3
+    assert report.by_ticker == 1 and report.by_sedol == 1 and report.by_isin == 1
+    assert report.unresolved == 1
+    assert build_sedol_index(store)["0540528"] == "gb-GB0005405286"
+
+
+def test_run_coverage_uk_offline_files_idempotent_and_market_alias(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from coruscant.apps.runtime import run_coverage
+    from coruscant.common.config import Settings
+    from coruscant.knowledge_graph.persistence import load_graph
+
+    data_dir = tmp_path / "data"
+    settings = Settings(data_dir=data_dir, database_url=f"sqlite:///{data_dir / 'c.db'}")
+    lse = tmp_path / "lse.csv"
+    lse.write_text(_LSE_LIST)
+    ftse = tmp_path / "ftse100.csv"
+    ftse.write_text(_FTSE100)
+
+    # "uk" is accepted as an alias for the GB market.
+    summary = run_coverage(settings, market="uk", sources={"lse": lse, "ftse100": ftse})
+    assert summary.market == "GB" and summary.created == 4 and summary.indices == {"FTSE 100": 3}
+    graph = load_graph(settings.graph_snapshot_path)
+    assert graph.get_node("Company", "gb-GB0007980591") is not None
+
+    run_coverage(settings, market="gb", sources={"lse": lse, "ftse100": ftse})  # re-run, "gb" form
     assert len(load_graph(settings.graph_snapshot_path).nodes_of_kind("Company")) == 4
