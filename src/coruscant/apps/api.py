@@ -95,7 +95,15 @@ from coruscant.knowledge_graph.queries import (
 )
 from coruscant.macro import CountryMacro, MacroService
 from coruscant.news import NewsFeed, NewsService
-from coruscant.pricing import PortfolioPrices, PriceService, summarize
+from coruscant.knowledge_graph.taxonomy import company_gics
+from coruscant.pricing import (
+    PortfolioBenchmark,
+    PortfolioPrices,
+    PriceService,
+    benchmark_symbols,
+    sector_benchmarks,
+    summarize,
+)
 from coruscant.search.hybrid import HybridRetrievalEngine
 from coruscant.search.reference import TemplateReasoningLayer
 
@@ -849,6 +857,40 @@ def create_app(
             return summarize(holdings_meta, {}, total=len(companies), connected=False)
         quotes = service.quotes([symbol for _, _, symbol in holdings_meta])
         return summarize(holdings_meta, quotes, total=len(companies), connected=True)
+
+    @app.get("/portfolio/benchmark", response_model=PortfolioBenchmark, dependencies=protected)
+    def portfolio_benchmark() -> PortfolioBenchmark:
+        """Benchmark each GICS sector's holdings against its sector-index proxy
+        (SPDR Select Sector ETF — free; the licensed MSCI index is a later feed).
+        Reuses the live price feed, so it needs prices connected."""
+        service = state.prices
+        if service is None or not service.enabled:
+            return PortfolioBenchmark(
+                connected=False,
+                note="Benchmarking needs live prices — set CORUSCANT_ENABLE_LIVE_PRICES=true.",
+            )
+        companies = load_companies(settings.config_dir)
+        rows: list[tuple[str, str, str]] = []
+        for company in companies:
+            gics = company_gics(company.slug)
+            if gics is not None:
+                rows.append((company.slug, gics.sector, company.ticker_symbol))
+        holding_quotes = service.quotes([symbol for _, _, symbol in rows])
+        etf_quotes = service.quotes(benchmark_symbols([sector for _, sector, _ in rows]))
+        sectors = sector_benchmarks(rows, holding_quotes, etf_quotes, total=len(rows))
+        as_of = max(
+            (q.as_of for q in {**holding_quotes, **etf_quotes}.values() if q.as_of),
+            default=None,
+        )
+        return PortfolioBenchmark(
+            connected=True,
+            as_of=as_of,
+            sectors=sectors,
+            note=(
+                "Portfolio side is equal-weighted (no position weights yet); sector index = "
+                "SPDR Select Sector ETF proxy (GICS/S&P), not the licensed MSCI index."
+            ),
+        )
 
     @app.get("/macro", response_model=CountryMacro, dependencies=protected)
     def country_macro(country: str) -> CountryMacro:

@@ -285,6 +285,24 @@ export interface PortfolioPrices {
   note?: string | null;
 }
 
+// Sector-index benchmarking: each GICS sector's holdings vs a sector-ETF proxy.
+export interface SectorBenchmark {
+  sector: string;
+  holdings: number;
+  weight_pct: number;
+  portfolio_change_pct?: number | null;
+  benchmark_symbol?: string | null;
+  benchmark_name?: string | null;
+  benchmark_change_pct?: number | null;
+  delta_pct?: number | null;
+}
+export interface PortfolioBenchmark {
+  connected: boolean;
+  as_of?: string | null;
+  sectors: SectorBenchmark[];
+  note?: string | null;
+}
+
 // Country macro (World Bank GDP/inflation + benchmark-index move).
 export interface MacroMetric {
   label: string;
@@ -600,6 +618,7 @@ export const api = {
   marketTierExposure: (tier: string) =>
     get<MarketTierExposure>(`/graph/market-tier-exposure?tier=${encodeURIComponent(tier)}`),
   portfolioPrices: () => get<PortfolioPrices>("/portfolio/prices"),
+  portfolioBenchmark: () => get<PortfolioBenchmark>("/portfolio/benchmark"),
   macro: (country: string) => get<CountryMacro>(`/macro?country=${encodeURIComponent(country)}`),
   news: (country?: string) =>
     get<NewsFeed>(`/news${country ? `?country=${encodeURIComponent(country)}` : ""}`),

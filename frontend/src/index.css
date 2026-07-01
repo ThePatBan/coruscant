@@ -2889,6 +2889,37 @@ button.wp-tile.wp-cta:hover {
   font-variant-numeric: tabular-nums;
 }
 
+/* Sector vs index benchmark table */
+.bench {
+  display: flex;
+  flex-direction: column;
+}
+.bench-row {
+  display: grid;
+  grid-template-columns: 1fr 42px 62px 62px 62px;
+  gap: 6px;
+  align-items: center;
+  font-size: 12.5px;
+  padding: 3px 4px;
+  font-variant-numeric: tabular-nums;
+}
+.bench-row > span:not(.bench-sector) {
+  text-align: right;
+}
+.bench-head {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+  margin-bottom: 2px;
+}
+.bench-sector {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Selected-country tier context line */
 .ci-tier {
   display: flex;

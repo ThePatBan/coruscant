@@ -5,7 +5,14 @@ dropped)."""
 
 from __future__ import annotations
 
-from coruscant.pricing import PriceService, Quote, parse_chart, summarize
+from coruscant.pricing import (
+    PriceService,
+    Quote,
+    benchmark_symbols,
+    parse_chart,
+    sector_benchmarks,
+    summarize,
+)
 
 
 def _chart(symbol: str, price: float, prev: float) -> dict:
@@ -83,3 +90,37 @@ def test_summarize_disconnected_and_connected() -> None:
     assert on.connected is True and on.priced == 2 and on.total == 3
     assert [h.symbol for h in on.holdings] == ["AAPL", "MSFT"]  # sorted by change desc
     assert on.avg_change_pct == 2.5 and on.gainers == 1 and on.losers == 1
+
+
+def test_sector_benchmarks_vs_proxy_etf() -> None:
+    rows = [
+        ("aapl", "Information Technology", "AAPL"),
+        ("msft", "Information Technology", "MSFT"),
+        ("jpm", "Financials", "JPM"),
+    ]
+    assert benchmark_symbols([s for _, s, _ in rows]) == ["XLK", "XLF"]
+    holdings = {
+        "AAPL": Quote(symbol="AAPL", price=102, previous_close=100, change=2, change_pct=2.0),
+        "MSFT": Quote(symbol="MSFT", price=104, previous_close=100, change=4, change_pct=4.0),
+        "JPM": Quote(symbol="JPM", price=99, previous_close=100, change=-1, change_pct=-1.0),
+    }
+    etfs = {
+        "XLK": Quote(symbol="XLK", price=103, previous_close=100, change=3, change_pct=3.0),
+        "XLF": Quote(symbol="XLF", price=99.5, previous_close=100, change=-0.5, change_pct=-0.5),
+    }
+    result = sector_benchmarks(rows, holdings, etfs, total=3)
+    it = next(r for r in result if r.sector == "Information Technology")
+    assert it.holdings == 2 and round(it.weight_pct, 1) == 66.7
+    assert it.portfolio_change_pct == 3.0 and it.benchmark_symbol == "XLK"
+    assert it.benchmark_change_pct == 3.0 and it.delta_pct == 0.0
+    fin = next(r for r in result if r.sector == "Financials")
+    assert fin.portfolio_change_pct == -1.0 and fin.benchmark_change_pct == -0.5 and fin.delta_pct == -0.5
+    assert result[0].sector == "Information Technology"  # sorted by weight desc
+
+
+def test_sector_benchmark_missing_quotes_are_not_fabricated() -> None:
+    rows = [("rio", "Materials", "RIO")]  # no quote, no ETF quote
+    result = sector_benchmarks(rows, {}, {}, total=1)
+    assert result[0].portfolio_change_pct is None
+    assert result[0].benchmark_symbol == "XLB" and result[0].benchmark_change_pct is None
+    assert result[0].delta_pct is None
