@@ -10,6 +10,7 @@ import { AskPage } from "./pages/AskPage";
 import { CompaniesPage } from "./pages/CompaniesPage";
 import { CompanyDetailPage } from "./pages/CompanyDetailPage";
 import { ComparePage } from "./pages/ComparePage";
+import { CountryPage } from "./pages/CountryPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { DocumentsPage } from "./pages/DocumentsPage";
 import { DocumentDetailPage } from "./pages/DocumentDetailPage";
@@ -26,6 +27,7 @@ import { WorldPage } from "./pages/WorldPage";
 
 const NAV = [
   { to: "/world", label: "World", icon: "◍" },
+  { to: "/country", label: "Country", icon: "⬡" },
   { to: "/atlas", label: "Company graph", icon: "✦" },
   { to: "/dashboard", label: "Dashboard", icon: "◧" },
   { to: "/search", label: "Search", icon: "⌕" },
@@ -45,6 +47,7 @@ const NAV = [
 
 const CRUMBS: Array<[RegExp, string]> = [
   [/^\/world/, "World markets"],
+  [/^\/country/, "Country exposure"],
   [/^\/atlas/, "Company graph"],
   [/^\/dashboard/, "Dashboard"],
   [/^\/search/, "Search the evidence"],
@@ -185,6 +188,7 @@ export default function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route element={<ProtectedLayout />}>
         <Route path="/world" element={<WorldPage />} />
+        <Route path="/country" element={<CountryPage />} />
         <Route path="/atlas" element={<AtlasPage />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/search" element={<AskPage />} />
