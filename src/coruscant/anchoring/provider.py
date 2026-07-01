@@ -131,16 +131,26 @@ class LocalGleifProvider:
 
 
 class GleifApiProvider:
-    """Live provider against GLEIF's public API (CC0). One lookup per query."""
+    """Live provider against GLEIF's public API (CC0).
+
+    Two-pass recall: the strict ``legalName`` filter catches clean names, then —
+    because our node names are SEC-conformed ("Microsoft Corp", "3M Co") that the
+    filter misses — a ``fuzzycompletions`` fallback surfaces the canonical legal
+    name ("MICROSOFT CORPORATION"). Fuzzy is noisy, so we keep only completions
+    whose suffix-stripped *core* matches (``fuzzy_floor``) before fetching the full
+    record — bounding both false positives and the number of detail requests."""
 
     name = "gleif-api"
 
     def __init__(self, base_url: str = _GLEIF_API, *, candidate_floor: float = 0.85,
-                 limit: int = 5, timeout: float = 20.0) -> None:
+                 limit: int = 5, timeout: float = 20.0, fuzzy: bool = True,
+                 fuzzy_floor: float = 0.97) -> None:
         self._base_url = base_url.rstrip("/")
         self._floor = candidate_floor
         self._limit = limit
         self._timeout = timeout
+        self._fuzzy = fuzzy
+        self._fuzzy_floor = fuzzy_floor
 
     def connected(self) -> bool:
         try:
@@ -151,22 +161,59 @@ class GleifApiProvider:
         except Exception:
             return False
 
-    def _lookup(self, name: str) -> list[LeiRecord]:
-        url = (f"{self._base_url}/lei-records?filter[entity.legalName]={quote(name)}"
-               f"&page[size]={self._limit}")
-        req = Request(url, headers={"Accept": "application/vnd.api+json",
-                                    "User-Agent": "Coruscant/0.1 (identity anchoring)"})
+    def _get(self, path: str, context: str) -> dict[str, Any]:
+        req = Request(f"{self._base_url}/{path}",
+                      headers={"Accept": "application/vnd.api+json",
+                               "User-Agent": "Coruscant/0.1 (identity anchoring)"})
         try:
             with urlopen(req, timeout=self._timeout) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except Exception as error:
-            raise RuntimeError(f"GLEIF lookup failed for {name!r}: {error}") from error
+            raise RuntimeError(f"GLEIF {context} failed for {path!r}: {error}") from error
+        return payload if isinstance(payload, dict) else {}
+
+    def _lookup(self, name: str) -> list[LeiRecord]:
+        payload = self._get(
+            f"lei-records?filter[entity.legalName]={quote(name)}&page[size]={self._limit}",
+            "lookup",
+        )
         return [_record_from_gleif(item) for item in payload.get("data", [])]
+
+    def _fuzzy_records(self, name: str) -> list[LeiRecord]:
+        """Fuzzy-complete the legal name, keep only core-matching completions, and
+        fetch the full record for each (bounded — usually 0-2 fetches)."""
+
+        payload = self._get(
+            f"fuzzycompletions?field=entity.legalName&q={quote(name)}", "fuzzycompletions"
+        )
+        q_norm = normalize_name(name)
+        seen: set[str] = set()
+        records: list[LeiRecord] = []
+        for item in payload.get("data", []):
+            value = (item.get("attributes") or {}).get("value")
+            rel = ((item.get("relationships") or {}).get("lei-records") or {}).get("data") or {}
+            lei = rel.get("id")
+            if not value or not lei or lei in seen:
+                continue
+            if org_score(q_norm, normalize_name(str(value))) < self._fuzzy_floor:
+                continue  # keep only core-exact completions → bounds fetches + noise
+            seen.add(lei)
+            detail = self._get(f"lei-records/{quote(str(lei))}", "record").get("data")
+            if isinstance(detail, dict):
+                records.append(_record_from_gleif(detail))
+        return records
+
+    def _candidates(self, name: str) -> list[LeiRecord]:
+        records = self._lookup(name)
+        if self._fuzzy:
+            known = {r.lei for r in records}
+            records.extend(r for r in self._fuzzy_records(name) if r.lei not in known)
+        return records
 
     def resolve(self, queries: list[AnchorQuery]) -> list[AnchorMatch]:
         matches: list[AnchorMatch] = []
         for query in queries:
-            match = _best_match(query, self._lookup(query.name), self._floor)
+            match = _best_match(query, self._candidates(query.name), self._floor)
             if match is not None:
                 matches.append(match)
         matches.sort(key=lambda m: (-m.score, m.query.key, m.record.lei))

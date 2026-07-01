@@ -53,8 +53,11 @@ Two tabs: **`/world`** (Home/World — the exposure surface) and **`/atlas`** (t
   (thin records) also need jurisdiction↔country corroboration. Confirmed → `has_lei`
   edge + `LegalEntity` anchor node + `lei` on the node; the rest are **explicitly
   `lei_status:unresolved`**, never dropped. `GET /graph/resolution` + `coruscant
-  anchor [--provider gleif-api|gleif-local]`. *Live-validated:* 27/53 real companies
-  anchored to their LEI (rest honestly unresolved). See ADR-0007.
+  anchor [--provider gleif-api|gleif-local]`. Recall is two-pass: the strict GLEIF
+  `legalName` filter, then a `fuzzycompletions` fallback for SEC-conformed names
+  ("Microsoft Corp" → "MICROSOFT CORPORATION"), still core-gated so it never
+  over-merges. *Live-validated:* 35/53 real companies anchored to their LEI (rest
+  honestly unresolved). See ADR-0007.
 - **Taxonomy**: full GICS hierarchy (8-digit code) + MSCI DM/EM/FM, curated and
   verified against public MSCI/S&P sources.
 - **Instrument model**: commodities + debt as first-class instruments wired into
