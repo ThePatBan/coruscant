@@ -141,6 +141,14 @@ class Settings(BaseSettings):
     # depends on it and the screening panel honestly reports `connected: false`
     # until an operator wires a dataset (see `coruscant screen`).
     screening_dataset_path: Path | None = None
+    # Which screening matcher to use: "deterministic" (zero-dep, offline, exact/
+    # near-exact names) or "yente" (OpenSanctions' scorer at scale + fuzzy/cross-
+    # script recall, run as a Docker sidecar over HTTP — see docker-compose.screening.yml).
+    screening_provider: str = "deterministic"
+    yente_url: str = "http://localhost:8000"
+    yente_dataset: str = "default"  # yente collection ("default" | "sanctions" | "peps")
+    yente_cutoff: float = 0.7  # minimum score for yente to return a candidate
+    yente_limit: int = 5  # max candidates per person
     # Enforce per-plan daily API + watchlist quotas. Only takes effect in a
     # multi-tenant deployment (when an organization store is configured); single
     # -tenant/offline use is never throttled. Set false to disable enforcement.

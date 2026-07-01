@@ -1,0 +1,51 @@
+# Opt-in PEP/sanctions screening sidecar: OpenSanctions `yente` + an OpenSearch
+# index. Separate from the main stack (docker-compose.yml) so the heavy index only
+# runs when you screen. yente's heavy deps (ICU, scikit-learn, OpenSearch) live
+# here, in the container — never in coruscant's Python process.
+#
+# Usage:
+#   docker compose -f docker-compose.screening.yml up -d       # wait for it to index
+#   CORUSCANT_SCREENING_PROVIDER=yente CORUSCANT_YENTE_URL=http://localhost:8001 \
+#     coruscant screen --provider yente
+#
+# DATA/LICENSE: yente's default manifest fetches the OpenSanctions dataset, which
+# is CC-BY-NC — internal dev use pending written license clarification, and NOT for
+# external/commercial serving. To run against your own (or synthetic) data instead,
+# mount a custom manifest and point YENTE_MANIFEST at it (see docs/screening-runbook.md).
+services:
+  index:
+    image: opensearchproject/opensearch:2.18.0
+    environment:
+      - discovery.type=single-node
+      - plugins.security.disabled=true
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+    volumes:
+      - yente-index:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  yente:
+    image: ghcr.io/opensanctions/yente:4.11.0
+    depends_on:
+      index:
+        condition: service_healthy
+    ports:
+      - "8001:8000"  # host 8001 (8000 is coruscant's API) → set CORUSCANT_YENTE_URL=http://localhost:8001
+    environment:
+      YENTE_INDEX_TYPE: opensearch
+      YENTE_INDEX_URL: http://index:9200
+      YENTE_AUTO_REINDEX: "true"
+      # YENTE_MANIFEST: /manifests/custom.yml   # uncomment + mount for self-hosted/synthetic data
+    # volumes:
+    #   - ./deploy/yente-manifests:/manifests:ro
+    restart: unless-stopped
+
+volumes:
+  yente-index:

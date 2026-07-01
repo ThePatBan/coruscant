@@ -19,7 +19,9 @@ import json
 import re
 import unicodedata
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 from pydantic import BaseModel, Field
 
@@ -191,24 +193,92 @@ class DeterministicScreeningProvider:
         return matches
 
 
+def _yente_query_properties(query: ScreeningQuery) -> dict[str, list[str]]:
+    props: dict[str, list[str]] = {"name": [query.name]}
+    if query.country:
+        props["country"] = [query.country]
+    if query.birth_date:
+        props["birthDate"] = [query.birth_date]
+    return props
+
+
 class YenteScreeningProvider:
-    """PR-2 seam: OpenSanctions' ``yente`` (nomenklatura's scorer) over HTTP, run
-    as a Docker sidecar so its heavy deps (ICU, scikit-learn, Elasticsearch) stay
-    out of this process. Implemented in PR 2; the interface is fixed here so the
-    pipeline and graph model do not change when it lands."""
+    """OpenSanctions' ``yente`` (nomenklatura's scorer, at scale) over HTTP, run as
+    a Docker sidecar so its heavy deps (ICU, scikit-learn, OpenSearch) stay out of
+    this process. Drop-in behind :class:`ScreeningProvider`: the pipeline's
+    precision gate, the resolver, and the graph model are unchanged — only the
+    candidate *scorer* improves (fuzzy + cross-script recall the deterministic
+    matcher lacks). Each ``yente`` result already has the OpenSanctions/FtM shape
+    :func:`_record_from` parses, so a hit round-trips into the same
+    :class:`WatchlistRecord` the deterministic provider produces."""
 
     name = "yente"
 
-    def __init__(self, base_url: str) -> None:
-        self._base_url = base_url
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        dataset: str = "default",
+        cutoff: float = 0.7,
+        limit: int = 5,
+        fuzzy: bool = True,
+        algorithm: str = "logic-v1",
+        batch_size: int = 100,
+        timeout: float = 30.0,
+    ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._dataset = dataset
+        self._cutoff = cutoff
+        self._limit = limit
+        self._fuzzy = fuzzy
+        self._algorithm = algorithm
+        self._batch_size = batch_size
+        self._timeout = timeout
 
     def connected(self) -> bool:
-        return False  # not wired until PR 2
+        try:
+            with urlopen(Request(f"{self._base_url}/healthz"), timeout=min(self._timeout, 3.0)) as r:
+                return 200 <= int(r.getcode()) < 300
+        except Exception:
+            return False
+
+    def _post_match(self, batch: list[ScreeningQuery]) -> dict[str, Any]:
+        params = urlencode({"limit": self._limit, "cutoff": self._cutoff,
+                            "fuzzy": str(self._fuzzy).lower(), "algorithm": self._algorithm})
+        url = f"{self._base_url}/match/{self._dataset}?{params}"
+        body = {"queries": {q.key: {"schema": "Person", "properties": _yente_query_properties(q)}
+                            for q in batch}}
+        request = Request(url, data=json.dumps(body).encode("utf-8"),
+                          headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urlopen(request, timeout=self._timeout) as response:
+                parsed = json.loads(response.read().decode("utf-8"))
+                return parsed if isinstance(parsed, dict) else {}
+        except Exception as error:  # surface loudly — this is an operator-run step
+            raise RuntimeError(f"yente /match failed at {self._base_url}: {error}") from error
 
     def screen(self, queries: list[ScreeningQuery]) -> list[ScreeningMatch]:
-        raise NotImplementedError(
-            "YenteScreeningProvider lands in PR 2 (yente Docker sidecar over HTTP)."
-        )
+        by_key = {q.key: q for q in queries}
+        matches: list[ScreeningMatch] = []
+        for start in range(0, len(queries), self._batch_size):
+            batch = queries[start : start + self._batch_size]
+            data = self._post_match(batch)
+            for key, response in data.get("responses", {}).items():
+                query = by_key.get(key)
+                if query is None or not isinstance(response, dict):
+                    continue
+                for result in response.get("results", []):
+                    record = _record_from(result)
+                    matches.append(
+                        ScreeningMatch(
+                            query=query, record=record,
+                            score=float(result.get("score", 0.0)),
+                            matched_name=record.name,
+                            corroborated=_corroborates(query, record),
+                        )
+                    )
+        matches.sort(key=lambda m: (-m.score, m.query.key, m.record.id))
+        return matches
 
 
 def load_opensanctions(path: Path) -> list[WatchlistRecord]:

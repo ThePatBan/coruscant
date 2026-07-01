@@ -5,8 +5,15 @@
 Accepted (2026-07-01). Implements Phase 0 (substrate & keys) → Phase 1 (screen
 the people we already have) of
 [docs/global-exposure-architecture.md](../global-exposure-architecture.md) §5, now
-that the graph store (ADR-0001) is built. This is PR 1 of two: PR 2 swaps the
-deterministic screening provider for the `yente` service (see below).
+that the graph store (ADR-0001) is built.
+
+**Update (PR 2, 2026-07-01):** the `yente` provider is now implemented —
+`YenteScreeningProvider` (a stdlib-HTTP client for yente's `/match` contract) +
+`docker-compose.screening.yml` (yente + OpenSearch sidecar) + `docs/screening-runbook.md`,
+selectable via `CORUSCANT_SCREENING_PROVIDER=yente`. Hermetic mock tests lock the
+contract; the *live* run stays operator-executed (heavy index + the OpenSanctions
+data licence gate, below). The pipeline, precision gate, resolver, and graph model
+are unchanged — only the scorer improves.
 
 ## Context
 

@@ -105,8 +105,8 @@ def cmd_screen(args: argparse.Namespace) -> int:
     configure_logging()
     dataset = Path(args.dataset) if args.dataset else None
     try:
-        summary = run_screening(dataset_path=dataset)
-    except FileNotFoundError as error:
+        summary = run_screening(dataset_path=dataset, provider_name=args.provider)
+    except (FileNotFoundError, ConnectionError) as error:
         print(str(error))
         return 1
     print(
@@ -163,6 +163,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--dataset",
         default=None,
         help="Path to an OpenSanctions export (bulk targets.nested.json or a JSON array)",
+    )
+    screen.add_argument(
+        "--provider",
+        default=None,
+        choices=["deterministic", "yente"],
+        help="Matcher: 'deterministic' (offline file) or 'yente' (sidecar over HTTP)",
     )
     screen.set_defaults(func=cmd_screen)
 
