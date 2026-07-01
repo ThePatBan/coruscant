@@ -108,6 +108,8 @@ export function SignalsGlobe({ signals, selectedId, onSelect }: Props) {
       const cs = getComputedStyle(cvs);
       const line = V(cs, "--accent", "#7c8cff");
       const rim = V(cs, "--accent-border", "rgba(124,140,255,.35)");
+      const g1 = V(cs, "--globe-1", "#141d2b");
+      const g2 = V(cs, "--globe-2", "#0a0f18");
       const col = {
         risk: V(cs, "--danger", "#ff6b6b"),
         opp: V(cs, "--good", "#4bd6a0"),
@@ -117,8 +119,8 @@ export function SignalsGlobe({ signals, selectedId, onSelect }: Props) {
 
       // sphere
       const grad = ctx.createRadialGradient(g.cx - g.R * 0.35, g.cy - g.R * 0.4, g.R * 0.15, g.cx, g.cy, g.R);
-      grad.addColorStop(0, "#141d2b");
-      grad.addColorStop(1, "#0a0f18");
+      grad.addColorStop(0, g1);
+      grad.addColorStop(1, g2);
       ctx.beginPath();
       ctx.arc(g.cx, g.cy, g.R, 0, Math.PI * 2);
       ctx.fillStyle = grad;

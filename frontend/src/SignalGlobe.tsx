@@ -47,6 +47,8 @@ export function SignalGlobe() {
       const cs = getComputedStyle(cvs);
       const line = cssVar(cs, "--accent", "#7c8cff");
       const rim = cssVar(cs, "--accent-border", "rgba(124,140,255,.35)");
+      const g1 = cssVar(cs, "--globe-1", "#182231");
+      const g2 = cssVar(cs, "--globe-2", "#0b111b");
 
       const cx = w / 2;
       const cy = h / 2;
@@ -59,8 +61,8 @@ export function SignalGlobe() {
 
       // sphere
       const grad = ctx.createRadialGradient(cx - R * 0.35, cy - R * 0.4, R * 0.15, cx, cy, R);
-      grad.addColorStop(0, "#182231");
-      grad.addColorStop(1, "#0b111b");
+      grad.addColorStop(0, g1);
+      grad.addColorStop(1, g2);
       ctx.beginPath();
       ctx.arc(cx, cy, R, 0, Math.PI * 2);
       ctx.fillStyle = grad;
