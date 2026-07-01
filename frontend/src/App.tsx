@@ -18,6 +18,7 @@ import { DocumentsPage } from "./pages/DocumentsPage";
 import { DocumentDetailPage } from "./pages/DocumentDetailPage";
 import { GraphPage } from "./pages/GraphPage";
 import { LandingPage } from "./pages/LandingPage";
+import { LiveSignalsPage } from "./pages/LiveSignalsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MonitoringPage } from "./pages/MonitoringPage";
 import { PortfolioPage } from "./pages/PortfolioPage";
@@ -25,7 +26,8 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { SourcesPage } from "./pages/SourcesPage";
 import { WatchlistsPage } from "./pages/WatchlistsPage";
 import { WorkspacesPage } from "./pages/WorkspacesPage";
-import { WorldPage } from "./pages/WorldPage";
+// TODO(retire): WorldPage was the markets-globe World view, superseded by
+// LiveSignalsPage at /world. File kept for reference; delete once signed off.
 
 // Primary nav = the design-pack product spine (World → Country → Company, plus
 // the analytical reads). Legacy surfaces are archived from the nav below.
@@ -280,7 +282,7 @@ export default function App() {
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route element={<ProtectedLayout />}>
-        <Route path="/world" element={<WorldPage />} />
+        <Route path="/world" element={<LiveSignalsPage />} />
         <Route path="/country" element={<CountryPage />} />
         <Route path="/atlas" element={<AtlasPage />} />
         <Route path="/dashboard" element={<DashboardPage />} />
