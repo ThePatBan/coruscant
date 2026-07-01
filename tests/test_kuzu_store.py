@@ -97,6 +97,35 @@ def _rich_graph() -> InMemoryKnowledgeGraphStore:
     s.upsert_node(_node("Filing", "aapl-10k", name="Apple 10-K"))
     s.upsert_edge(_edge("Filing", "aapl-10k", "mentions", "Company", "apple"))
     s.upsert_edge(_edge("Company", "apple", "filed", "Filing", "aapl-10k"))
+    # PEP/sanctions screening on synthetic subjects (never a real person). Edges
+    # carry the substrate: access_tier (query-time policy) + valid-time (bitemporal).
+    for pid, name in [("screen-subject", "Screen Subject"), ("review-subject", "Review Subject")]:
+        s.upsert_node(_node("Person", pid, name=name))
+    s.upsert_node(_node("WatchlistEntity", "os-sdn-1", name="Listed Entity One", source="opensanctions",
+                        external_id="sdn-1", source_url="https://www.opensanctions.org/entities/sdn-1/",
+                        topics=["sanction"], datasets=["us_ofac_sdn"]))
+    s.upsert_node(_node("WatchlistEntity", "os-pep-1", name="Exposed Person One", source="opensanctions",
+                        external_id="pep-1", source_url="https://www.opensanctions.org/entities/pep-1/",
+                        topics=["role.pep"], datasets=["peps"]))
+    s.upsert_edge(_edge("Person", "screen-subject", "sanctioned", "WatchlistEntity", "os-sdn-1",
+                        source="opensanctions", access_tier="public", observed_at="2026-07-01",
+                        valid_from="2020-01-01", score=1.0, matched_name="Screen Subject",
+                        review_status="confirmed", datasets=["us_ofac_sdn"], external_id="sdn-1"))
+    s.upsert_edge(_edge("Person", "review-subject", "screening_candidate", "WatchlistEntity", "os-pep-1",
+                        source="opensanctions", access_tier="public", observed_at="2026-07-01",
+                        valid_from="2019-01-01", score=0.9, matched_name="Review Subject",
+                        review_status="needs-review", datasets=["peps"], external_id="pep-1"))
+    s.upsert_node(_node("ScreeningRun", "latest", name="Latest screening run", source="screening",
+                        provider="deterministic-name-v1", dataset="fixture", screened=3, candidates=2,
+                        confirmed=1, needs_review=1, pep=0, sanctioned=1, observed_at="2026-07-01"))
+    # Resolver canonical projection: two spellings of one company merged, with the
+    # `resolves_to` relation the multi-hop primitive traverses (like `references`).
+    s.upsert_node(_node("Company", "acme-holdings", name="ACME Holdings LLC"))
+    s.upsert_node(_node("Company", "acme-hldgs", name="ACME HLDGS"))
+    s.upsert_node(_node("Canonical", "cid-acme", name="cid-acme", source="resolver", members=2))
+    for slug in ("acme-holdings", "acme-hldgs"):
+        s.upsert_edge(_edge("Company", slug, "resolves_to", "Canonical", "cid-acme",
+                            source="resolver", access_tier="public", observed_at="2026-07-01"))
     return s
 
 
@@ -215,6 +244,26 @@ def test_company_network_evidence_chain() -> None:
     assert all(step.source for step in chain)  # every hop cites a filing (provenance)
     # reached is ordered by (hops, name); shell is beyond 3 hops, absent.
     assert [r.company.key for r in net.reached] == ["apple", "jpmorgan", "chevron"]
+
+
+@pytest.mark.parametrize("as_of", [None, "2019-06-01", "2021-01-01", "2026-07-01"])
+def test_parity_screening_overview(as_of: str | None) -> None:
+    # The screening panel (incl. its bitemporal `as_of` filter) is byte-identical
+    # across backends, so serving from Kùzu never changes what the panel shows.
+    mem, kz = _both_stores()
+    assert _j(Q.screening_overview(mem, as_of=as_of)) == _j(Q.screening_overview(kz, as_of=as_of))
+
+
+def test_parity_reachable_resolves_to() -> None:
+    # The canonical-cluster traversal reuses the multi-hop primitive over a new
+    # relation: acme-holdings -resolves_to-> Canonical <-resolves_to- acme-hldgs.
+    mem, kz = _both_stores()
+    for store in (mem, kz):
+        reached = store.reachable("Company", "acme-holdings", "resolves_to", 2, direction="any")
+        assert reached[("Canonical", "cid-acme")] == 1
+        assert reached[("Company", "acme-hldgs")] == 2
+    assert (mem.reachable("Company", "acme-holdings", "resolves_to", 2, direction="any")
+            == kz.reachable("Company", "acme-holdings", "resolves_to", 2, direction="any"))
 
 
 def test_parity_entity_profile_every_node() -> None:

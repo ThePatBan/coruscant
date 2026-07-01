@@ -8,10 +8,12 @@ through shared companies, and what an entity is connected to.
 from __future__ import annotations
 
 from collections import deque
+from datetime import date
 
 from pydantic import BaseModel
 
 from coruscant.common.types import GraphEdge
+from coruscant.knowledge_graph import substrate
 from coruscant.knowledge_graph.entities import entity_key
 from coruscant.knowledge_graph.store import KnowledgeGraphStore
 
@@ -759,3 +761,110 @@ def company_network(
     records.sort(key=lambda r: (r.hops, r.company.name))
     result.reached = records
     return result
+
+
+# -- PEP / sanctions screening panel ------------------------------------------
+# Graph vocabulary written by coruscant.screening.pipeline, mirrored here so the
+# knowledge_graph layer stays independent of the screening layer.
+_WATCHLIST_KIND = "WatchlistEntity"
+_SCREENING_RUN_KIND = "ScreeningRun"
+_SCREENING_RUN_KEY = "latest"
+_PEP = "pep"
+_SANCTIONED = "sanctioned"
+_CANDIDATE = "screening_candidate"
+
+
+class ScreeningHit(BaseModel):
+    """One person ↔ watchlist edge, with the evidence needed to act or review it."""
+
+    person: EntityRef
+    listing: EntityRef
+    relation: str  # "pep" | "sanctioned" | "screening_candidate"
+    review_status: str
+    score: float | None = None
+    matched_name: str | None = None
+    dataset: str | None = None
+    source: str | None = None
+    source_url: str | None = None
+    valid_from: str | None = None
+    access_tier: str = "public"
+
+
+class ScreeningOverview(BaseModel):
+    """The screening panel. ``connected: false`` is the honest state before a
+    screen has run (no dataset wired) — never a placeholder. When it has run, a
+    low or empty hit list is itself the answer: most of our people are US/UK/India
+    public-company officers and Form-4 insiders, a low PEP/sanctions base rate."""
+
+    connected: bool
+    provider: str | None = None
+    dataset: str | None = None
+    screened: int = 0
+    candidates: int = 0
+    pep: int = 0
+    sanctioned: int = 0
+    confirmed: list[ScreeningHit] = []
+    needs_review: list[ScreeningHit] = []
+    note: str = (
+        "Confirmed hits are corroborated beyond the name; the review queue is "
+        "name-only and unconfirmed — a candidate, not a determination."
+    )
+
+
+def _hit(store: KnowledgeGraphStore, edge: GraphEdge) -> ScreeningHit:
+    props = edge.properties
+    listing_node = store.get_node(edge.target_kind, edge.target_key)
+    source_url = _str_prop(listing_node.properties, "source_url") if listing_node is not None else None
+    raw_score = props.get("score")
+    datasets = props.get("datasets")
+    return ScreeningHit(
+        person=_ref(store, edge.source_kind, edge.source_key),
+        listing=_ref(store, edge.target_kind, edge.target_key),
+        relation=edge.relation,
+        review_status=_str_prop(props, "review_status") or "",
+        score=float(raw_score) if isinstance(raw_score, (int, float)) else None,
+        matched_name=_str_prop(props, "matched_name"),
+        dataset=", ".join(str(d) for d in datasets) if isinstance(datasets, list) and datasets else None,
+        source=_source_of(props),
+        source_url=source_url,
+        valid_from=_str_prop(props, substrate.VALID_FROM),
+        access_tier=substrate.tier_of(props).value,
+    )
+
+
+def screening_overview(
+    store: KnowledgeGraphStore,
+    *,
+    clearance: substrate.AccessTier | str = substrate.AccessTier.PUBLIC,
+    as_of: date | str | None = None,
+) -> ScreeningOverview:
+    """The PEP/sanctions screening panel, tier-enforced and optionally as-of a date.
+
+    ``clearance`` runs the query-time access-tier policy (Invariant #7): an edge is
+    only returned if the caller is cleared for its tier. ``as_of`` answers "was this
+    flagged *on date D?*" via valid-time (Invariant #6)."""
+
+    run = store.get_node(_SCREENING_RUN_KIND, _SCREENING_RUN_KEY)
+    if run is None:
+        return ScreeningOverview(connected=False)
+
+    confirmed_edges = store.edges_by_relation(_PEP) + store.edges_by_relation(_SANCTIONED)
+    review_edges = store.edges_by_relation(_CANDIDATE)
+    if as_of is not None:
+        confirmed_edges = substrate.as_of(confirmed_edges, on=as_of)
+        review_edges = substrate.as_of(review_edges, on=as_of)
+    confirmed_edges = substrate.visible(confirmed_edges, clearance=clearance)
+    review_edges = substrate.visible(review_edges, clearance=clearance)
+
+    props = run.properties
+    return ScreeningOverview(
+        connected=True,
+        provider=_str_prop(props, "provider"),
+        dataset=_str_prop(props, "dataset"),
+        screened=int(props.get("screened") or 0),
+        candidates=int(props.get("candidates") or 0),
+        pep=sum(1 for e in confirmed_edges if e.relation == _PEP),
+        sanctioned=sum(1 for e in confirmed_edges if e.relation == _SANCTIONED),
+        confirmed=[_hit(store, e) for e in confirmed_edges],
+        needs_review=[_hit(store, e) for e in review_edges],
+    )

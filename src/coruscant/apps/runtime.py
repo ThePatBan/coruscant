@@ -12,6 +12,10 @@ import secrets
 
 from pathlib import Path
 import tarfile
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from coruscant.screening.pipeline import ScreeningSummary
 
 from coruscant.auth.service import AuthService
 from coruscant.auth.store import SqliteUserStore
@@ -49,7 +53,12 @@ from coruscant.intelligence.reliability import (
 from coruscant.knowledge_graph.extraction import extract_relationships
 from coruscant.knowledge_graph.kuzu_store import KuzuKnowledgeGraphStore
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
-from coruscant.knowledge_graph.persistence import load_graph, save_graph
+from coruscant.knowledge_graph.persistence import (
+    load_graph,
+    load_resolver,
+    save_graph,
+    save_resolver,
+)
 from coruscant.knowledge_graph.store import KnowledgeGraphStore
 from coruscant.enterprise.api_keys import SqliteApiKeyStore
 from coruscant.enterprise.audit import SqliteAuditStore
@@ -335,6 +344,41 @@ def run_ingestion(
     for source_type in report.source_types:
         schedule.record_run(source_type, completed_at)
     return report
+
+
+def run_screening(
+    settings: Settings | None = None,
+    *,
+    dataset_path: Path | None = None,
+    now: datetime | None = None,
+) -> "ScreeningSummary":
+    """Screen the graph's people against an OpenSanctions export and persist the
+    projected ``pep`` / ``sanctioned`` / ``screening_candidate`` edges plus the
+    reversible resolver log. Opt-in (needs a dataset) and idempotent; leaves the
+    rest of the graph untouched. Returns the run summary."""
+
+    from coruscant.knowledge_graph.persistence import load_graph as _load_graph
+    from coruscant.screening.pipeline import screen_people
+    from coruscant.screening.provider import DeterministicScreeningProvider, load_opensanctions
+
+    settings = settings or get_settings()
+    moment = now or datetime.now(tz=timezone.utc)
+    path = dataset_path or settings.screening_dataset_path
+    if path is None or not Path(path).exists():
+        raise FileNotFoundError(
+            "No OpenSanctions dataset configured. Set CORUSCANT_SCREENING_DATASET_PATH "
+            "or pass --dataset (bulk targets.nested.json or a JSON array)."
+        )
+
+    store = _load_graph(settings.graph_snapshot_path)
+    resolver = load_resolver(settings.resolver_snapshot_path)
+    provider = DeterministicScreeningProvider(load_opensanctions(Path(path)))
+    summary = screen_people(
+        store, provider, resolver, observed_at=moment.date(), dataset=str(path)
+    )
+    save_graph(store, settings.graph_snapshot_path)
+    save_resolver(resolver, settings.resolver_snapshot_path)
+    return summary
 
 
 def evaluate_all_watchlists(settings: Settings | None = None, *, now: datetime | None = None) -> int:

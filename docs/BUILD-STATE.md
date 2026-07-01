@@ -29,6 +29,19 @@ Two tabs: **`/world`** (Home/World — the exposure surface) and **`/atlas`** (t
   the co-mention neighbourhood of a company out to N hops, each reached company with
   a shortest **evidence chain** (per-hop filing citation). The traversal the flat
   store couldn't do at scale; the shape the future `owns*`/`supplies*` will take.
+- **Entity-resolution spine + PEP/sanctions screening** (ER Phase 0→1, PR 1 of 2):
+  a **reversible, versioned resolver** (append-only `same`/`different`/`undecided`
+  judgement log; **merge-resistant** clustering — not connected-components; pinned
+  `canonical_id` stable across re-resolution) with a graph projection (`Canonical`
+  node + `resolves_to` edges). A **bitemporal + `access_tier` substrate** on edges
+  (valid-time/system-time + a query-time tier policy filter). **Offline screening**
+  behind a swappable provider: a zero-dependency deterministic matcher screens the
+  graph's people against an OpenSanctions export under a precision gate (no
+  name-only auto-confirm; Form-4 insiders held to a higher bar) → confirmed
+  `pep`/`sanctioned` edges vs. a `screening_candidate` review queue, never a
+  fabricated hit. `GET /graph/screening` (honest `connected:false` until run) +
+  `coruscant screen --dataset`. Opt-in; internal-only pending the OpenSanctions
+  license. See ADR-0007.
 - **Taxonomy**: full GICS hierarchy (8-digit code) + MSCI DM/EM/FM, curated and
   verified against public MSCI/S&P sources.
 - **Instrument model**: commodities + debt as first-class instruments wired into
