@@ -15,6 +15,8 @@ import tarfile
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from coruscant.anchoring.pipeline import AnchorSummary
+    from coruscant.anchoring.provider import LeiProvider
     from coruscant.screening.pipeline import ScreeningSummary
     from coruscant.screening.provider import ScreeningProvider
 
@@ -407,6 +409,58 @@ def run_screening(
     summary = screen_people(
         store, provider, resolver, observed_at=moment.date(), dataset=dataset_label
     )
+    save_graph(store, settings.graph_snapshot_path)
+    save_resolver(resolver, settings.resolver_snapshot_path)
+    return summary
+
+
+def _build_lei_provider(
+    settings: Settings, *, gleif_path: Path | None, provider_name: str | None
+) -> "LeiProvider":
+    """Construct the configured LEI provider. ``gleif-api`` needs network (CC0,
+    no key); ``gleif-local`` needs a GLEIF export file."""
+
+    from coruscant.anchoring.provider import GleifApiProvider, LocalGleifProvider, load_gleif
+
+    choice = (provider_name or settings.anchor_provider).lower()
+    if choice == "gleif-local":
+        path = gleif_path or settings.gleif_dataset_path
+        if path is None or not Path(path).exists():
+            raise FileNotFoundError(
+                "No GLEIF dataset configured. Set CORUSCANT_GLEIF_DATASET_PATH or pass "
+                "--gleif, or use --provider gleif-api for the free public API."
+            )
+        return LocalGleifProvider(load_gleif(Path(path)))
+    provider = GleifApiProvider()
+    if not provider.connected():
+        raise ConnectionError(
+            "GLEIF API is not reachable. Check network/SSL_CERT_FILE, or use "
+            "--provider gleif-local with a downloaded GLEIF export."
+        )
+    return provider
+
+
+def run_anchor(
+    settings: Settings | None = None,
+    *,
+    gleif_path: Path | None = None,
+    provider_name: str | None = None,
+    now: datetime | None = None,
+) -> "AnchorSummary":
+    """Anchor the graph's Company/Subsidiary nodes to GLEIF LEIs and persist the
+    enriched nodes, ``has_lei``/``lei_candidate`` edges, and reversible resolver
+    judgements. Opt-in and idempotent; unmatched nodes are labelled unresolved."""
+
+    from coruscant.anchoring.pipeline import anchor_entities
+    from coruscant.knowledge_graph.persistence import load_graph as _load_graph
+
+    settings = settings or get_settings()
+    moment = now or datetime.now(tz=timezone.utc)
+    provider = _build_lei_provider(settings, gleif_path=gleif_path, provider_name=provider_name)
+
+    store = _load_graph(settings.graph_snapshot_path)
+    resolver = load_resolver(settings.resolver_snapshot_path)
+    summary = anchor_entities(store, provider, resolver, observed_at=moment.date())
     save_graph(store, settings.graph_snapshot_path)
     save_resolver(resolver, settings.resolver_snapshot_path)
     return summary

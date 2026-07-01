@@ -82,6 +82,7 @@ from coruscant.knowledge_graph.queries import (
     JurisdictionExposure,
     MarketTierCount,
     MarketTierExposure,
+    ResolutionOverview,
     ScreeningOverview,
     SectorCount,
     CompanyNetwork,
@@ -102,6 +103,7 @@ from coruscant.knowledge_graph.queries import (
     list_market_tiers,
     list_sectors,
     market_tier_exposure,
+    resolution_overview,
     screening_overview,
     sector_exposure,
 )
@@ -879,6 +881,16 @@ def create_app(
         if not isinstance(graph, KnowledgeGraphStore):
             return ScreeningOverview(connected=False)
         return screening_overview(graph, as_of=as_of)
+
+    @app.get("/graph/resolution", response_model=ResolutionOverview, dependencies=protected)
+    def graph_resolution(as_of: str | None = None) -> ResolutionOverview:
+        """GLEIF LEI-anchoring coverage: how much of the graph is resolved to a
+        stable identity. ``connected: false`` until an anchoring run; optional
+        ``as_of=YYYY-MM-DD``."""
+        graph = state.graph
+        if not isinstance(graph, KnowledgeGraphStore):
+            return ResolutionOverview(connected=False)
+        return resolution_overview(graph, as_of=as_of)
 
     @app.get("/instruments/commodities", response_model=list[CommodityRef], dependencies=protected)
     def instruments_commodities() -> list[CommodityRef]:

@@ -14,10 +14,7 @@ decides what is confirmed vs. routed to human review.
 
 from __future__ import annotations
 
-import difflib
 import json
-import re
-import unicodedata
 from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import urlencode
@@ -25,39 +22,18 @@ from urllib.request import Request, urlopen
 
 from pydantic import BaseModel, Field
 
+from coruscant.knowledge_graph.textmatch import name_score as _score
+from coruscant.knowledge_graph.textmatch import normalize_name, tokens as _tokens
+
 # OpenSanctions topic codes → our two edge classes.
 _SANCTION_PREFIX = "sanction"
 _PEP_PREFIXES = ("role.pep", "role.rca")  # rca = relatives & close associates
 
-
-def normalize_name(name: str) -> str:
-    """Fold to a comparable form: strip diacritics (NFKD), casefold, keep only
-    alphanumeric tokens, collapse whitespace. Romanization is a *recall* aid — the
-    native-script original stays canonical on the node (Invariant #3)."""
-
-    decomposed = unicodedata.normalize("NFKD", name)
-    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
-    return " ".join(re.findall(r"[a-z0-9]+", stripped.casefold()))
-
-
-def _tokens(normalized: str) -> set[str]:
-    return set(normalized.split())
-
-
-def _score(a: str, b: str) -> float:
-    """Conservative similarity of two normalized names in [0, 1]."""
-
-    if not a or not b:
-        return 0.0
-    if a == b:
-        return 1.0
-    ta, tb = _tokens(a), _tokens(b)
-    if ta == tb:  # same tokens, different order ("john smith" vs "smith john")
-        return 0.98
-    union = ta | tb
-    jaccard = len(ta & tb) / len(union) if union else 0.0
-    ratio = difflib.SequenceMatcher(None, a, b).ratio()
-    return round(0.5 * jaccard + 0.5 * ratio, 4)
+__all__ = [  # normalize_name is re-exported here for existing importers
+    "normalize_name", "DeterministicScreeningProvider", "YenteScreeningProvider",
+    "ScreeningProvider", "ScreeningQuery", "ScreeningMatch", "WatchlistRecord",
+    "load_opensanctions",
+]
 
 
 class ScreeningQuery(BaseModel):

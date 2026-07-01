@@ -7,6 +7,19 @@ the people we already have) of
 [docs/global-exposure-architecture.md](../global-exposure-architecture.md) §5, now
 that the graph store (ADR-0001) is built.
 
+**Update (PR 3, 2026-07-01):** GLEIF **LEI anchoring** landed (the identity/keys
+pillar, §3). The `anchoring/` module mirrors the screening seam: `LeiProvider` with
+a live `GleifApiProvider` (GLEIF's free CC0 API — no licence gate, so it runs live)
+and an offline `LocalGleifProvider`. A shared `knowledge_graph/textmatch.py` adds a
+suffix-aware **org-name core matcher** (our "Apple" ↔ GLEIF "Apple Inc.", while
+rejecting "Apple Ford, Inc.") — the thin-record precision problem (§4.2) in
+miniature. Per-kind gate: companies confirm on an exact/core match to an *active*
+LEI; subsidiaries also require jurisdiction↔country corroboration. Confirmed →
+`has_lei` + a `LegalEntity` anchor node + `lei` on the node + a reversible `same`
+judgement; unmatched nodes are `lei_status:unresolved`, never dropped. `GET
+/graph/resolution`, `coruscant anchor`. Live-validated: 27/53 real companies
+anchored. The LEI is an **anchor, never the PK** (§2.2).
+
 **Update (PR 2, 2026-07-01):** the `yente` provider is now implemented —
 `YenteScreeningProvider` (a stdlib-HTTP client for yente's `/match` contract) +
 `docker-compose.screening.yml` (yente + OpenSearch sidecar) + `docs/screening-runbook.md`,

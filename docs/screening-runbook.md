@@ -57,3 +57,23 @@ FollowTheMoney dataset under `deploy/yente-manifests/`. See the
 Surfaced at `GET /graph/screening` (honest `connected:false` until a run) and the
 World-tab panel. A low/empty hit list is a real answer — most of our people are
 US/UK/India public-company officers and Form-4 insiders (a low base rate).
+
+## GLEIF LEI anchoring (identity/keys)
+
+Attach a stable **LEI anchor** (never the primary key) to Company/Subsidiary nodes.
+GLEIF is free and CC0 — no licence gate, so the live API runs directly.
+
+```bash
+SSL_CERT_FILE=$(python3 -m certifi) coruscant anchor --provider gleif-api   # free public API
+# or, from a downloaded GLEIF export:
+coruscant anchor --provider gleif-local --gleif /path/to/gleif.json
+```
+
+Per-kind precision gate: **companies** confirm on an exact/core legal-name match to
+an *active* LEI (our "Apple" ↔ GLEIF "Apple Inc."); **subsidiaries** (a name + a
+state, no key) also require the jurisdiction to corroborate the LEI's country.
+Confirmed → a `has_lei` edge + a `LegalEntity` anchor node + `lei` on the node;
+everything else is left **explicitly `lei_status:unresolved`** — that low
+subsidiary hit rate is the honest, expected outcome, not a gap. Surfaced at `GET
+/graph/resolution`.
+

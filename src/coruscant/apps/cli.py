@@ -15,6 +15,7 @@ from coruscant.apps.runtime import (
     due_source_types,
     load_engine,
     load_graph_store,
+    run_anchor,
     run_ingestion,
     run_screening,
     seed_demo_user,
@@ -119,6 +120,25 @@ def cmd_screen(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_anchor(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    configure_logging()
+    gleif = Path(args.gleif) if args.gleif else None
+    try:
+        summary = run_anchor(gleif_path=gleif, provider_name=args.provider)
+    except (FileNotFoundError, ConnectionError) as error:
+        print(str(error))
+        return 1
+    print(
+        f"Anchored {summary.resolved}/{summary.considered} nodes to a GLEIF LEI "
+        f"({summary.companies_resolved} companies, {summary.subsidiaries_resolved} "
+        f"subsidiaries); {summary.review} in review, {summary.unresolved} unresolved."
+    )
+    print("Unresolved is expected for the thin subsidiary records — left labelled, not dropped.")
+    return 0
+
+
 def cmd_backup(args: argparse.Namespace) -> int:
     from pathlib import Path
 
@@ -171,6 +191,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Matcher: 'deterministic' (offline file) or 'yente' (sidecar over HTTP)",
     )
     screen.set_defaults(func=cmd_screen)
+
+    anchor = sub.add_parser("anchor", help="Anchor Company/Subsidiary nodes to GLEIF LEIs")
+    anchor.add_argument("--gleif", default=None, help="Path to a GLEIF export (for --provider gleif-local)")
+    anchor.add_argument(
+        "--provider",
+        default=None,
+        choices=["gleif-api", "gleif-local"],
+        help="LEI source: 'gleif-api' (free public API) or 'gleif-local' (export file)",
+    )
+    anchor.set_defaults(func=cmd_anchor)
 
     backup_p = sub.add_parser("backup", help="Back up the data directory to a tar.gz")
     backup_p.add_argument("--out", default=None, help="Output archive path")

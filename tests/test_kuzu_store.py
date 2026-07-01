@@ -126,6 +126,23 @@ def _rich_graph() -> InMemoryKnowledgeGraphStore:
     for slug in ("acme-holdings", "acme-hldgs"):
         s.upsert_edge(_edge("Company", slug, "resolves_to", "Canonical", "cid-acme",
                             source="resolver", access_tier="public", observed_at="2026-07-01"))
+    # GLEIF LEI anchoring (identity/keys): a confirmed anchor + a review candidate.
+    s.upsert_node(_node("LegalEntity", "HWUPKR0MPOU8FGXBT394", name="Apple Inc.", source="gleif",
+                        country="US", jurisdiction="US-CA", status="ACTIVE",
+                        source_url="https://search.gleif.org/#/record/HWUPKR0MPOU8FGXBT394"))
+    s.upsert_node(_node("LegalEntity", "5493001KJTIIGC8Y1R12", name="Braeburn Capital Inc.",
+                        source="gleif", country="US", status="ACTIVE"))
+    s.upsert_edge(_edge("Company", "apple", "has_lei", "LegalEntity", "HWUPKR0MPOU8FGXBT394",
+                        source="gleif", access_tier="public", observed_at="2026-07-01",
+                        valid_from="2012-06-06", score=0.97, matched_name="Apple Inc.",
+                        review_status="confirmed", corroborated=False))
+    s.upsert_edge(_edge("Subsidiary", "braeburn", "lei_candidate", "LegalEntity", "5493001KJTIIGC8Y1R12",
+                        source="gleif", access_tier="public", observed_at="2026-07-01",
+                        valid_from="2019-01-01", score=0.9, matched_name="Braeburn Capital Inc.",
+                        review_status="needs-review", corroborated=False))
+    s.upsert_node(_node("AnchorRun", "latest", name="Latest anchoring run", source="anchoring",
+                        provider="gleif-local", considered=6, resolved=1, review=1, unresolved=4,
+                        companies_resolved=1, subsidiaries_resolved=0, observed_at="2026-07-01"))
     return s
 
 
@@ -252,6 +269,12 @@ def test_parity_screening_overview(as_of: str | None) -> None:
     # across backends, so serving from Kùzu never changes what the panel shows.
     mem, kz = _both_stores()
     assert _j(Q.screening_overview(mem, as_of=as_of)) == _j(Q.screening_overview(kz, as_of=as_of))
+
+
+@pytest.mark.parametrize("as_of", [None, "2016-01-01", "2026-07-01"])
+def test_parity_resolution_overview(as_of: str | None) -> None:
+    mem, kz = _both_stores()
+    assert _j(Q.resolution_overview(mem, as_of=as_of)) == _j(Q.resolution_overview(kz, as_of=as_of))
 
 
 def test_parity_reachable_resolves_to() -> None:
