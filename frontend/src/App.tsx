@@ -3,6 +3,22 @@ import { NavLink, Navigate, Outlet, Route, Routes, useLocation } from "react-rou
 import { api, NOTIFICATIONS_EVENT } from "./api";
 import { useAuth } from "./auth";
 import { useAsync } from "./hooks";
+import {
+  type Icon,
+  IconBell,
+  IconCard,
+  IconChanged,
+  IconChevrons,
+  IconCompany,
+  IconCountry,
+  IconDashboard,
+  IconFind,
+  IconGear,
+  IconLogout,
+  IconRisk,
+  IconShield,
+  IconSignals,
+} from "./icons";
 import { AdminPage } from "./pages/AdminPage";
 import { AlertsPage } from "./pages/AlertsPage";
 import { AtlasStakeholderPage } from "./pages/AtlasStakeholderPage";
@@ -31,14 +47,14 @@ import { WorkspacesPage } from "./pages/WorkspacesPage";
 
 // Primary nav = the design-pack product spine (World → Country → Company, plus
 // the analytical reads). Legacy surfaces are archived from the nav below.
-const NAV = [
-  { to: "/dashboard", label: "Dashboard", icon: "◧" },
-  { to: "/changes", label: "What changed", icon: "≢" },
-  { to: "/world", label: "Live signals", icon: "◍" },
-  { to: "/risk", label: "Risk concentration", icon: "▩" },
-  { to: "/country", label: "Country", icon: "⬡" },
-  { to: "/atlas", label: "Company graph", icon: "✦" },
-  { to: "/search", label: "Find", icon: "⌕" },
+const NAV: { to: string; label: string; Icon: Icon }[] = [
+  { to: "/dashboard", label: "Dashboard", Icon: IconDashboard },
+  { to: "/changes", label: "What changed", Icon: IconChanged },
+  { to: "/world", label: "Live signals", Icon: IconSignals },
+  { to: "/risk", label: "Risk concentration", Icon: IconRisk },
+  { to: "/country", label: "Country", Icon: IconCountry },
+  { to: "/atlas", label: "Company graph", Icon: IconCompany },
+  { to: "/search", label: "Find", Icon: IconFind },
 ];
 
 // TODO(retire): legacy surfaces superseded by the design-pack product. They stay
@@ -112,7 +128,7 @@ function NotificationBell() {
       aria-label={unread > 0 ? `Alerts, ${unread} unread` : "Alerts"}
       title={unread > 0 ? `${unread} unread alert${unread === 1 ? "" : "s"}` : "Alerts"}
     >
-      <span aria-hidden="true">🔔</span>
+      <IconBell />
       {unread > 0 ? <span className="bell-badge">{unread > 99 ? "99+" : unread}</span> : null}
     </NavLink>
   );
@@ -182,18 +198,18 @@ function UserMenu({
 
           <div className="usermenu-links">
             <NavLink to="/settings" className="usermenu-item" role="menuitem" onClick={() => setOpen(false)}>
-              <span className="ico">⚙</span> Settings
+              <IconGear /> Settings
             </NavLink>
             <NavLink to="/settings" className="usermenu-item" role="menuitem" onClick={() => setOpen(false)}>
-              <span className="ico">◈</span> Billing &amp; subscription
+              <IconCard /> Billing &amp; subscription
             </NavLink>
             <NavLink to="/admin" className="usermenu-item" role="menuitem" onClick={() => setOpen(false)}>
-              <span className="ico">⌘</span> Admin console
+              <IconShield /> Admin console
             </NavLink>
           </div>
 
           <button className="usermenu-item danger" role="menuitem" onClick={onLogout}>
-            <span className="ico">⏻</span> Sign out
+            <IconLogout /> Sign out
           </button>
         </div>
       ) : null}
@@ -216,6 +232,17 @@ function ProtectedLayout() {
     }
   }, [theme]);
 
+  const [navCollapsed, setNavCollapsed] = useState<boolean>(
+    () => (typeof localStorage !== "undefined" && localStorage.getItem("coruscant.navCollapsed")) === "1",
+  );
+  useEffect(() => {
+    try {
+      localStorage.setItem("coruscant.navCollapsed", navCollapsed ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [navCollapsed]);
+
   if (!ready) {
     return (
       <div style={{ display: "grid", placeItems: "center", height: "100vh" }}>
@@ -227,18 +254,24 @@ function ProtectedLayout() {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
 
+  // The active nav already names the page, so we don't repeat it in the bar —
+  // the crumb only drives the browser tab title.
   const crumb = CRUMBS.find(([re]) => re.test(location.pathname))?.[1] ?? "";
+  useEffect(() => {
+    document.title = crumb ? `Coruscant · ${crumb}` : "Coruscant";
+  }, [crumb]);
+
   // Spatial surfaces opt out of the centered, padded content column so the
   // canvas/globe/wide layouts fill the viewport (they carry their own padding via
   // .spatial-page, or a full-bleed canvas for atlas/world).
   const fullBleed = /^\/(atlas|world|dashboard|changes|risk|country)/.test(location.pathname);
 
   return (
-    <div className="app">
+    <div className={`app${navCollapsed ? " nav-collapsed" : ""}`}>
       <aside className="sidebar">
-        <NavLink to="/world" className="brand">
+        <NavLink to="/world" className="brand" title="Coruscant">
           <div className="logo" />
-          <div>
+          <div className="brand-text">
             <div className="name">Coruscant</div>
             <div className="tag">Intelligence</div>
           </div>
@@ -247,9 +280,9 @@ function ProtectedLayout() {
         <nav className="nav">
           <div className="label">Workspace</div>
           {NAV.map((item) => (
-            <NavLink key={item.to} to={item.to}>
-              <span className="ico">{item.icon}</span>
-              {item.label}
+            <NavLink key={item.to} to={item.to} title={item.label}>
+              <item.Icon />
+              <span className="nav-label">{item.label}</span>
             </NavLink>
           ))}
         </nav>
@@ -261,7 +294,15 @@ function ProtectedLayout() {
 
       <main className="main">
         <header className="topbar">
-          <div className="crumb">{crumb}</div>
+          <button
+            className="nav-toggle"
+            onClick={() => setNavCollapsed((c) => !c)}
+            title={navCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label={navCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-pressed={navCollapsed}
+          >
+            <IconChevrons />
+          </button>
           <div className="stats">
             <HealthPills />
             <NotificationBell />

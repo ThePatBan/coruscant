@@ -4653,6 +4653,78 @@ button.changes-row.active {
   text-align: center;
   color: var(--text-faint);
 }
+.usermenu-item svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--text-faint);
+}
+.usermenu-item:hover svg {
+  color: currentColor;
+}
+
+/* ---- nav icons + collapse ------------------------------------------------- */
+.nav a svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  opacity: 0.9;
+}
+.nav a.active svg {
+  opacity: 1;
+}
+.bell svg {
+  width: 18px;
+  height: 18px;
+}
+/* topbar collapse toggle (left) */
+.nav-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.13s ease, color 0.13s ease;
+}
+.nav-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.nav-toggle svg {
+  width: 18px;
+  height: 18px;
+  transition: transform 0.18s ease;
+}
+.app.nav-collapsed .nav-toggle svg {
+  transform: rotate(180deg);
+}
+
+/* collapsed sidebar → icons only */
+.app.nav-collapsed {
+  --sidebar-w: 68px;
+}
+.app.nav-collapsed .sidebar {
+  padding: 22px 10px;
+}
+.app.nav-collapsed .brand {
+  justify-content: center;
+  padding: 4px 0;
+}
+.app.nav-collapsed .brand-text,
+.app.nav-collapsed .nav .label,
+.app.nav-collapsed .nav-label,
+.app.nav-collapsed .sidebar .foot {
+  display: none;
+}
+.app.nav-collapsed .nav a {
+  justify-content: center;
+  padding: 9px 0;
+}
 
 /* ---- Live Signals (Screen 3) --------------------------------------------- */
 .ls-split {
