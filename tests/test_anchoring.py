@@ -161,6 +161,51 @@ def test_gleif_api_provider_builds_request_and_parses(monkeypatch) -> None:  # t
         return _Resp()
 
     with patch("coruscant.anchoring.provider.urlopen", fake_urlopen):
-        matches = GleifApiProvider().resolve([AnchorQuery(kind="Company", key="apple", name="Apple")])
+        matches = GleifApiProvider(fuzzy=False).resolve(
+            [AnchorQuery(kind="Company", key="apple", name="Apple")]
+        )
     assert "filter%5Bentity.legalName%5D=Apple" in captured["url"] or "legalName" in captured["url"]
     assert len(matches) == 1 and matches[0].record.lei == "HWUPKR0MPOU8FGXBT394"
+
+
+def test_gleif_fuzzy_fallback_resolves_sec_conformed_name() -> None:
+    # Our SEC-conformed "Microsoft Corp" misses the strict legalName filter, but
+    # fuzzycompletions surfaces "MICROSOFT CORPORATION" (core-match) → confirmed.
+    lei = "INR2EJN1ERAN0W5ZP974"
+
+    def route(req, timeout=None):  # type: ignore[no-untyped-def]
+        url = req.full_url
+        if "fuzzycompletions" in url:
+            payload = {"data": [
+                {"attributes": {"value": "MICROSOFT CORPORATION"},
+                 "relationships": {"lei-records": {"data": {"id": lei}}}},
+                {"attributes": {"value": "MICROSOFT CORPORATION (INDIA) PRIVATE LIMITED"},
+                 "relationships": {"lei-records": {"data": {"id": "OTHER000000000000000"}}}},
+            ]}
+        elif f"lei-records/{lei}" in url:
+            payload = {"data": {"attributes": {"lei": lei,
+                       "entity": {"legalName": {"name": "MICROSOFT CORPORATION"},
+                                  "legalAddress": {"country": "US"}, "status": "ACTIVE"},
+                       "registration": {"initialRegistrationDate": "2012-08-08T00:00:00Z"}}}}
+        else:  # strict legalName filter finds nothing for the conformed name
+            payload = {"data": []}
+
+        class _R:
+            def read(self) -> bytes:
+                return json.dumps(payload).encode()
+
+            def __enter__(self):  # type: ignore[no-untyped-def]
+                return self
+
+            def __exit__(self, *e: object) -> bool:
+                return False
+
+        return _R()
+
+    with patch("coruscant.anchoring.provider.urlopen", route):
+        matches = GleifApiProvider().resolve(
+            [AnchorQuery(kind="Company", key="msft", name="Microsoft Corp")]
+        )
+    # Only the core-matching completion is fetched + confirmed; the India sub is dropped.
+    assert len(matches) == 1 and matches[0].record.lei == lei
+    assert matches[0].score >= 0.97

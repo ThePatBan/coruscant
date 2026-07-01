@@ -17,8 +17,11 @@ miniature. Per-kind gate: companies confirm on an exact/core match to an *active
 LEI; subsidiaries also require jurisdiction↔country corroboration. Confirmed →
 `has_lei` + a `LegalEntity` anchor node + `lei` on the node + a reversible `same`
 judgement; unmatched nodes are `lei_status:unresolved`, never dropped. `GET
-/graph/resolution`, `coruscant anchor`. Live-validated: 27/53 real companies
-anchored. The LEI is an **anchor, never the PK** (§2.2).
+/graph/resolution`, `coruscant anchor`. Recall is two-pass — the strict GLEIF
+`legalName` filter plus a `fuzzycompletions` fallback for SEC-conformed names
+("Microsoft Corp" → "MICROSOFT CORPORATION"), each still core-gated so it never
+over-merges. Live-validated: 35/53 real companies anchored. The LEI is an
+**anchor, never the PK** (§2.2).
 
 **Update (PR 2, 2026-07-01):** the `yente` provider is now implemented —
 `YenteScreeningProvider` (a stdlib-HTTP client for yente's `/match` contract) +
