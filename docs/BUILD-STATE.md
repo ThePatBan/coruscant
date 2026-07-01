@@ -57,8 +57,10 @@ Two tabs: **`/world`** (Home/World — the exposure surface) and **`/atlas`** (t
 - `docker-compose.yml` runs ingest/api/web over a named volume (SQLite); local
   dev runs on the host `./data/`. `data/` and `deploy/` are gitignored; `config/`
   is the tracked default.
-- *Still O(N²) on the ingest side:* ingestion materializes the in-memory store then
-  bulk-loads Kùzu; direct-to-Kùzu `COPY` projection is the whole-exchange step.
+- *Ingest is now O(E):* the in-memory store dedups edges via an identity index
+  (was O(E²) — 10k companies fell from ~110s to ~0.2s), then bulk-loads Kùzu in one
+  transaction. The remaining scale ceiling is only the in-memory intermediate;
+  direct-to-Kùzu `COPY` projection is the far-future step for it.
 
 ## Not built yet ❌ (say it plainly)
 
@@ -69,9 +71,8 @@ Two tabs: **`/world`** (Home/World — the exposure surface) and **`/atlas`** (t
 - **PEP / sanctions** screening.
 - **Group / UBO contagion** exposure pathway (needs the ownership substrate).
 - **Whole-exchange coverage** — only curated names; bulk SEC/Nifty/UK/Europe
-  ingestion is future work. The serving store now scales (Kùzu); the remaining
-  gap is direct-to-Kùzu bulk `COPY` ingestion (the current ingest still builds
-  the in-memory store first).
+  ingestion is future work. The store now scales (Kùzu serving; O(E) ingest); the
+  remaining blocker is the *connectors* (bulk registry pulls), not the store.
 - **Commodity/debt live prices in the UI** — the price client resolves their
   symbols (CL=F, GC=F, ^TNX, LQD…) but they are not surfaced yet.
 - **Licensed MSCI index data** — benchmarking uses a free ETF proxy.
@@ -79,8 +80,8 @@ Two tabs: **`/world`** (Home/World — the exposure surface) and **`/atlas`** (t
 ## Sequenced next
 
 1. **Real graph store** — ✅ done (Kùzu behind the port; Neo4j/Neptune deferred).
-2. **Whole-exchange coverage** + auto-add on portfolio upload (needs direct-to-Kùzu
-   bulk `COPY` ingestion to retire the in-memory ingest step).
+2. **Whole-exchange coverage** + auto-add on portfolio upload (store scales now;
+   the work is the bulk-registry connectors).
 3. **Portfolio front door** (13F → holding edges, then user upload).
 4. **Ownership → UBO** and **PEP/sanctions** edges (free registries first).
 

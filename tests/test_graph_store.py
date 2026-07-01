@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from coruscant.common.types import NormalizedDocument
+from coruscant.common.types import GraphEdge, NormalizedDocument
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 from coruscant.knowledge_graph.persistence import load_graph, save_graph
 from coruscant.knowledge_graph.projectors import ProjectingKnowledgeGraphStore
@@ -43,6 +43,23 @@ def test_edges_are_deduplicated() -> None:
     edge_count = len(store.edges)
     ProjectingKnowledgeGraphStore(store).project_document(_document())
     assert len(store.edges) == edge_count
+
+
+def test_edges_setter_rebuilds_dedup_index() -> None:
+    # A maintenance script filters store.edges directly; the O(1) dedup index must
+    # rebuild so a re-upsert of a removed edge is re-added, not swallowed.
+    store = InMemoryKnowledgeGraphStore()
+    ab = GraphEdge(source_kind="Company", source_key="a", relation="r", target_kind="Company", target_key="b")
+    ac = GraphEdge(source_kind="Company", source_key="a", relation="r", target_kind="Company", target_key="c")
+    store.upsert_edge(ab)
+    store.upsert_edge(ac)
+    assert len(store.edges) == 2
+
+    store.edges = [edge for edge in store.edges if edge.target_key != "b"]  # drop ab
+    assert len(store.edges) == 1
+    store.upsert_edge(ab)  # removed -> re-added
+    store.upsert_edge(ac)  # still present -> deduped
+    assert len(store.edges) == 2
 
 
 def test_graph_snapshot_roundtrip(tmp_path: Path) -> None:
