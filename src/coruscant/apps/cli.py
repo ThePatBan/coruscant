@@ -169,16 +169,23 @@ def cmd_coverage(args: argparse.Namespace) -> int:
         report = resolve_positions(store, parse_brokerage_csv(Path(args.resolve).read_text()))
         print(
             f"Resolved {report.resolved}/{report.total} positions ({report.rate:.0%}): "
-            f"{report.by_ticker} by ticker, {report.by_name} by name, {report.unresolved} unresolved."
+            f"{report.by_ticker} by ticker, {report.by_isin} by ISIN, {report.by_name} by name, "
+            f"{report.unresolved} unresolved."
         )
         if report.unresolved:
-            misses = [p.input_ticker or p.input_name for p in report.positions if p.method == "unresolved"]
+            misses = [p.input_ticker or p.input_isin or p.input_name
+                      for p in report.positions if p.method == "unresolved"]
             print("Unresolved (labelled, not fabricated): " + ", ".join(str(m) for m in misses[:20]))
         return 0
 
+    sources = {
+        role: Path(getattr(args, role))
+        for role in ("nse", "bse", "nifty", "sensex")
+        if getattr(args, role, None)
+    }
     file_path = Path(args.file) if args.file else None
     try:
-        summary = run_coverage(market=args.market, file_path=file_path)
+        summary = run_coverage(market=args.market, file_path=file_path, sources=sources or None)
     except (ValueError, ConnectionError, FileNotFoundError, RuntimeError) as error:
         print(str(error))
         return 1
@@ -186,9 +193,13 @@ def cmd_coverage(args: argparse.Namespace) -> int:
         f"Coverage [{summary.market}] via {summary.provider}: {summary.considered} issuers → "
         f"{summary.enriched} enriched, {summary.created} new; {summary.universe_total} in universe."
     )
+    if summary.by_exchange:
+        print("By exchange: " + ", ".join(f"{k}={v}" for k, v in summary.by_exchange.items()))
+    if summary.indices:
+        print("Index membership: " + ", ".join(f"{k}={v}" for k, v in summary.indices.items()))
     if summary.excluded:
         print(
-            "Excluded upstream (labelled, not silently dropped): "
+            "Excluded/stats (labelled, not silently dropped): "
             + ", ".join(f"{k}={v}" for k, v in summary.excluded.items())
         )
     return 0
@@ -266,11 +277,15 @@ def build_parser() -> argparse.ArgumentParser:
     coverage = sub.add_parser(
         "coverage", help="Ingest a market's listed-issuer universe (whole-exchange coverage)"
     )
-    coverage.add_argument("--market", default="us", help="Market to ingest: us (India/UK are next)")
+    coverage.add_argument("--market", default="us", help="Market to ingest: us | in (UK is next)")
     coverage.add_argument(
         "--file", default=None,
-        help="Path to a downloaded company_tickers_exchange.json (offline/operator path)",
+        help="US: path to a downloaded company_tickers_exchange.json (offline/operator path)",
     )
+    coverage.add_argument("--nse", default=None, help="India: path to NSE EQUITY_L.csv")
+    coverage.add_argument("--bse", default=None, help="India: path to the BSE active-equity scrip CSV")
+    coverage.add_argument("--nifty", default=None, help="India: path to ind_nifty50list.csv (index)")
+    coverage.add_argument("--sensex", default=None, help="India: path to a BSE Sensex constituents CSV")
     coverage.add_argument(
         "--resolve", default=None,
         help="Resolve a brokerage holdings CSV against current coverage and report the rate",

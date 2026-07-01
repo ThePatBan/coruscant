@@ -27,12 +27,19 @@ from datetime import date
 
 from pydantic import BaseModel, Field
 
-from coruscant.common.types import GraphNode
-from coruscant.coverage.provider import CoverageProvider, IssuerRecord, normalize_cik
+from coruscant.common.types import GraphEdge, GraphNode
+from coruscant.coverage.provider import (
+    CoverageProvider,
+    IndexMembership,
+    IssuerRecord,
+    normalize_cik,
+)
 from coruscant.knowledge_graph.store import KnowledgeGraphStore
 
 COMPANY_KIND = "Company"
 COVERAGE_RUN_KIND = "CoverageRun"
+INDEX_KIND = "Index"  # a market index (Nifty 50, BSE Sensex) — NOT an exchange
+CONSTITUENT_OF = "constituent_of"  # Company -constituent_of-> Index (provenance-backed)
 COVERAGE_SOURCE = "coverage"
 
 # Node property keys the coverage layer owns.
@@ -45,9 +52,10 @@ IN_UNIVERSE = "in_universe"  # this node is part of an ingested exchange univers
 GICS_STATUS = "gics_status"  # "unresolved" for bulk issuers — never a fabricated sector
 COVERAGE_SOURCE_KEY = "coverage_source"  # which feed added the universe anchors
 
-# Per-market identity anchor: the external key used for exact dedup. US-first; the
-# India/UK providers register their scheme here (isin/company_number) — no rewrite.
-_MARKET_IDENTITY_SCHEME: dict[str, str] = {"US": "cik"}
+# Per-market identity anchor: the external key used for exact dedup. US uses CIK; a
+# company listed on both NSE and BSE shares one ISIN, so India dedups (and unifies
+# the two exchanges) on ISIN. UK (company_number/sedol) drops in the same way.
+_MARKET_IDENTITY_SCHEME: dict[str, str] = {"US": "cik", "IN": "isin"}
 
 
 class CoverageSummary(BaseModel):
@@ -59,6 +67,7 @@ class CoverageSummary(BaseModel):
     created: int = 0  # new surrogate Company nodes
     excluded: dict[str, int] = Field(default_factory=dict)  # filtered upstream, by reason
     by_exchange: dict[str, int] = Field(default_factory=dict)  # created+enriched, by venue
+    indices: dict[str, int] = Field(default_factory=dict)  # index name → constituents linked
     universe_total: int = 0  # Company nodes carrying this market's universe anchor
 
 
@@ -112,6 +121,10 @@ def ingest_coverage(
 
     enriched = created = 0
     by_exchange: dict[str, int] = {}
+    # Maps for index-membership linking (constituent ISIN/symbol → node key), built
+    # over the nodes this run touches so Nifty/Sensex constituents link to real nodes.
+    key_by_isin: dict[str, str] = {}
+    key_by_ticker: dict[str, str] = {}
     for issuer in issuers:
         key_value = issuer.anchor(identity_scheme)
         if identity_scheme == "cik":
@@ -122,15 +135,24 @@ def ingest_coverage(
         existing_key = index.get(key_value)
         if existing_key is not None:
             _enrich(store, existing_key, issuer, anchors)
+            node_key = existing_key
             enriched += 1
         else:
-            surrogate = f"{market.lower()}-{key_value}"
-            _create(store, surrogate, issuer, anchors)
-            index[key_value] = surrogate  # so a duplicate row in the same feed also dedups
+            node_key = f"{market.lower()}-{key_value}"
+            _create(store, node_key, issuer, anchors)
+            index[key_value] = node_key  # so a duplicate row in the same feed also dedups
             created += 1
         if issuer.exchange:
             by_exchange[issuer.exchange] = by_exchange.get(issuer.exchange, 0) + 1
+        isin_val = issuer.anchor("isin")
+        if isin_val:
+            key_by_isin.setdefault(isin_val, node_key)
+        if issuer.ticker:
+            key_by_ticker.setdefault(issuer.ticker.strip().upper(), node_key)
 
+    indices = _ingest_index_memberships(
+        store, provider, key_by_isin, key_by_ticker, market=market, observed_at=observed_at
+    )
     excluded = dict(getattr(provider, "last_drops", {}) or {})
     universe_total = sum(
         1 for n in store.nodes_of_kind(COMPANY_KIND)
@@ -143,7 +165,7 @@ def ingest_coverage(
                 "name": f"{market} coverage run", "source": COVERAGE_SOURCE,
                 "provider": provider.name, MARKET: market,
                 "considered": len(issuers), "enriched": enriched, "created": created,
-                "excluded": excluded, "by_exchange": by_exchange,
+                "excluded": excluded, "by_exchange": by_exchange, "indices": indices,
                 "universe_total": universe_total,
                 "observed_at": observed_at if isinstance(observed_at, str) else observed_at.isoformat(),
             },
@@ -152,7 +174,8 @@ def ingest_coverage(
     return CoverageSummary(
         connected=provider.connected(), market=market, provider=provider.name,
         considered=len(issuers), enriched=enriched, created=created,
-        excluded=excluded, by_exchange=by_exchange, universe_total=universe_total,
+        excluded=excluded, by_exchange=by_exchange, indices=indices,
+        universe_total=universe_total,
     )
 
 
@@ -166,6 +189,66 @@ def _anchor_index(store: KnowledgeGraphStore, scheme: str) -> dict[str, str]:
             if isinstance(a, dict) and a.get("scheme") == scheme and a.get("value"):
                 index.setdefault(str(a["value"]), node.key)
     return index
+
+
+def _ingest_index_memberships(
+    store: KnowledgeGraphStore,
+    provider: CoverageProvider,
+    key_by_isin: dict[str, str],
+    key_by_ticker: dict[str, str],
+    *,
+    market: str,
+    observed_at: date | str,
+) -> dict[str, int]:
+    """Turn a provider's index constituents into ``Index`` nodes + ``constituent_of``
+    edges (Company → Index), linking each constituent to a covered Company by ISIN
+    (exact) then symbol. A constituent outside the ingested universe is counted as
+    unresolved on the Index node, never fabricated. Returns ``{index name → linked}``.
+
+    An index is not an exchange: this is the "event on the Nifty → which holdings are
+    in it" pathway, kept provenance-backed. Providers without indices are a no-op."""
+
+    lister = getattr(provider, "list_index_memberships", None)
+    if lister is None:
+        return {}
+    memberships: list[IndexMembership] = list(lister())
+    if not memberships:
+        return {}
+    observed = observed_at if isinstance(observed_at, str) else observed_at.isoformat()
+
+    linked: dict[str, int] = {}
+    unresolved: dict[str, int] = {}
+    display: dict[str, str] = {}
+    source_by_index: dict[str, str] = {}
+    for m in memberships:
+        display[m.index_key] = m.index_name
+        source_by_index[m.index_key] = m.source
+        node_key = (
+            (m.isin and key_by_isin.get(m.isin))
+            or (m.symbol and key_by_ticker.get(m.symbol.strip().upper()))
+        )
+        if not node_key:
+            unresolved[m.index_key] = unresolved.get(m.index_key, 0) + 1
+            continue
+        store.upsert_edge(GraphEdge(
+            source_kind=COMPANY_KIND, source_key=node_key,
+            relation=CONSTITUENT_OF, target_kind=INDEX_KIND, target_key=m.index_key,
+            properties={"source": m.source, "source_url": m.source_url,
+                        "index_name": m.index_name, "observed_at": observed},
+        ))
+        linked[m.index_key] = linked.get(m.index_key, 0) + 1
+
+    for index_key, name in display.items():
+        store.upsert_node(GraphNode(
+            kind=INDEX_KIND, key=index_key,
+            properties={
+                "name": name, "source": source_by_index[index_key], MARKET: market,
+                "provider": provider.name, "constituents": linked.get(index_key, 0),
+                "constituents_unresolved": unresolved.get(index_key, 0),
+                "observed_at": observed,
+            },
+        ))
+    return {display[k]: v for k, v in linked.items()}
 
 
 def _enrich(store: KnowledgeGraphStore, key: str, issuer: IssuerRecord, anchors: list[dict[str, str]]) -> None:

@@ -168,7 +168,21 @@ def _rich_graph() -> InMemoryKnowledgeGraphStore:
     s.upsert_node(_node("CoverageRun", "us", name="US coverage run", source="coverage", provider="us-edgar",
                         market="US", considered=2, enriched=0, created=2,
                         excluded={"otc_or_blank_exchange": 5}, by_exchange={"Nasdaq": 1, "NYSE": 1},
-                        universe_total=2, observed_at="2026-07-01"))
+                        indices={}, universe_total=2, observed_at="2026-07-01"))
+    # India coverage: one ISIN-keyed universe node carrying BOTH exchange symbols as
+    # anchors (NSE→ticker, BSE→bse_code), + an Index node with a constituent_of edge.
+    # New node/edge kinds must round-trip through the generic JSON→Kùzu store.
+    s.upsert_node(_node("Company", "in-INE002A01018", name="Reliance Industries Limited",
+                        source="nse-bse-equity-list", market="IN", exchange="NSE & BSE",
+                        ticker="RELIANCE", in_universe=True, gics_status="unresolved",
+                        anchors=[{"scheme": "isin", "value": "INE002A01018"},
+                                 {"scheme": "ticker", "value": "RELIANCE"},
+                                 {"scheme": "bse_code", "value": "500325"}]))
+    s.upsert_node(_node("Index", "nifty-50", name="Nifty 50", source="nse-indices", market="IN",
+                        provider="india-nse-bse", constituents=1, constituents_unresolved=0,
+                        observed_at="2026-07-01"))
+    s.upsert_edge(_edge("Company", "in-INE002A01018", "constituent_of", "Index", "nifty-50",
+                        source="nse-indices", index_name="Nifty 50", observed_at="2026-07-01"))
     return s
 
 
@@ -344,6 +358,19 @@ def test_parity_reachable_resolves_to() -> None:
         assert reached[("Company", "acme-hldgs")] == 2
     assert (mem.reachable("Company", "acme-holdings", "resolves_to", 2, direction="any")
             == kz.reachable("Company", "acme-holdings", "resolves_to", 2, direction="any"))
+
+
+def test_parity_constituent_of_index() -> None:
+    # The India index-membership edge is the "event on the Nifty → which holdings"
+    # pathway; the new Company -constituent_of-> Index relation must traverse and
+    # round-trip identically on both backends.
+    mem, kz = _both_stores()
+    for store in (mem, kz):
+        reached = store.reachable("Company", "in-INE002A01018", "constituent_of", 1, direction="out")
+        assert reached == {("Index", "nifty-50"): 1}
+        idx = store.get_node("Index", "nifty-50")
+        assert idx is not None and idx.properties["constituents"] == 1
+    assert _j(Q.coverage_overview(mem)) == _j(Q.coverage_overview(kz))
 
 
 def test_parity_entity_profile_every_node() -> None:

@@ -15,6 +15,8 @@ import tarfile
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from coruscant.anchoring.pipeline import AnchorSummary
     from coruscant.anchoring.provider import LeiProvider
     from coruscant.coverage.pipeline import CoverageSummary
@@ -509,19 +511,43 @@ def run_portfolio(
 
 
 def _build_coverage_provider(
-    settings: Settings, *, market: str, file_path: Path | None
+    settings: Settings,
+    *,
+    market: str,
+    file_path: Path | None,
+    sources: "Mapping[str, Path] | None" = None,
 ) -> "CoverageProvider":
-    """Construct the coverage provider for ``market``. US reads SEC's
-    company_tickers_exchange.json (one request, live) or a downloaded copy
-    (``file_path`` — the hermetic/operator path). India/UK are future providers."""
+    """Construct the coverage provider for ``market``.
 
-    from coruscant.coverage.provider import UsEdgarCoverageProvider
+    * ``us`` — SEC ``company_tickers_exchange.json`` (one request, live) or a
+      downloaded copy (``file_path`` — the hermetic/operator path).
+    * ``in`` — the NSE + BSE equity scrip lists, ISIN-unified, plus optional
+      Nifty/Sensex constituent lists (``sources`` keyed by nse/bse/nifty/sensex).
+      NSE blocks scripts, so the operator ``--file`` downloads are the primary path;
+      the live fetch is best-effort. UK (FTSE/LSE) is the next provider."""
+
+    from coruscant.coverage.provider import IndiaCoverageProvider, UsEdgarCoverageProvider
 
     key = market.lower()
+    files = dict(sources or {})
+    if key == "in":
+        if any(files.values()):
+            return IndiaCoverageProvider.from_files(
+                nse=files.get("nse"), bse=files.get("bse"),
+                nifty=files.get("nifty"), sensex=files.get("sensex"),
+                user_agent=settings.edgar_user_agent,
+            )
+        provider_in = IndiaCoverageProvider(user_agent=settings.edgar_user_agent)
+        if not provider_in.connected():
+            raise ConnectionError(
+                "NSE is not reachable for coverage (it blocks scripts). Pass --nse/--bse "
+                "with downloaded EQUITY_L.csv / BSE scrip-list CSVs (the primary path)."
+            )
+        return provider_in
     if key != "us":
         raise ValueError(
-            f"No coverage provider for market {market!r} yet. Implemented: us "
-            "(India NSE/BSE and UK FTSE/LSE are the next providers)."
+            f"No coverage provider for market {market!r} yet. Implemented: us, in "
+            "(UK FTSE/LSE is the next provider)."
         )
     # One shared limiter keeps the aggregate SEC request rate under the fair-access
     # cap (the US feed is a single request, but the seam stays consistent).
@@ -549,11 +575,14 @@ def run_coverage(
     *,
     market: str = "us",
     file_path: Path | None = None,
+    sources: "Mapping[str, Path] | None" = None,
     now: datetime | None = None,
 ) -> "CoverageSummary":
     """Ingest a market's full listed-issuer universe into the graph as lightweight
-    Company nodes so uploaded portfolios resolve. CIK-reconciled (enrich, don't
-    duplicate); idempotent; writes the snapshot (serving rebuilds Kùzu on next open).
+    Company nodes so uploaded portfolios resolve. Dedup is exact on the market's
+    identity key (US→CIK, India→ISIN); enrich, don't duplicate; idempotent; writes
+    the snapshot (serving rebuilds Kùzu on next open). ``sources`` supplies India's
+    per-file paths (nse/bse/nifty/sensex).
     """
 
     from coruscant.coverage.pipeline import ingest_coverage
@@ -561,7 +590,9 @@ def run_coverage(
 
     settings = settings or get_settings()
     moment = now or datetime.now(tz=timezone.utc)
-    provider = _build_coverage_provider(settings, market=market, file_path=file_path)
+    provider = _build_coverage_provider(
+        settings, market=market, file_path=file_path, sources=sources
+    )
 
     store = _load_graph(settings.graph_snapshot_path)
     summary = ingest_coverage(store, provider, observed_at=moment.date())

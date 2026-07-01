@@ -94,6 +94,27 @@ Two tabs: **`/world`** (Home/World — the exposure surface) and **`/atlas`** (t
   (2,779 OTC/blank excluded + labelled) → graph 53 → **6,062 US companies**; a 12-line
   sample book resolved **10/12 (83%)** — TSLA/PLTR/GME now covered, misses honest. See
   ADR-0009.
+- **India coverage — NSE + BSE, ISIN-unified** (the seam's second market, proving it):
+  `IndiaCoverageProvider` unions the NSE `EQUITY_L.csv` + BSE active-equity scrip list
+  into one Company node **per ISIN** — a company dual-listed on both exchanges shares
+  one ISIN, so ISIN is the intra-India dedup key *and* the NSE↔BSE unifier. One node
+  carries **both** exchange symbols as anchors (NSE symbol → the `ticker` anchor so
+  `resolve.py` works unchanged; numeric BSE code → a `bse_code` anchor); `exchange` ∈
+  {NSE, BSE, `NSE & BSE`} makes the dual-listed overlap a first-class bucket, not a
+  hidden merge. `_MARKET_IDENTITY_SCHEME["IN"]="isin"`; surrogate `in-<isin>`, stable
+  across re-runs. The curated US-listed **ADRs** (`infy`, `wit`, `rdy`, …) are *not*
+  merged with the domestic listing — exact-ISIN dedup can't touch them and ADR↔domestic
+  reconciliation flows through the shared GLEIF LEI, never a coverage merge. **Nifty 50
+  / BSE Sensex** are represented as `Index` nodes + provenance-backed `constituent_of`
+  edges (Company → Index) — the "event on the Nifty → which of my holdings are in it"
+  pathway (ADR-0010). ISIN resolution added to `resolve.py` (Zerodha/Groww exports key
+  by ISIN or NSE symbol). `coruscant coverage --market in [--nse --bse --nifty --sensex]`.
+  *Live-validated:* real NSE + BSE (JSON API) + Nifty lists → **5,035 India issuers**
+  (2,223 dual-listed NSE∩BSE, 130 NSE-only, 2,682 BSE-only; 32 non-equity/blank-ISIN
+  excluded + labelled) → graph 53 → **5,088 companies**; all 50 Nifty constituents
+  linked; a 12-line sample book resolved **9/12 (75%)** — misses honest (a mutual fund,
+  a bogus symbol, and the post-demerger-retired `TATAMOTORS` symbol, present as
+  TMCV/TMPV and resolvable by ISIN). See ADR-0009 + ADR-0010.
 - **Taxonomy**: full GICS hierarchy (8-digit code) + MSCI DM/EM/FM, curated and
   verified against public MSCI/S&P sources.
 - **Instrument model**: commodities + debt as first-class instruments wired into
@@ -140,11 +161,10 @@ Two tabs: **`/world`** (Home/World — the exposure surface) and **`/atlas`** (t
   + yente sidecar); the *live* yente run + external demo await the OpenSanctions
   license in writing.
 - **Group / UBO contagion** exposure pathway (needs the ownership substrate).
-- **Whole-exchange coverage beyond the US** — the US universe now ingests (above);
-  India (NSE/BSE) and UK (FTSE/LSE) are the next `CoverageProvider`s (no single free
-  "all companies" feed like EDGAR — equity-list CSVs + GLEIF/OpenFIGI, ISIN/SEDOL
-  anchors already modelled). The universe pass is lightweight by design; deep
-  filing ingestion (10-K/Exhibit-21/officers) stays curated/on-demand.
+- **Whole-exchange coverage beyond the US** — US + India universes now ingest (above);
+  **UK (FTSE/LSE)** is the last of the three `CoverageProvider`s (identity ISIN/SEDOL/
+  company-number, LSE lists + GLEIF/OpenFIGI). The universe pass is lightweight by
+  design; deep filing ingestion (10-K/Exhibit-21/officers) stays curated/on-demand.
 - **Commodity/debt live prices in the UI** — the price client resolves their
   symbols (CL=F, GC=F, ^TNX, LQD…) but they are not surfaced yet.
 - **Licensed MSCI index data** — benchmarking uses a free ETF proxy.
