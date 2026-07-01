@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from coruscant.anchoring.pipeline import AnchorSummary
     from coruscant.anchoring.provider import LeiProvider
+    from coruscant.portfolio.holdings import FundSummary
     from coruscant.screening.pipeline import ScreeningSummary
     from coruscant.screening.provider import ScreeningProvider
 
@@ -463,6 +464,45 @@ def run_anchor(
     summary = anchor_entities(store, provider, resolver, observed_at=moment.date())
     save_graph(store, settings.graph_snapshot_path)
     save_resolver(resolver, settings.resolver_snapshot_path)
+    return summary
+
+
+def run_portfolio(
+    settings: Settings | None = None,
+    *,
+    cik: str | None = None,
+    file_path: Path | None = None,
+    name: str | None = None,
+    now: datetime | None = None,
+) -> "FundSummary":
+    """Ingest a fund's 13F holdings into the graph as Fund -holds-> Company edges.
+    Either fetch the filer's latest 13F live (``cik``) or parse a local info-table
+    XML (``file_path``). Opt-in and idempotent."""
+
+    from coruscant.knowledge_graph.persistence import load_graph as _load_graph
+    from coruscant.portfolio.holdings import ingest_fund_holdings
+    from coruscant.portfolio.thirteenf import FundFiling, fetch_latest_13f, parse_13f_info_table
+
+    settings = settings or get_settings()
+    moment = now or datetime.now(tz=timezone.utc)
+
+    filing: FundFiling | None
+    if file_path is not None:
+        holdings = parse_13f_info_table(Path(file_path).read_text())
+        filing = FundFiling(cik=(cik or "local"), name=(name or "Fund"),
+                            period=None, source_url=str(file_path), holdings=holdings)
+    elif cik is not None:
+        filing = fetch_latest_13f(cik, user_agent=settings.edgar_user_agent)
+        if filing is None:
+            raise FileNotFoundError(f"No 13F-HR found on EDGAR for CIK {cik}.")
+        if name:
+            filing = filing.model_copy(update={"name": name})
+    else:
+        raise ValueError("run_portfolio needs either --cik (live 13F) or --file (local XML).")
+
+    store = _load_graph(settings.graph_snapshot_path)
+    summary = ingest_fund_holdings(store, filing, observed_at=moment.date())
+    save_graph(store, settings.graph_snapshot_path)
     return summary
 
 

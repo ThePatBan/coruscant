@@ -17,6 +17,7 @@ from coruscant.apps.runtime import (
     load_graph_store,
     run_anchor,
     run_ingestion,
+    run_portfolio,
     run_screening,
     seed_demo_user,
 )
@@ -139,6 +140,23 @@ def cmd_anchor(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_portfolio(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    configure_logging()
+    file_path = Path(args.file) if args.file else None
+    try:
+        summary = run_portfolio(cik=args.cik, file_path=file_path, name=args.name)
+    except (FileNotFoundError, ValueError) as error:
+        print(str(error))
+        return 1
+    print(
+        f"Ingested {summary.name} 13F ({summary.period or 'n/a'}): {summary.positions} positions, "
+        f"{summary.resolved} in coverage → holds edges, {summary.out_of_coverage} out of coverage."
+    )
+    return 0
+
+
 def cmd_backup(args: argparse.Namespace) -> int:
     from pathlib import Path
 
@@ -201,6 +219,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="LEI source: 'gleif-api' (free public API) or 'gleif-local' (export file)",
     )
     anchor.set_defaults(func=cmd_anchor)
+
+    portfolio = sub.add_parser("portfolio", help="Ingest a fund's 13F holdings (Fund -holds-> Company)")
+    portfolio.add_argument("--cik", default=None, help="13F filer CIK (fetches the latest 13F-HR live)")
+    portfolio.add_argument("--file", default=None, help="Path to a 13F information-table XML (offline)")
+    portfolio.add_argument("--name", default=None, help="Override the fund's display name")
+    portfolio.set_defaults(func=cmd_portfolio)
 
     backup_p = sub.add_parser("backup", help="Back up the data directory to a tar.gz")
     backup_p.add_argument("--out", default=None, help="Output archive path")

@@ -967,3 +967,96 @@ def screening_overview(
         confirmed=[_hit(store, e) for e in confirmed_edges],
         needs_review=[_hit(store, e) for e in review_edges],
     )
+
+
+# -- Portfolio (13F fund holdings) panel ---------------------------------------
+# Graph vocabulary written by coruscant.portfolio.holdings (mirrored here).
+_FUND_KIND = "Fund"
+_HOLDS = "holds"
+
+
+class FundRef(BaseModel):
+    key: str
+    name: str
+    cik: str | None = None
+    period: str | None = None
+    positions: int = 0  # line items on the 13F
+    resolved: int = 0  # distinct holdings in our coverage
+    out_of_coverage: int = 0
+
+
+class FundHoldingView(BaseModel):
+    company: EntityRef
+    value: int = 0  # as reported on the 13F
+    shares: int | None = None
+    cusip: str | None = None
+    score: float | None = None
+    valid_from: str | None = None
+    source: str | None = None
+    access_tier: str = "public"
+
+
+class FundHoldings(BaseModel):
+    """A fund's holdings that fall inside our coverage — the book an event is
+    traced into. Out-of-coverage positions are counted, not fabricated."""
+
+    fund: FundRef
+    holdings: list[FundHoldingView] = []
+    note: str = "13F holdings resolved to covered companies; out-of-coverage positions are counted only."
+
+
+def _fund_ref(store: KnowledgeGraphStore, node_key: str) -> FundRef:
+    node = store.get_node(_FUND_KIND, node_key)
+    props = node.properties if node is not None else {}
+    return FundRef(
+        key=node_key, name=_name(store, _FUND_KIND, node_key),
+        cik=_str_prop(props, "cik"), period=_str_prop(props, "period"),
+        positions=int(props.get("positions") or 0),
+        resolved=int(props.get("resolved") or 0),
+        out_of_coverage=int(props.get("out_of_coverage") or 0),
+    )
+
+
+def list_funds(store: KnowledgeGraphStore) -> list[FundRef]:
+    """Every fund whose 13F has been ingested, by holdings-in-coverage, descending."""
+    funds = [_fund_ref(store, node.key) for node in store.nodes_of_kind(_FUND_KIND)]
+    return sorted(funds, key=lambda f: (-f.resolved, f.name))
+
+
+def fund_holdings(
+    store: KnowledgeGraphStore,
+    fund_key: str,
+    *,
+    clearance: substrate.AccessTier | str = substrate.AccessTier.PUBLIC,
+    as_of: date | str | None = None,
+) -> FundHoldings | None:
+    """A fund's covered holdings, tier-enforced and optionally as-of a date."""
+    if store.get_node(_FUND_KIND, fund_key) is None:
+        return None
+    edges = [e for e in store.outgoing(_FUND_KIND, fund_key) if e.relation == _HOLDS]
+    if as_of is not None:
+        edges = substrate.as_of(edges, on=as_of)
+    edges = substrate.visible(edges, clearance=clearance)
+
+    def _int(value: object) -> int:
+        return value if isinstance(value, int) else 0
+
+    holdings: list[FundHoldingView] = []
+    for edge in edges:
+        props = edge.properties
+        raw_score = props.get("score")
+        shares = props.get("shares")
+        holdings.append(
+            FundHoldingView(
+                company=_ref(store, edge.target_kind, edge.target_key),
+                value=_int(props.get("value")),
+                shares=shares if isinstance(shares, int) else None,
+                cusip=_str_prop(props, "cusip"),
+                score=float(raw_score) if isinstance(raw_score, (int, float)) else None,
+                valid_from=_str_prop(props, substrate.VALID_FROM),
+                source=_source_of(props),
+                access_tier=substrate.tier_of(props).value,
+            )
+        )
+    holdings.sort(key=lambda h: (-h.value, h.company.name))
+    return FundHoldings(fund=_fund_ref(store, fund_key), holdings=holdings)

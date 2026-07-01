@@ -143,6 +143,17 @@ def _rich_graph() -> InMemoryKnowledgeGraphStore:
     s.upsert_node(_node("AnchorRun", "latest", name="Latest anchoring run", source="anchoring",
                         provider="gleif-local", considered=6, resolved=1, review=1, unresolved=4,
                         companies_resolved=1, subsidiaries_resolved=0, observed_at="2026-07-01"))
+    # 13F fund holdings (Fund -holds-> Company): the portfolio primitive, with substrate.
+    s.upsert_node(_node("Fund", "fund-1067983", name="Berkshire Hathaway Inc", source="sec-13f",
+                        cik="1067983", period="2024-12-31", positions=40, resolved=2, out_of_coverage=38))
+    s.upsert_edge(_edge("Fund", "fund-1067983", "holds", "Company", "apple",
+                        source="sec-13f", access_tier="public", observed_at="2026-07-01",
+                        valid_from="2024-12-31", value=75000000, shares=300000000, cusip="037833100",
+                        matched_name="APPLE INC", review_status="confirmed", score=0.97))
+    s.upsert_edge(_edge("Fund", "fund-1067983", "holds", "Company", "chevron",
+                        source="sec-13f", access_tier="public", observed_at="2026-07-01",
+                        valid_from="2024-12-31", value=18000000, shares=120000000, cusip="166764100",
+                        matched_name="CHEVRON CORP", review_status="confirmed", score=0.97))
     return s
 
 
@@ -275,6 +286,13 @@ def test_parity_screening_overview(as_of: str | None) -> None:
 def test_parity_resolution_overview(as_of: str | None) -> None:
     mem, kz = _both_stores()
     assert _j(Q.resolution_overview(mem, as_of=as_of)) == _j(Q.resolution_overview(kz, as_of=as_of))
+
+
+def test_parity_fund_holdings() -> None:
+    mem, kz = _both_stores()
+    assert _j(Q.list_funds(mem)) == _j(Q.list_funds(kz))
+    assert (Q.fund_holdings(mem, "fund-1067983").model_dump_json()  # type: ignore[union-attr]
+            == Q.fund_holdings(kz, "fund-1067983").model_dump_json())  # type: ignore[union-attr]
 
 
 def test_parity_reachable_resolves_to() -> None:
