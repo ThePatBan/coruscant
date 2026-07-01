@@ -453,12 +453,13 @@ def parse_index_constituents(
     text: str, *, index_key: str, index_name: str, source: str, source_url: str | None = None
 ) -> list[IndexMembership]:
     """Parse an index constituent CSV (Nifty ``ind_nifty50list.csv``: Company Name,
-    Symbol, ISIN Code; Sensex lists similar) into :class:`IndexMembership` rows keyed
-    by ISIN (preferred) and/or symbol. Rows with neither are skipped."""
+    Symbol, ISIN Code; Sensex + FTSE lists similar) into :class:`IndexMembership` rows
+    keyed by ISIN (preferred) and/or symbol (NSE symbol, BSE id, or LSE TIDM/EPIC).
+    Rows with neither are skipped."""
 
     reader = csv.DictReader(io.StringIO(text))
     c_isin = _csv_columns(reader.fieldnames, ("isin code", "isin no", "isin number", "isin"))
-    c_sym = _csv_columns(reader.fieldnames, ("symbol", "security id", "scrip id"))
+    c_sym = _csv_columns(reader.fieldnames, ("symbol", "security id", "scrip id", "tidm", "epic", "ticker"))
     out: list[IndexMembership] = []
     for row in reader:
         isin = _clean_isin(row.get(c_isin)) if c_isin else None
@@ -580,6 +581,156 @@ class IndiaCoverageProvider:
             if not text:
                 continue
             key, display, src = _INDIA_INDEX_CATALOG[role]
+            out.extend(parse_index_constituents(
+                text, index_key=key, index_name=display, source=src))
+        return out
+
+
+# -- UK: London Stock Exchange "List of all companies", ISIN-identified ---------
+#
+# The LSE publishes a single "List of all companies" (Main Market + AIM) — the UK
+# analogue of NSE EQUITY_L / SEC company_tickers: one row per issuer with TIDM
+# (ticker), ISIN, ICB sector, and market segment. Identity is the **ISIN**
+# (consistent with India); SEDOL and the Companies House number ride on as extra
+# anchors when the export carries them (the handoff's ISIN/SEDOL/company-number
+# identity set), for later GLEIF-LEI / OpenFIGI reconciliation. FTSE 100 / FTSE 250
+# are indices (baskets, not venues) → Index nodes + constituent_of edges.
+
+LSE_COMPANY_LIST_SOURCE = "lse-company-list"
+_LSE_COMPANY_LIST_URL = "https://www.londonstockexchange.com/reports?tab=issuers"
+
+# FTSE index catalog: (role → node key, display name, provenance source).
+_UK_INDEX_CATALOG = {
+    "ftse100": ("ftse-100", "FTSE 100", "ftse-russell"),
+    "ftse250": ("ftse-250", "FTSE 250", "ftse-russell"),
+}
+
+
+def parse_lse_company_list(text: str) -> tuple[list[IssuerRecord], dict[str, int]]:
+    """Parse the LSE "List of all companies" CSV into :class:`IssuerRecord`\\ s keyed
+    by ISIN. Tolerant of column naming (Company/TIDM/ISIN/Market/ICB, plus optional
+    SEDOL and company number). ``exchange`` reflects the segment (LSE Main Market vs
+    LSE AIM). Blank-ISIN rows are excluded and counted. Returns ``(records, drops)``."""
+
+    reader = csv.DictReader(io.StringIO(text))
+    c_name = _csv_columns(reader.fieldnames, ("company", "company name", "issuer name", "name"))
+    c_tidm = _csv_columns(reader.fieldnames, ("tidm", "ticker", "epic", "symbol"))
+    c_isin = _csv_columns(reader.fieldnames, ("isin", "isin code", "isin number"))
+    c_market = _csv_columns(reader.fieldnames, ("market", "market segment", "segment"))
+    c_sedol = _csv_columns(reader.fieldnames, ("sedol", "sedol code"))
+    c_regno = _csv_columns(reader.fieldnames, ("company number", "registration number", "registered number"))
+    records: list[IssuerRecord] = []
+    drops = {"gb_blank_isin": 0}
+    if c_isin is None:
+        return records, {"gb_malformed": 1}
+    for row in reader:
+        isin = _clean_isin(row.get(c_isin))
+        if isin is None:
+            drops["gb_blank_isin"] += 1
+            continue
+        ticker = (row.get(c_tidm) or "").strip().upper() if c_tidm else ""
+        segment = (row.get(c_market) or "").strip() if c_market else ""
+        exchange = "LSE AIM" if "aim" in segment.lower() else "LSE Main Market"
+        sedol = (row.get(c_sedol) or "").strip().upper() if c_sedol else ""
+        regno = (row.get(c_regno) or "").strip() if c_regno else ""
+        anchors = [IssuerAnchor(scheme=ANCHOR_ISIN, value=isin)]
+        if ticker:
+            anchors.append(IssuerAnchor(scheme=ANCHOR_TICKER, value=ticker))
+        if sedol:
+            anchors.append(IssuerAnchor(scheme=ANCHOR_SEDOL, value=sedol))
+        if regno:
+            anchors.append(IssuerAnchor(scheme=ANCHOR_COMPANY_NUMBER, value=regno))
+        records.append(IssuerRecord(
+            market="GB", name=(row.get(c_name) or "").strip() if c_name else (ticker or isin),
+            ticker=ticker or None, exchange=exchange, anchors=anchors,
+            source=LSE_COMPANY_LIST_SOURCE,
+            source_url=f"https://www.londonstockexchange.com/stock/{ticker}" if ticker else None,
+        ))
+    return records, drops
+
+
+class UkLseCoverageProvider:
+    """UK universe from the LSE "List of all companies" CSV, ISIN-identified.
+
+    A file (or best-effort live fetch) in; :class:`IssuerRecord`\\ s (``market="GB"``)
+    out — the pipeline's ISIN dedup enriches across re-runs. FTSE 100 / FTSE 250
+    constituent lists become :class:`IndexMembership` rows. Hermetic in CI via injected
+    text; the live fetch is operator-invoked and best-effort (the LSE site is JS-heavy,
+    so the ``--lse`` download is the primary path)."""
+
+    market = "GB"
+    name = "uk-lse"
+
+    def __init__(
+        self,
+        *,
+        lse_text: str | None = None,
+        ftse100_text: str | None = None,
+        ftse250_text: str | None = None,
+        user_agent: str = _BROWSER_UA,
+        lse_url: str = _LSE_COMPANY_LIST_URL,
+        timeout: float = 30.0,
+    ) -> None:
+        self._lse_text = lse_text
+        self._ftse100_text = ftse100_text
+        self._ftse250_text = ftse250_text
+        self._user_agent = user_agent
+        self._lse_url = lse_url
+        self._timeout = timeout
+        self._last_drops: dict[str, int] = {}
+
+    @classmethod
+    def from_files(
+        cls,
+        *,
+        lse: Path | None = None,
+        ftse100: Path | None = None,
+        ftse250: Path | None = None,
+        **kwargs: Any,
+    ) -> "UkLseCoverageProvider":
+        """Build a provider from downloaded CSVs — the hermetic/operator path."""
+
+        return cls(
+            lse_text=_read_source(None, lse), ftse100_text=_read_source(None, ftse100),
+            ftse250_text=_read_source(None, ftse250), **kwargs,
+        )
+
+    def connected(self) -> bool:
+        if self._lse_text is not None:
+            return True
+        try:  # best-effort reachability; the LSE site is JS-heavy, so --lse is primary
+            req = Request(self._lse_url, headers={"User-Agent": self._user_agent}, method="HEAD")
+            with urlopen(req, timeout=min(self._timeout, 5.0)) as r:  # noqa: S310 (trusted LSE host)
+                return 200 <= int(r.getcode()) < 300
+        except Exception:
+            return False
+
+    def _fetch(self, url: str) -> str:
+        req = Request(url, headers={"User-Agent": self._user_agent, "Accept": "text/csv,*/*"})
+        try:
+            with urlopen(req, timeout=self._timeout) as response:  # noqa: S310 (operator-invoked)
+                return response.read().decode("utf-8", errors="replace")
+        except Exception as error:  # noqa: BLE001 — surface as an explicit runtime failure
+            raise RuntimeError(f"UK coverage fetch failed for {url!r}: {error}") from error
+
+    @property
+    def last_drops(self) -> dict[str, int]:
+        return dict(self._last_drops)
+
+    def list_issuers(self) -> list[IssuerRecord]:
+        lse_text = self._lse_text if self._lse_text is not None else self._fetch(self._lse_url)
+        records, drops = parse_lse_company_list(lse_text or "")
+        self._last_drops = drops
+        return records
+
+    def list_index_memberships(self) -> list[IndexMembership]:
+        """FTSE 100 + FTSE 250 constituents (whichever lists were supplied)."""
+
+        out: list[IndexMembership] = []
+        for role, text in (("ftse100", self._ftse100_text), ("ftse250", self._ftse250_text)):
+            if not text:
+                continue
+            key, display, src = _UK_INDEX_CATALOG[role]
             out.extend(parse_index_constituents(
                 text, index_key=key, index_name=display, source=src))
         return out

@@ -54,8 +54,9 @@ COVERAGE_SOURCE_KEY = "coverage_source"  # which feed added the universe anchors
 
 # Per-market identity anchor: the external key used for exact dedup. US uses CIK; a
 # company listed on both NSE and BSE shares one ISIN, so India dedups (and unifies
-# the two exchanges) on ISIN. UK (company_number/sedol) drops in the same way.
-_MARKET_IDENTITY_SCHEME: dict[str, str] = {"US": "cik", "IN": "isin"}
+# the two exchanges) on ISIN; the UK (LSE) is ISIN-identified too, with SEDOL and the
+# Companies House number carried as extra anchors.
+_MARKET_IDENTITY_SCHEME: dict[str, str] = {"US": "cik", "IN": "isin", "GB": "isin"}
 
 
 class CoverageSummary(BaseModel):

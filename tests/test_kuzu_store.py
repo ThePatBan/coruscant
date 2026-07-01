@@ -183,6 +183,21 @@ def _rich_graph() -> InMemoryKnowledgeGraphStore:
                         observed_at="2026-07-01"))
     s.upsert_edge(_edge("Company", "in-INE002A01018", "constituent_of", "Index", "nifty-50",
                         source="nse-indices", index_name="Nifty 50", observed_at="2026-07-01"))
+    # UK coverage: an ISIN-keyed LSE node carrying a SEDOL + Companies House number as
+    # extra anchors, + a FTSE 100 Index node with a constituent_of edge (same generic
+    # Index/constituent_of shape must round-trip for a second market).
+    s.upsert_node(_node("Company", "gb-GB0007980591", name="BP p.l.c.", source="lse-company-list",
+                        market="GB", exchange="LSE Main Market", ticker="BP", in_universe=True,
+                        gics_status="unresolved",
+                        anchors=[{"scheme": "isin", "value": "GB0007980591"},
+                                 {"scheme": "ticker", "value": "BP"},
+                                 {"scheme": "sedol", "value": "0798059"},
+                                 {"scheme": "company_number", "value": "00102498"}]))
+    s.upsert_node(_node("Index", "ftse-100", name="FTSE 100", source="ftse-russell", market="GB",
+                        provider="uk-lse", constituents=1, constituents_unresolved=0,
+                        observed_at="2026-07-01"))
+    s.upsert_edge(_edge("Company", "gb-GB0007980591", "constituent_of", "Index", "ftse-100",
+                        source="ftse-russell", index_name="FTSE 100", observed_at="2026-07-01"))
     return s
 
 
@@ -370,6 +385,9 @@ def test_parity_constituent_of_index() -> None:
         assert reached == {("Index", "nifty-50"): 1}
         idx = store.get_node("Index", "nifty-50")
         assert idx is not None and idx.properties["constituents"] == 1
+        # A second market's index (UK FTSE 100) traverses the same generic relation.
+        uk = store.reachable("Company", "gb-GB0007980591", "constituent_of", 1, direction="out")
+        assert uk == {("Index", "ftse-100"): 1}
     assert _j(Q.coverage_overview(mem)) == _j(Q.coverage_overview(kz))
 
 

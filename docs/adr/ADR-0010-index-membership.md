@@ -4,7 +4,9 @@
 
 Accepted (2026-07-01). Rides on the whole-exchange coverage seam
 ([ADR-0009](ADR-0009-whole-exchange-coverage.md)); first realized for India
-(Nifty 50 / BSE Sensex) but market-agnostic.
+(Nifty 50 / BSE Sensex) and immediately reused for the UK (FTSE 100 / FTSE 250) — the
+same generic `Index` node + `constituent_of` edge, no per-market schema. Market-agnostic
+by construction.
 
 ## Context
 
