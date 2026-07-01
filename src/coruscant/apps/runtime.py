@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from coruscant.anchoring.pipeline import AnchorSummary
     from coruscant.anchoring.provider import LeiProvider
+    from coruscant.coverage.pipeline import CoverageSummary
+    from coruscant.coverage.provider import CoverageProvider
     from coruscant.portfolio.holdings import FundSummary
     from coruscant.screening.pipeline import ScreeningSummary
     from coruscant.screening.provider import ScreeningProvider
@@ -502,6 +504,67 @@ def run_portfolio(
 
     store = _load_graph(settings.graph_snapshot_path)
     summary = ingest_fund_holdings(store, filing, observed_at=moment.date())
+    save_graph(store, settings.graph_snapshot_path)
+    return summary
+
+
+def _build_coverage_provider(
+    settings: Settings, *, market: str, file_path: Path | None
+) -> "CoverageProvider":
+    """Construct the coverage provider for ``market``. US reads SEC's
+    company_tickers_exchange.json (one request, live) or a downloaded copy
+    (``file_path`` — the hermetic/operator path). India/UK are future providers."""
+
+    from coruscant.coverage.provider import UsEdgarCoverageProvider
+
+    key = market.lower()
+    if key != "us":
+        raise ValueError(
+            f"No coverage provider for market {market!r} yet. Implemented: us "
+            "(India NSE/BSE and UK FTSE/LSE are the next providers)."
+        )
+    # One shared limiter keeps the aggregate SEC request rate under the fair-access
+    # cap (the US feed is a single request, but the seam stays consistent).
+    rate_limiter = (
+        RateLimiter(1.0 / settings.sec_rate_limit_per_second)
+        if settings.sec_rate_limit_per_second > 0 else None
+    )
+    if file_path is not None:
+        return UsEdgarCoverageProvider.from_file(
+            Path(file_path), user_agent=settings.edgar_user_agent, rate_limiter=rate_limiter
+        )
+    provider = UsEdgarCoverageProvider(
+        user_agent=settings.edgar_user_agent, rate_limiter=rate_limiter
+    )
+    if not provider.connected():
+        raise ConnectionError(
+            "SEC is not reachable for coverage. Check network/SSL_CERT_FILE, or pass "
+            "--file with a downloaded company_tickers_exchange.json."
+        )
+    return provider
+
+
+def run_coverage(
+    settings: Settings | None = None,
+    *,
+    market: str = "us",
+    file_path: Path | None = None,
+    now: datetime | None = None,
+) -> "CoverageSummary":
+    """Ingest a market's full listed-issuer universe into the graph as lightweight
+    Company nodes so uploaded portfolios resolve. CIK-reconciled (enrich, don't
+    duplicate); idempotent; writes the snapshot (serving rebuilds Kùzu on next open).
+    """
+
+    from coruscant.coverage.pipeline import ingest_coverage
+    from coruscant.knowledge_graph.persistence import load_graph as _load_graph
+
+    settings = settings or get_settings()
+    moment = now or datetime.now(tz=timezone.utc)
+    provider = _build_coverage_provider(settings, market=market, file_path=file_path)
+
+    store = _load_graph(settings.graph_snapshot_path)
+    summary = ingest_coverage(store, provider, observed_at=moment.date())
     save_graph(store, settings.graph_snapshot_path)
     return summary
 

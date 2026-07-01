@@ -71,6 +71,7 @@ from coruscant import llm
 from coruscant.llm import LLMGateway
 from coruscant.knowledge_graph.queries import (
     CoExecutiveResult,
+    CoverageOverview,
     EntityProfile,
     EntityRef,
     ExposureResult,
@@ -94,6 +95,7 @@ from coruscant.knowledge_graph.queries import (
     co_executives,
     commodity_exposure,
     company_country_exposures,
+    coverage_overview,
     company_network,
     debt_for_country,
     entity_profile,
@@ -899,6 +901,15 @@ def create_app(
         if not isinstance(graph, KnowledgeGraphStore):
             return ResolutionOverview(connected=False)
         return resolution_overview(graph, as_of=as_of)
+
+    @app.get("/graph/coverage", response_model=CoverageOverview, dependencies=protected)
+    def graph_coverage() -> CoverageOverview:
+        """Whole-exchange coverage: the size and shape of the resolvable universe by
+        market/exchange. ``connected: false`` until a coverage run has ingested one."""
+        graph = state.graph
+        if not isinstance(graph, KnowledgeGraphStore):
+            return CoverageOverview(connected=False)
+        return coverage_overview(graph)
 
     @app.get("/graph/funds", response_model=list[FundRef], dependencies=protected)
     def graph_funds() -> list[FundRef]:

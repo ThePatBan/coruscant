@@ -16,6 +16,7 @@ from coruscant.apps.runtime import (
     load_engine,
     load_graph_store,
     run_anchor,
+    run_coverage,
     run_ingestion,
     run_portfolio,
     run_screening,
@@ -157,6 +158,42 @@ def cmd_portfolio(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_coverage(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    configure_logging()
+    if args.resolve:
+        from coruscant.coverage.resolve import parse_brokerage_csv, resolve_positions
+
+        store = load_graph_store()
+        report = resolve_positions(store, parse_brokerage_csv(Path(args.resolve).read_text()))
+        print(
+            f"Resolved {report.resolved}/{report.total} positions ({report.rate:.0%}): "
+            f"{report.by_ticker} by ticker, {report.by_name} by name, {report.unresolved} unresolved."
+        )
+        if report.unresolved:
+            misses = [p.input_ticker or p.input_name for p in report.positions if p.method == "unresolved"]
+            print("Unresolved (labelled, not fabricated): " + ", ".join(str(m) for m in misses[:20]))
+        return 0
+
+    file_path = Path(args.file) if args.file else None
+    try:
+        summary = run_coverage(market=args.market, file_path=file_path)
+    except (ValueError, ConnectionError, FileNotFoundError, RuntimeError) as error:
+        print(str(error))
+        return 1
+    print(
+        f"Coverage [{summary.market}] via {summary.provider}: {summary.considered} issuers → "
+        f"{summary.enriched} enriched, {summary.created} new; {summary.universe_total} in universe."
+    )
+    if summary.excluded:
+        print(
+            "Excluded upstream (labelled, not silently dropped): "
+            + ", ".join(f"{k}={v}" for k, v in summary.excluded.items())
+        )
+    return 0
+
+
 def cmd_backup(args: argparse.Namespace) -> int:
     from pathlib import Path
 
@@ -225,6 +262,20 @@ def build_parser() -> argparse.ArgumentParser:
     portfolio.add_argument("--file", default=None, help="Path to a 13F information-table XML (offline)")
     portfolio.add_argument("--name", default=None, help="Override the fund's display name")
     portfolio.set_defaults(func=cmd_portfolio)
+
+    coverage = sub.add_parser(
+        "coverage", help="Ingest a market's listed-issuer universe (whole-exchange coverage)"
+    )
+    coverage.add_argument("--market", default="us", help="Market to ingest: us (India/UK are next)")
+    coverage.add_argument(
+        "--file", default=None,
+        help="Path to a downloaded company_tickers_exchange.json (offline/operator path)",
+    )
+    coverage.add_argument(
+        "--resolve", default=None,
+        help="Resolve a brokerage holdings CSV against current coverage and report the rate",
+    )
+    coverage.set_defaults(func=cmd_coverage)
 
     backup_p = sub.add_parser("backup", help="Back up the data directory to a tar.gz")
     backup_p.add_argument("--out", default=None, help="Output archive path")

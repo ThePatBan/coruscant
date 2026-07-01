@@ -154,6 +154,21 @@ def _rich_graph() -> InMemoryKnowledgeGraphStore:
                         source="sec-13f", access_tier="public", observed_at="2026-07-01",
                         valid_from="2024-12-31", value=18000000, shares=120000000, cusip="166764100",
                         matched_name="CHEVRON CORP", review_status="confirmed", score=0.97))
+    # Whole-exchange coverage: surrogate universe nodes (identity + exchange, GICS
+    # explicitly unresolved — never fabricated) + the per-market CoverageRun. Nested
+    # dict properties (excluded/by_exchange) must round-trip through the JSON→Kùzu store.
+    s.upsert_node(_node("Company", "us-900001", name="Coverage Newco Inc", source="sec-company-tickers",
+                        market="US", exchange="Nasdaq", ticker="NEWC", cik="900001", in_universe=True,
+                        gics_status="unresolved",
+                        anchors=[{"scheme": "cik", "value": "900001"}, {"scheme": "ticker", "value": "NEWC"}]))
+    s.upsert_node(_node("Company", "us-900002", name="Coverage Holdco Corp", source="sec-company-tickers",
+                        market="US", exchange="NYSE", ticker="HOLD", cik="900002", in_universe=True,
+                        gics_status="unresolved",
+                        anchors=[{"scheme": "cik", "value": "900002"}, {"scheme": "ticker", "value": "HOLD"}]))
+    s.upsert_node(_node("CoverageRun", "us", name="US coverage run", source="coverage", provider="us-edgar",
+                        market="US", considered=2, enriched=0, created=2,
+                        excluded={"otc_or_blank_exchange": 5}, by_exchange={"Nasdaq": 1, "NYSE": 1},
+                        universe_total=2, observed_at="2026-07-01"))
     return s
 
 
@@ -286,6 +301,13 @@ def test_parity_screening_overview(as_of: str | None) -> None:
 def test_parity_resolution_overview(as_of: str | None) -> None:
     mem, kz = _both_stores()
     assert _j(Q.resolution_overview(mem, as_of=as_of)) == _j(Q.resolution_overview(kz, as_of=as_of))
+
+
+def test_parity_coverage_overview() -> None:
+    # The whole-exchange coverage panel (market/exchange counts read live off the
+    # Company nodes + the CoverageRun) is byte-identical across backends.
+    mem, kz = _both_stores()
+    assert _j(Q.coverage_overview(mem)) == _j(Q.coverage_overview(kz))
 
 
 def test_parity_fund_holdings() -> None:
