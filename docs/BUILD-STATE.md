@@ -75,6 +75,25 @@ Two tabs: **`/world`** (Home/World — the exposure surface) and **`/atlas`** (t
   /graph/fund/{key}/exposure` + `/profile`. *Live:* an Energy event → Berkshire's
   Chevron ($17.5B, 12% of book); a Taiwan event → nothing (honest empty). This is
   orientation + in-book magnitude, not a P&L estimate.
+- **Whole-exchange coverage — the resolvable universe** (market-plural, US-first):
+  a `coverage/` module behind a **`CoverageProvider` seam** ingests the full universe
+  of listed issuers as *lightweight* Company nodes (identity + exchange, **not** deep
+  filings) so an uploaded book resolves. `UsEdgarCoverageProvider` reads SEC's
+  `company_tickers_exchange.json` in **one request** (~10k issuers; the per-CIK
+  submissions API is *not* fanned out). Reconciliation is by **CIK** (a near-perfect
+  intra-US key): a match **enriches** the curated node (adds ticker/exchange/universe
+  anchors, keeps curated GICS/name authoritative), a miss creates a **stable surrogate**
+  `us-<cik>`; bulk issuers get `gics_status: unresolved`, never a fabricated sector.
+  Per-market **anchors are generic** (`cik` now; `isin`/`sedol`/`company_number` ready)
+  so India/UK are new providers, not rewrites. Idempotent (enrich last-write-wins,
+  anchors first-write-wins, keys never move). A **resolve-rate** check
+  (`coverage/resolve.py`) proves a brokerage CSV lands — exact ticker (punctuation-folded,
+  `BRK.B`↔`BRK-B`) then org-name fallback, unmatched reported honestly. `GET
+  /graph/coverage` (`coverage_overview`, counted live) + `coruscant coverage
+  --market us [--file|--resolve]`. *Live-validated:* real SEC feed → 7,654 issuers
+  (2,779 OTC/blank excluded + labelled) → graph 53 → **6,062 US companies**; a 12-line
+  sample book resolved **10/12 (83%)** — TSLA/PLTR/GME now covered, misses honest. See
+  ADR-0009.
 - **Taxonomy**: full GICS hierarchy (8-digit code) + MSCI DM/EM/FM, curated and
   verified against public MSCI/S&P sources.
 - **Instrument model**: commodities + debt as first-class instruments wired into
@@ -121,9 +140,11 @@ Two tabs: **`/world`** (Home/World — the exposure surface) and **`/atlas`** (t
   + yente sidecar); the *live* yente run + external demo await the OpenSanctions
   license in writing.
 - **Group / UBO contagion** exposure pathway (needs the ownership substrate).
-- **Whole-exchange coverage** — only curated names; bulk SEC/Nifty/UK/Europe
-  ingestion is future work. The store now scales (Kùzu serving; O(E) ingest); the
-  remaining blocker is the *connectors* (bulk registry pulls), not the store.
+- **Whole-exchange coverage beyond the US** — the US universe now ingests (above);
+  India (NSE/BSE) and UK (FTSE/LSE) are the next `CoverageProvider`s (no single free
+  "all companies" feed like EDGAR — equity-list CSVs + GLEIF/OpenFIGI, ISIN/SEDOL
+  anchors already modelled). The universe pass is lightweight by design; deep
+  filing ingestion (10-K/Exhibit-21/officers) stays curated/on-demand.
 - **Commodity/debt live prices in the UI** — the price client resolves their
   symbols (CL=F, GC=F, ^TNX, LQD…) but they are not surfaced yet.
 - **Licensed MSCI index data** — benchmarking uses a free ETF proxy.
@@ -131,9 +152,9 @@ Two tabs: **`/world`** (Home/World — the exposure surface) and **`/atlas`** (t
 ## Sequenced next
 
 1. **Real graph store** — ✅ done (Kùzu behind the port; Neo4j/Neptune deferred).
-2. **Whole-exchange coverage** + auto-add on portfolio upload (store scales now;
-   the work is the bulk-registry connectors).
-3. **Portfolio front door** (13F → holding edges, then user upload).
+2. **Whole-exchange coverage** — ✅ US done (ADR-0009). Next: India (NSE/BSE) + UK
+   (FTSE/LSE) as new `CoverageProvider`s; then auto-add on portfolio upload.
+3. **Portfolio front door** — 13F → holding edges ✅ (ADR-0008); user upload next.
 4. **Ownership → UBO** and **PEP/sanctions** edges (free registries first).
 
 Full plan of record: [global-exposure-architecture.md](global-exposure-architecture.md).

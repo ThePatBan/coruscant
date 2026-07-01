@@ -1,0 +1,220 @@
+"""Reconcile a market's listed-issuer universe into the graph.
+
+The dedup contract (§2 invariants, US-first but market-plural):
+
+* **Enrich, don't duplicate.** A bulk issuer whose external key (CIK for US)
+  matches an existing Company node *enriches* that node — adds ticker/exchange and
+  the universe anchors — and leaves the curated GICS/name/source authoritative.
+  CIK is a near-perfect intra-US key, so this dedup is exact, not fuzzy (no
+  reversible-resolver judgement needed).
+* **Stable surrogate for the rest.** A new issuer becomes a Company node keyed by a
+  deterministic surrogate (``us-<cik>``) that never moves across re-runs, so a
+  bookmark to it stays valid. The external key is an *anchor* on the node, never the
+  key (Invariant #2).
+* **Sector honesty.** Bulk issuers carry no curated GICS — we label them
+  ``gics_status: unresolved`` rather than invent a sector (Invariant #5). The coarse
+  SIC can be attached later, clearly lower-authority.
+* **Idempotent.** Descriptive fields enrich last-write-wins; identity anchors are
+  first-write-wins (stable). Re-running never duplicates a node.
+
+Coverage writes only nodes (the universe); sector/holdings/LEI edges are attached
+on demand by the other pipelines.
+"""
+
+from __future__ import annotations
+
+from datetime import date
+
+from pydantic import BaseModel, Field
+
+from coruscant.common.types import GraphNode
+from coruscant.coverage.provider import CoverageProvider, IssuerRecord, normalize_cik
+from coruscant.knowledge_graph.store import KnowledgeGraphStore
+
+COMPANY_KIND = "Company"
+COVERAGE_RUN_KIND = "CoverageRun"
+COVERAGE_SOURCE = "coverage"
+
+# Node property keys the coverage layer owns.
+MARKET = "market"
+EXCHANGE = "exchange"
+TICKER = "ticker"
+CIK = "cik"
+ANCHORS = "anchors"
+IN_UNIVERSE = "in_universe"  # this node is part of an ingested exchange universe
+GICS_STATUS = "gics_status"  # "unresolved" for bulk issuers — never a fabricated sector
+COVERAGE_SOURCE_KEY = "coverage_source"  # which feed added the universe anchors
+
+# Per-market identity anchor: the external key used for exact dedup. US-first; the
+# India/UK providers register their scheme here (isin/company_number) — no rewrite.
+_MARKET_IDENTITY_SCHEME: dict[str, str] = {"US": "cik"}
+
+
+class CoverageSummary(BaseModel):
+    connected: bool
+    market: str
+    provider: str
+    considered: int = 0  # issuers the provider listed (post exchange filter)
+    enriched: int = 0  # existing Company nodes enriched by external-key match
+    created: int = 0  # new surrogate Company nodes
+    excluded: dict[str, int] = Field(default_factory=dict)  # filtered upstream, by reason
+    by_exchange: dict[str, int] = Field(default_factory=dict)  # created+enriched, by venue
+    universe_total: int = 0  # Company nodes carrying this market's universe anchor
+
+
+def _has_gics(props: dict[str, object]) -> bool:
+    return bool(props.get("gics_sector") or props.get("gics_code"))
+
+
+def _merge_anchors(existing: object, incoming: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Union anchors by scheme, first-write-wins (a present scheme is not overwritten
+    → identity stays stable across re-runs)."""
+
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    if isinstance(existing, list):
+        for a in existing:
+            if isinstance(a, dict) and a.get("scheme"):
+                out.append({"scheme": str(a["scheme"]), "value": str(a.get("value", ""))})
+                seen.add(str(a["scheme"]))
+    for a in incoming:
+        if a["scheme"] not in seen:
+            out.append(a)
+            seen.add(a["scheme"])
+    return out
+
+
+def _cik_index(store: KnowledgeGraphStore) -> dict[str, str]:
+    """Map every Company node's normalized CIK → node key (curated *and* prior
+    surrogate nodes), so a re-run enriches rather than duplicates."""
+
+    index: dict[str, str] = {}
+    for node in store.nodes_of_kind(COMPANY_KIND):
+        cik = normalize_cik(node.properties.get(CIK))
+        if cik is not None:
+            index.setdefault(cik, node.key)  # first wins (curated seeded before bulk)
+    return index
+
+
+def ingest_coverage(
+    store: KnowledgeGraphStore,
+    provider: CoverageProvider,
+    *,
+    observed_at: date | str,
+) -> CoverageSummary:
+    """Ingest ``provider``'s issuer universe into the graph: enrich matched nodes,
+    create stable surrogates for the rest, and record a ``CoverageRun`` summary."""
+
+    market = provider.market.upper()
+    identity_scheme = _MARKET_IDENTITY_SCHEME.get(market, "cik")
+    issuers = provider.list_issuers()
+    index = _cik_index(store) if identity_scheme == "cik" else _anchor_index(store, identity_scheme)
+
+    enriched = created = 0
+    by_exchange: dict[str, int] = {}
+    for issuer in issuers:
+        key_value = issuer.anchor(identity_scheme)
+        if identity_scheme == "cik":
+            key_value = normalize_cik(key_value)
+        if not key_value:
+            continue
+        anchors = [a.model_dump() for a in issuer.anchors]
+        existing_key = index.get(key_value)
+        if existing_key is not None:
+            _enrich(store, existing_key, issuer, anchors)
+            enriched += 1
+        else:
+            surrogate = f"{market.lower()}-{key_value}"
+            _create(store, surrogate, issuer, anchors)
+            index[key_value] = surrogate  # so a duplicate row in the same feed also dedups
+            created += 1
+        if issuer.exchange:
+            by_exchange[issuer.exchange] = by_exchange.get(issuer.exchange, 0) + 1
+
+    excluded = dict(getattr(provider, "last_drops", {}) or {})
+    universe_total = sum(
+        1 for n in store.nodes_of_kind(COMPANY_KIND)
+        if n.properties.get(MARKET) == market and n.properties.get(IN_UNIVERSE)
+    )
+    store.upsert_node(
+        GraphNode(
+            kind=COVERAGE_RUN_KIND, key=market.lower(),
+            properties={
+                "name": f"{market} coverage run", "source": COVERAGE_SOURCE,
+                "provider": provider.name, MARKET: market,
+                "considered": len(issuers), "enriched": enriched, "created": created,
+                "excluded": excluded, "by_exchange": by_exchange,
+                "universe_total": universe_total,
+                "observed_at": observed_at if isinstance(observed_at, str) else observed_at.isoformat(),
+            },
+        )
+    )
+    return CoverageSummary(
+        connected=provider.connected(), market=market, provider=provider.name,
+        considered=len(issuers), enriched=enriched, created=created,
+        excluded=excluded, by_exchange=by_exchange, universe_total=universe_total,
+    )
+
+
+def _anchor_index(store: KnowledgeGraphStore, scheme: str) -> dict[str, str]:
+    """Generic external-key index for non-US markets: read the anchor of ``scheme``
+    off each Company node. US uses the faster flat-CIK path."""
+
+    index: dict[str, str] = {}
+    for node in store.nodes_of_kind(COMPANY_KIND):
+        for a in node.properties.get(ANCHORS) or []:
+            if isinstance(a, dict) and a.get("scheme") == scheme and a.get("value"):
+                index.setdefault(str(a["value"]), node.key)
+    return index
+
+
+def _enrich(store: KnowledgeGraphStore, key: str, issuer: IssuerRecord, anchors: list[dict[str, str]]) -> None:
+    """Add the universe anchors to an existing node without disturbing curated
+    authority: name, source, and any curated GICS are preserved."""
+
+    node = store.get_node(COMPANY_KIND, key)
+    if node is None:
+        return
+    props = dict(node.properties)
+    props[MARKET] = issuer.market.upper()
+    props[IN_UNIVERSE] = True
+    props[COVERAGE_SOURCE_KEY] = issuer.source
+    if issuer.exchange:
+        props[EXCHANGE] = issuer.exchange  # last-write-wins (a venue move is fresh info)
+    if issuer.ticker and not props.get(TICKER):
+        props[TICKER] = issuer.ticker  # first-write-wins: don't clobber a curated ticker
+    props[ANCHORS] = _merge_anchors(props.get(ANCHORS), anchors)
+    # Sector honesty: only label unresolved when there is no curated GICS to defer to.
+    if not _has_gics(props) and not props.get(GICS_STATUS):
+        props[GICS_STATUS] = "unresolved"
+    store.upsert_node(GraphNode(kind=COMPANY_KIND, key=key, properties=props))
+
+
+def _create(store: KnowledgeGraphStore, key: str, issuer: IssuerRecord, anchors: list[dict[str, str]]) -> None:
+    """Create/refresh a surrogate universe node. Key is stable; descriptive fields
+    enrich last-write-wins; identity anchors are first-write-wins."""
+
+    existing = store.get_node(COMPANY_KIND, key)
+    props: dict[str, object] = dict(existing.properties) if existing is not None else {}
+    props.update(
+        {
+            "name": issuer.name or key,
+            "source": issuer.source,
+            COVERAGE_SOURCE_KEY: issuer.source,
+            MARKET: issuer.market.upper(),
+            IN_UNIVERSE: True,
+        }
+    )
+    if issuer.ticker:
+        props[TICKER] = issuer.ticker
+    if issuer.exchange:
+        props[EXCHANGE] = issuer.exchange
+    cik = normalize_cik(issuer.anchor("cik"))  # unpadded, matching the curated convention
+    if cik:
+        props[CIK] = cik
+    props[ANCHORS] = _merge_anchors(props.get(ANCHORS), anchors)
+    # No curated sector for a bulk issuer → labelled unresolved, never fabricated.
+    if not _has_gics(props):
+        props[GICS_STATUS] = "unresolved"
+    props.setdefault("source_url", issuer.source_url)
+    store.upsert_node(GraphNode(kind=COMPANY_KIND, key=key, properties=props))

@@ -1187,3 +1187,100 @@ def portfolio_profile(
         by_sector=_buckets(sector_val, sector_cos),
         by_market_tier=_buckets(tier_val, tier_cos),
     )
+
+
+# -- Whole-exchange coverage panel ---------------------------------------------
+# "How much of the listed universe can a portfolio resolve against?" Counts are
+# read live off the Company nodes (honest — they reflect the actual graph), with
+# the per-market CoverageRun node supplying provider + last-run + what was
+# excluded upstream (blank/OTC listings). Graph vocabulary written by
+# coruscant.coverage.pipeline, mirrored here to keep this layer independent.
+_COVERAGE_RUN_KIND = "CoverageRun"
+_COMPANY_KIND = "Company"
+_MARKET = "market"
+_EXCHANGE = "exchange"
+_IN_UNIVERSE = "in_universe"
+
+
+class CoverageMarketCount(BaseModel):
+    market: str
+    companies: int  # total Company nodes tagged to this market
+    in_universe: int  # of those, part of an ingested exchange universe
+    provider: str | None = None
+    considered: int = 0  # issuers the last run listed
+    excluded: dict[str, int] = {}  # filtered upstream (blank/OTC), by reason
+    observed_at: str | None = None
+
+
+class CoverageExchangeCount(BaseModel):
+    exchange: str
+    companies: int
+
+
+class CoverageOverview(BaseModel):
+    """The coverage panel: the size and shape of the resolvable universe.
+    ``connected: false`` before any coverage run — the honest empty state."""
+
+    connected: bool
+    total_companies: int = 0
+    in_universe: int = 0  # companies carrying an exchange-universe anchor
+    curated: int = 0  # companies without one (curated/deep-ingested only)
+    by_market: list[CoverageMarketCount] = []
+    by_exchange: list[CoverageExchangeCount] = []
+    note: str = (
+        "Universe nodes are lightweight (identity + exchange); GICS is resolved "
+        "only where curated, else labelled unresolved — never fabricated."
+    )
+
+
+def coverage_overview(store: KnowledgeGraphStore) -> CoverageOverview:
+    """The whole-exchange coverage panel, counted live off the graph."""
+
+    runs = {
+        str(n.properties.get(_MARKET) or n.key).upper(): n.properties
+        for n in store.nodes_of_kind(_COVERAGE_RUN_KIND)
+    }
+    companies = store.nodes_of_kind(_COMPANY_KIND)
+    if not runs and not any(c.properties.get(_IN_UNIVERSE) for c in companies):
+        return CoverageOverview(connected=False, total_companies=len(companies))
+
+    market_total: dict[str, int] = {}
+    market_universe: dict[str, int] = {}
+    exchange_count: dict[str, int] = {}
+    in_universe = 0
+    for node in companies:
+        props = node.properties
+        market = props.get(_MARKET)
+        if isinstance(market, str) and market:
+            market_total[market] = market_total.get(market, 0) + 1
+        if props.get(_IN_UNIVERSE):
+            in_universe += 1
+            if isinstance(market, str) and market:
+                market_universe[market] = market_universe.get(market, 0) + 1
+            exch = props.get(_EXCHANGE)
+            if isinstance(exch, str) and exch:
+                exchange_count[exch] = exchange_count.get(exch, 0) + 1
+
+    def _market(m: str) -> CoverageMarketCount:
+        run = runs.get(m, {})
+        excluded = run.get("excluded")
+        return CoverageMarketCount(
+            market=m, companies=market_total.get(m, 0),
+            in_universe=market_universe.get(m, 0),
+            provider=_str_prop(run, "provider"),
+            considered=int(run.get("considered") or 0),
+            excluded={str(k): int(v) for k, v in excluded.items()} if isinstance(excluded, dict) else {},
+            observed_at=_str_prop(run, "observed_at"),
+        )
+
+    markets = sorted(set(market_total) | set(runs))
+    by_exchange = [CoverageExchangeCount(exchange=e, companies=n) for e, n in exchange_count.items()]
+    by_exchange.sort(key=lambda c: (-c.companies, c.exchange))
+    return CoverageOverview(
+        connected=True,
+        total_companies=len(companies),
+        in_universe=in_universe,
+        curated=len(companies) - in_universe,
+        by_market=[_market(m) for m in markets],
+        by_exchange=by_exchange,
+    )
