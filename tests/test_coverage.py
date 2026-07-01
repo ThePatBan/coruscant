@@ -257,7 +257,7 @@ def test_run_coverage_rejects_unimplemented_market(tmp_path) -> None:  # type: i
 
     settings = Settings(data_dir=tmp_path / "d", database_url="sqlite:///:memory:")
     with pytest.raises(ValueError, match="No coverage provider for market"):
-        run_coverage(settings, market="in")
+        run_coverage(settings, market="jp")  # Japan not implemented; US + India are
 
 
 def test_graph_coverage_endpoint() -> None:
@@ -280,3 +280,253 @@ def test_cli_coverage_parser_wires_command() -> None:
 
     ns = cli.build_parser().parse_args(["coverage", "--market", "us", "--file", "x.json"])
     assert ns.func is cli.cmd_coverage and ns.market == "us" and ns.file == "x.json"
+
+
+def test_cli_coverage_parser_wires_india_files() -> None:
+    from coruscant.apps import cli
+
+    ns = cli.build_parser().parse_args(
+        ["coverage", "--market", "in", "--nse", "eq.csv", "--bse", "bse.csv",
+         "--nifty", "n50.csv", "--sensex", "sx.csv"])
+    assert ns.market == "in" and ns.nse == "eq.csv" and ns.bse == "bse.csv"
+    assert ns.nifty == "n50.csv" and ns.sensex == "sx.csv"
+
+
+# == India: NSE + BSE, ISIN-unified; Nifty/Sensex index membership ==============
+#
+# Fixtures mirror the real files in miniature: NSE keeps EQ/BE + drops a bond and a
+# blank-ISIN row; BSE is active-equity + drops a suspended scrip; RELIANCE/TCS are
+# dual-listed (same ISIN on both exchanges), INFY is NSE-only, ABB is BSE-only.
+_NSE_EQUITY = (
+    "SYMBOL, NAME OF COMPANY, SERIES, DATE OF LISTING, PAID UP VALUE, MARKET LOT, ISIN NUMBER, FACE VALUE\n"
+    "INFY, Infosys Limited, EQ, 1995-06-08, 5, 1, INE009A01021, 5\n"
+    "RELIANCE, Reliance Industries Limited, EQ, 1995-11-29, 10, 1, INE002A01018, 10\n"
+    "TCS, Tata Consultancy Services Limited, EQ, 2004-08-25, 1, 1, INE467B01029, 1\n"
+    "GILT, Some Gilt Bond, N2, 2020-01-01, 100, 1, INE999Z01011, 100\n"     # non-equity series → drop
+    "NOISIN, No Isin Co, EQ, 2020-01-01, 10, 1, , 10\n"                     # blank ISIN → drop
+)
+_BSE_SCRIP = (
+    "Security Code,Security Id,Security Name,Status,Group,Face Value,ISIN No,Industry,Instrument\n"
+    "500325,RELIANCE,RELIANCE INDUSTRIES LTD,Active,A,10,INE002A01018,Refineries,Equity\n"
+    "532540,TCS,TATA CONSULTANCY SERVICES LTD,Active,A,1,INE467B01029,IT - Software,Equity\n"
+    "500002,ABB,ABB INDIA LIMITED,Active,A,2,INE117A01022,Capital Goods,Equity\n"
+    "590099,SUSP,Suspended Co,Suspended,X,10,INE888A01011,Misc,Equity\n"    # suspended → drop
+)
+_NIFTY50 = (
+    "Company Name,Industry,Symbol,Series,ISIN Code\n"
+    "Infosys Ltd.,Information Technology,INFY,EQ,INE009A01021\n"
+    "Reliance Industries Ltd.,Oil Gas,RELIANCE,EQ,INE002A01018\n"
+    "Tata Consultancy Services Ltd.,Information Technology,TCS,EQ,INE467B01029\n"
+)
+_SENSEX = (
+    "Security Code,Security Id,Security Name,ISIN No\n"
+    "500325,RELIANCE,RELIANCE INDUSTRIES LTD,INE002A01018\n"
+    "532540,TCS,TATA CONSULTANCY SERVICES LTD,INE467B01029\n"
+)
+
+
+def _india_provider():  # type: ignore[no-untyped-def]
+    from coruscant.coverage.provider import IndiaCoverageProvider
+
+    return IndiaCoverageProvider(
+        nse_text=_NSE_EQUITY, bse_text=_BSE_SCRIP, nifty_text=_NIFTY50, sensex_text=_SENSEX)
+
+
+def test_parse_nse_equity_filters_series_and_blank_isin() -> None:
+    from coruscant.coverage.provider import parse_nse_equity_list
+
+    rows, drops = parse_nse_equity_list(_NSE_EQUITY)
+    assert [r["symbol"] for r in rows] == ["INFY", "RELIANCE", "TCS"]
+    assert drops["nse_non_equity_series"] == 1 and drops["nse_blank_isin"] == 1
+    assert rows[0]["isin"] == "INE009A01021" and rows[0]["name"] == "Infosys Limited"
+
+
+def test_parse_bse_scrip_filters_suspended_and_keeps_equity() -> None:
+    from coruscant.coverage.provider import parse_bse_scrip_list
+
+    rows, drops = parse_bse_scrip_list(_BSE_SCRIP)
+    assert {r["security_id"] for r in rows} == {"RELIANCE", "TCS", "ABB"}
+    assert drops["bse_inactive"] == 1
+    abb = next(r for r in rows if r["security_id"] == "ABB")
+    assert abb["code"] == "500002" and abb["isin"] == "INE117A01022"
+
+
+def test_parse_bse_scrip_accepts_live_json_api() -> None:
+    from coruscant.coverage.provider import parse_bse_scrip_list
+
+    # The live BSE ListofScripData API returns JSON with keys SCRIP_CD/scrip_id/
+    # ISIN_NUMBER/Issuer_Name/Segment — parsed the same as the CSV export.
+    api = (
+        '[{"SCRIP_CD":"500325","scrip_id":"RELIANCE","Issuer_Name":"Reliance Industries Limited",'
+        '"Status":"Active","ISIN_NUMBER":"INE002A01018","Segment":"Equity"},'
+        '{"SCRIP_CD":"590099","scrip_id":"SUSP","Issuer_Name":"Suspended Co",'
+        '"Status":"Suspended","ISIN_NUMBER":"INE888A01011","Segment":"Equity"}]'
+    )
+    rows, drops = parse_bse_scrip_list(api)
+    assert [r["security_id"] for r in rows] == ["RELIANCE"]
+    assert rows[0]["code"] == "500325" and rows[0]["isin"] == "INE002A01018"
+    assert drops["bse_inactive"] == 1
+
+
+def test_parse_bse_empty_is_not_malformed() -> None:
+    from coruscant.coverage.provider import parse_bse_scrip_list
+
+    # An NSE-only run supplies no BSE text — that is legitimate, not a malformed drop.
+    assert parse_bse_scrip_list("") == ([], {})
+
+
+def test_unify_by_isin_dual_listing_and_anchors() -> None:
+    from coruscant.coverage.provider import (
+        parse_bse_scrip_list,
+        parse_nse_equity_list,
+        unify_india_issuers,
+    )
+
+    nse, _ = parse_nse_equity_list(_NSE_EQUITY)
+    bse, _ = parse_bse_scrip_list(_BSE_SCRIP)
+    records, stats = unify_india_issuers(nse, bse)
+    by_isin = {r.anchor("isin"): r for r in records}
+    # One node per ISIN: NSE∩BSE collapsed (RELIANCE/TCS), NSE-only + BSE-only kept.
+    assert set(by_isin) == {"INE009A01021", "INE002A01018", "INE467B01029", "INE117A01022"}
+    assert stats == {"nse_only": 1, "bse_only": 1, "dual_listed": 2}
+    reliance = by_isin["INE002A01018"]
+    assert reliance.exchange == "NSE & BSE" and reliance.ticker == "RELIANCE"
+    assert reliance.anchor("ticker") == "RELIANCE" and reliance.anchor("bse_code") == "500325"
+    # BSE-only issuer resolves via its BSE Security Id as the ticker.
+    abb = by_isin["INE117A01022"]
+    assert abb.exchange == "BSE" and abb.ticker == "ABB"
+    # NSE-only issuer has no bse_code anchor.
+    assert by_isin["INE009A01021"].exchange == "NSE"
+    assert by_isin["INE009A01021"].anchor("bse_code") is None
+
+
+def test_india_provider_offline_and_drops() -> None:
+    provider = _india_provider()
+    assert provider.connected() and provider.market == "IN"
+    issuers = provider.list_issuers()
+    assert len(issuers) == 4
+    assert provider.last_drops["nse_non_equity_series"] == 1
+    assert provider.last_drops["bse_inactive"] == 1
+    # Stats are NOT drops — the overlap is reported via by_exchange, not `excluded`.
+    assert "dual_listed" not in provider.last_drops
+
+
+def test_india_ingest_creates_isin_nodes_gics_unresolved_and_indices() -> None:
+    from coruscant.coverage.pipeline import CONSTITUENT_OF, INDEX_KIND, ingest_coverage
+
+    store = InMemoryKnowledgeGraphStore()
+    summary = ingest_coverage(store, _india_provider(), observed_at="2026-07-01")
+    assert summary.market == "IN" and summary.created == 4 and summary.enriched == 0
+    assert summary.by_exchange == {"NSE": 1, "NSE & BSE": 2, "BSE": 1}
+    assert summary.indices == {"Nifty 50": 3, "BSE Sensex": 2}
+
+    infy = store.get_node("Company", "in-INE009A01021")
+    assert infy is not None
+    assert infy.properties["ticker"] == "INFY" and infy.properties["exchange"] == "NSE"
+    assert infy.properties["market"] == "IN" and infy.properties["in_universe"] is True
+    # Sector honesty: India ≈ MSCI EM, but no fabricated per-company GICS/tier.
+    assert infy.properties["gics_status"] == "unresolved"
+    assert "gics_sector" not in infy.properties
+
+    # Index nodes + constituent_of edges (Company → Index), provenance-backed.
+    indices = {n.key: n.properties for n in store.nodes_of_kind(INDEX_KIND)}
+    assert indices["nifty-50"]["name"] == "Nifty 50" and indices["nifty-50"]["constituents"] == 3
+    edges = {(e.source_key, e.target_key) for e in store.edges_by_relation(CONSTITUENT_OF)}
+    assert ("in-INE009A01021", "nifty-50") in edges
+    assert ("in-INE002A01018", "bse-sensex") in edges
+    nifty_edge = next(e for e in store.edges_by_relation(CONSTITUENT_OF) if e.target_key == "nifty-50")
+    assert nifty_edge.properties["source"] == "nse-indices"  # every edge cites its source
+
+
+def test_india_reingest_is_idempotent_nodes_and_edges_stable() -> None:
+    from coruscant.coverage.pipeline import CONSTITUENT_OF, ingest_coverage
+
+    store = InMemoryKnowledgeGraphStore()
+    ingest_coverage(store, _india_provider(), observed_at="2026-07-01")
+    keys1 = {n.key for n in store.nodes_of_kind("Company")}
+    edges1 = len(store.edges_by_relation(CONSTITUENT_OF))
+    ingest_coverage(store, _india_provider(), observed_at="2026-07-02")  # re-run
+    keys2 = {n.key for n in store.nodes_of_kind("Company")}
+    edges2 = len(store.edges_by_relation(CONSTITUENT_OF))
+    assert keys1 == keys2 and edges1 == edges2 == 5
+
+
+def test_india_domestic_not_merged_with_us_adr() -> None:
+    """The curated Infosys ADR (US-listed, slug-keyed, US ADR ISIN) must NOT merge
+    with the domestic NSE listing (INE009A01021). Exact-ISIN dedup won't touch it;
+    ADR↔domestic reconciliation is a separate GLEIF-LEI step, never a coverage merge."""
+
+    from coruscant.coverage.pipeline import ingest_coverage
+
+    store = InMemoryKnowledgeGraphStore()
+    store.upsert_node(GraphNode(kind="Company", key="infosys", properties={
+        "name": "Infosys Limited", "source": "tracked", "ticker": "INFY",
+        "anchors": [{"scheme": "isin", "value": "US4567881085"}]}))  # US ADR ISIN, not domestic
+    ingest_coverage(store, _india_provider(), observed_at="2026-07-01")
+    # Both identities survive, distinct:
+    assert store.get_node("Company", "infosys") is not None
+    domestic = store.get_node("Company", "in-INE009A01021")
+    assert domestic is not None and domestic.properties["ticker"] == "INFY"
+
+
+def test_index_constituent_outside_universe_is_counted_not_fabricated() -> None:
+    from coruscant.coverage.pipeline import CONSTITUENT_OF, INDEX_KIND, ingest_coverage
+    from coruscant.coverage.provider import IndiaCoverageProvider
+
+    # A Nifty list naming a symbol/ISIN absent from the NSE/BSE universe: the
+    # constituent is counted unresolved, never linked to a fabricated node.
+    nifty = _NIFTY50 + "Ghost Corp,Misc,GHOST,EQ,INE000X01099\n"
+    provider = IndiaCoverageProvider(nse_text=_NSE_EQUITY, bse_text=_BSE_SCRIP, nifty_text=nifty)
+    store = InMemoryKnowledgeGraphStore()
+    ingest_coverage(store, provider, observed_at="2026-07-01")
+    nifty_node = store.get_node(INDEX_KIND, "nifty-50")
+    assert nifty_node is not None
+    assert nifty_node.properties["constituents"] == 3
+    assert nifty_node.properties["constituents_unresolved"] == 1
+    ghosts = [e for e in store.edges_by_relation(CONSTITUENT_OF) if "GHOST" in e.source_key]
+    assert ghosts == []  # no fabricated edge
+
+
+def test_resolve_indian_book_by_symbol_and_isin() -> None:
+    from coruscant.coverage.pipeline import ingest_coverage
+    from coruscant.coverage.resolve import build_isin_index, parse_brokerage_csv, resolve_positions
+
+    store = InMemoryKnowledgeGraphStore()
+    ingest_coverage(store, _india_provider(), observed_at="2026-07-01")
+    # A Zerodha-style export: trading symbol + ISIN columns.
+    csv_text = (
+        "tradingsymbol,isin,quantity\n"
+        "INFY,INE009A01021,10\n"       # symbol hit (ticker wins before ISIN)
+        ",INE002A01018,5\n"            # ISIN-only hit (Reliance)
+        "ABB,,3\n"                     # BSE-only symbol hit
+        "ZZZZ,IN0000000000,1\n"        # neither → unresolved
+    )
+    report = resolve_positions(store, parse_brokerage_csv(csv_text))
+    assert report.total == 4 and report.resolved == 3
+    assert report.by_ticker == 2 and report.by_isin == 1 and report.unresolved == 1
+    assert build_isin_index(store)["INE002A01018"] == "in-INE002A01018"
+
+
+def test_run_coverage_india_offline_files_idempotent(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from coruscant.apps.runtime import run_coverage
+    from coruscant.common.config import Settings
+    from coruscant.knowledge_graph.persistence import load_graph
+
+    data_dir = tmp_path / "data"
+    settings = Settings(data_dir=data_dir, database_url=f"sqlite:///{data_dir / 'c.db'}")
+    nse = tmp_path / "eq.csv"
+    nse.write_text(_NSE_EQUITY)
+    bse = tmp_path / "bse.csv"
+    bse.write_text(_BSE_SCRIP)
+    nifty = tmp_path / "n50.csv"
+    nifty.write_text(_NIFTY50)
+
+    summary = run_coverage(
+        settings, market="in", sources={"nse": nse, "bse": bse, "nifty": nifty})
+    assert summary.created == 4 and summary.universe_total == 4
+    assert summary.indices == {"Nifty 50": 3}
+    graph = load_graph(settings.graph_snapshot_path)
+    assert graph.get_node("Company", "in-INE009A01021") is not None
+
+    run_coverage(settings, market="in", sources={"nse": nse, "bse": bse, "nifty": nifty})  # re-run
+    assert len(load_graph(settings.graph_snapshot_path).nodes_of_kind("Company")) == 4
