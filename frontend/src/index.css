@@ -30,6 +30,28 @@
   --good: #4bd6a0;
   --danger: #ff6b6b;
 
+  /* Relationship / category accents for the spatial surfaces (Country · Risk ·
+     Changes · Atlas). Additive to the core palette; amber (--evidence) stays
+     reserved for provenance and never leaks into these. */
+  --proxy: #b39bff; /* violet — inferred / control-by-proxy, never a filed fact */
+  --cat-supply: #ffb38a;
+  --cat-supply-soft: rgba(243, 150, 77, 0.1);
+  --cat-supply-border: rgba(243, 150, 77, 0.3);
+  --cat-disc: #ff9d9d;
+  --cat-disc-soft: rgba(255, 107, 107, 0.1);
+  --cat-disc-border: rgba(255, 107, 107, 0.3);
+  --cat-gov: #9db4ff;
+  --cat-gov-soft: rgba(124, 140, 255, 0.12);
+  --cat-gov-border: rgba(124, 140, 255, 0.35);
+  --cat-part: #8ee0bf;
+  --cat-part-soft: rgba(75, 214, 160, 0.1);
+  --cat-part-border: rgba(75, 214, 160, 0.3);
+  --rel-competes: #8793a5;
+  --rel-country: #6f9bb5;
+  --rel-tech: #9aa0aa;
+  --glass-bg: rgba(17, 20, 26, 0.74);
+  --glass-border: rgba(124, 140, 255, 0.18);
+
   --radius: 12px;
   --radius-sm: 8px;
   --radius-pill: 999px;
@@ -2977,5 +2999,171 @@ button.wp-tile.wp-cta:hover {
   }
   .gics-name {
     flex-basis: 130px;
+  }
+}
+
+/* ============================================================================
+   Spatial surfaces — shared helpers (Country · Risk · Changes)
+   Recreated from the design pack; reuse the core tokens, drop the pack's own
+   66px rail + topbar (these render inside the app's ProtectedLayout shell).
+   ========================================================================== */
+
+/* Category chip — the one place the cat-* accents are allowed. Amber stays for
+   provenance only. data-c selects the family. */
+.dp-cat {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  line-height: 1.6;
+  color: var(--text-muted);
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+}
+.dp-cat[data-c="supply"],
+.dp-cat[data-c="supply_chain"] {
+  color: var(--cat-supply);
+  background: var(--cat-supply-soft);
+  border-color: var(--cat-supply-border);
+}
+.dp-cat[data-c="disc"],
+.dp-cat[data-c="disclosure"] {
+  color: var(--cat-disc);
+  background: var(--cat-disc-soft);
+  border-color: var(--cat-disc-border);
+}
+.dp-cat[data-c="gov"],
+.dp-cat[data-c="governance"] {
+  color: var(--cat-gov);
+  background: var(--cat-gov-soft);
+  border-color: var(--cat-gov-border);
+}
+.dp-cat[data-c="part"],
+.dp-cat[data-c="partnership"] {
+  color: var(--cat-part);
+  background: var(--cat-part-soft);
+  border-color: var(--cat-part-border);
+}
+
+/* Directional glyph chip (▼ risk / ▲ opp / ⚐ inferred / – removed). */
+.dp-glyph {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  display: grid;
+  place-items: center;
+  flex: none;
+  font-size: 13px;
+  font-weight: 700;
+}
+.dp-glyph.sm {
+  width: 24px;
+  height: 24px;
+  font-size: 11px;
+}
+.dir-risk {
+  color: var(--danger);
+}
+.dir-opp {
+  color: var(--good);
+}
+.dir-inferred {
+  color: var(--proxy);
+}
+.dir-event {
+  color: var(--accent);
+}
+
+/* The provenance signature — a mono ↳ source link. Amber marker, muted text. */
+.src-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  text-decoration: none;
+}
+.src-link .arrow {
+  color: var(--evidence);
+}
+a.src-link:hover {
+  color: var(--text-muted);
+}
+
+/* Two-column spatial scaffold: fixed dossier rail + fluid main. */
+.dp-split {
+  display: flex;
+  min-height: 0;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-elev);
+}
+.dp-dossier {
+  width: 360px;
+  flex: none;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 20px 22px 24px;
+  background: var(--bg);
+}
+.dp-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+.dp-section {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.dp-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+/* "Why you're here" ribbon. */
+.dp-ribbon {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+  margin-bottom: 16px;
+}
+.dp-ribbon .why {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  font-weight: 650;
+  white-space: nowrap;
+}
+.dp-ribbon .reason {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  color: var(--text);
+  line-height: 1.45;
+}
+@media (max-width: 1040px) {
+  .dp-split {
+    flex-direction: column;
+  }
+  .dp-dossier {
+    width: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
   }
 }
