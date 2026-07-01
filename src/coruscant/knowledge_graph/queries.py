@@ -7,6 +7,8 @@ through shared companies, and what an entity is connected to.
 
 from __future__ import annotations
 
+from collections import deque
+
 from pydantic import BaseModel
 
 from coruscant.common.types import GraphEdge
@@ -660,3 +662,100 @@ def co_executives(store: KnowledgeGraphStore) -> CoExecutiveResult:
         if len(companies) >= 2
     ]
     return CoExecutiveResult(shared_company_groups=groups, multi_company_people=bridges)
+
+
+class NetworkStep(BaseModel):
+    """One hop of a co-mention evidence chain: `from_company`'s filing names
+    `to_company`, cited to the filing (provenance)."""
+
+    from_company: EntityRef
+    to_company: EntityRef
+    source: str | None = None  # the citing filing URL
+
+
+class NetworkReach(BaseModel):
+    company: EntityRef
+    hops: int  # shortest co-mention distance from the queried company
+    path: list[NetworkStep] = []  # one shortest evidence chain that connects them
+
+
+class CompanyNetwork(BaseModel):
+    """The co-mention neighbourhood of a company out to `max_hops` — the multi-hop
+    "who is this connected to, and by what evidence" traversal the flat store
+    couldn't do at scale. Orientation, NOT exposure magnitude: co-mention is an
+    undifferentiated competitor/customer/supplier signal with no weight."""
+
+    company: EntityRef
+    max_hops: int
+    reached: list[NetworkReach] = []
+    note: str = "Co-mention network reach — orientation, not exposure magnitude."
+
+
+def _reference_parents(
+    store: KnowledgeGraphStore, source_key: str, max_hops: int
+) -> dict[str, tuple[str, GraphEdge] | None]:
+    """Single undirected BFS over `references` from `source_key`, returning a
+    parent pointer per reachable company key (key -> (parent_key, citing edge)).
+    Uses only port primitives + seq-ordered `edges_by_relation`, so the paths it
+    reconstructs are identical on every backend."""
+    adjacency: dict[str, list[tuple[str, GraphEdge]]] = {}
+    for edge in store.edges_by_relation("references"):
+        adjacency.setdefault(edge.source_key, []).append((edge.target_key, edge))
+        adjacency.setdefault(edge.target_key, []).append((edge.source_key, edge))
+    parents: dict[str, tuple[str, GraphEdge] | None] = {source_key: None}
+    queue: deque[tuple[str, int]] = deque([(source_key, 0)])
+    while queue:
+        node, depth = queue.popleft()
+        if depth >= max_hops:
+            continue
+        for neighbour, edge in adjacency.get(node, []):
+            if neighbour not in parents:
+                parents[neighbour] = (node, edge)
+                queue.append((neighbour, depth + 1))
+    return parents
+
+
+def _path_from_parents(
+    store: KnowledgeGraphStore, parents: dict[str, tuple[str, GraphEdge] | None], target_key: str
+) -> list[NetworkStep]:
+    steps: list[NetworkStep] = []
+    cursor: str | None = target_key
+    while cursor is not None and parents.get(cursor) is not None:
+        parent_key, edge = parents[cursor]  # type: ignore[misc]
+        steps.append(
+            NetworkStep(
+                from_company=_ref(store, "Company", parent_key),
+                to_company=_ref(store, "Company", cursor),
+                source=_str_prop(edge.properties, "source_uri"),
+            )
+        )
+        cursor = parent_key
+    steps.reverse()
+    return steps
+
+
+def company_network(
+    store: KnowledgeGraphStore, company_key: str, max_hops: int = 2
+) -> CompanyNetwork:
+    """Companies within `max_hops` co-mention hops of `company_key`, each with a
+    shortest evidence chain. The reachable set + distances come from the store's
+    native multi-hop primitive (`reachable`); the display chain is reconstructed
+    by a backend-agnostic BFS so it is identical whichever backend answers."""
+    hops = max(1, min(max_hops, 6))  # bound the traversal; 6 is far beyond useful here
+    result = CompanyNetwork(company=_ref(store, "Company", company_key), max_hops=hops)
+    if store.get_node("Company", company_key) is None:
+        return result
+    reached = store.reachable("Company", company_key, "references", hops, direction="any")
+    parents = _reference_parents(store, company_key, hops)
+    records = [
+        NetworkReach(
+            company=_ref(store, "Company", key),
+            hops=distance,
+            path=_path_from_parents(store, parents, key),
+        )
+        for (kind, key), distance in reached.items()
+        if kind == "Company"
+    ]
+    records.sort(key=lambda r: (r.hops, r.company.name))
+    result.reached = records
+    return result

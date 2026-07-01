@@ -184,6 +184,29 @@ class KuzuKnowledgeGraphStore(KnowledgeGraphStore):
         )
         return [self._edge(r) for r in rows]
 
+    def reachable(
+        self, kind: str, key: str, relation: str, max_hops: int, *, direction: str = "any"
+    ) -> dict[tuple[str, str], int]:
+        # Native variable-length SHORTEST path, filtering each hop to `relation` —
+        # the multi-hop traversal the flat store couldn't do at scale. Overrides
+        # the port's BFS default; the golden test asserts they return the same set
+        # + distances. `hops` is an int (cast), so interpolating it is injection-safe.
+        hops = max(1, int(max_hops))
+        left, right = {"out": ("-", "->"), "in": ("<-", "-"), "any": ("-", "-")}[direction]
+        cypher = (
+            f"MATCH (a:Node {{id:$id}}){left}"
+            f"[e:Edge* SHORTEST 1..{hops} (r, n | WHERE r.relation = $rel)]"
+            f"{right}(b:Node) RETURN b.kind, b.ekey, length(e)"
+        )
+        out: dict[tuple[str, str], int] = {}
+        for row in self._rows(cypher, {"id": _nid(kind, key), "rel": relation}):
+            node_key, hop = (row[0], row[1]), int(row[2])
+            if node_key == (kind, key):
+                continue
+            if node_key not in out or hop < out[node_key]:
+                out[node_key] = hop
+        return out
+
     def node_count(self) -> int:
         rows = self._rows("MATCH (n:Node) RETURN count(*)")
         return int(rows[0][0]) if rows else 0

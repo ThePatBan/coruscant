@@ -24,6 +24,11 @@ Two tabs: **`/world`** (Home/World — the exposure surface) and **`/atlas`** (t
 - **Exposure engine** — 5 pathways: geographic (Exhibit-21), sector (GICS, any
   hierarchy level), market tier (MSCI DM/EM/FM), commodity (→ sector → holdings),
   debt (→ country). Network proximity via co-mention = orientation only.
+- **Multi-hop traversal** — `reachable()` on the store port (native variable-length
+  `SHORTEST` Cypher on Kùzu; BFS default elsewhere) powers `/graph/company-network`:
+  the co-mention neighbourhood of a company out to N hops, each reached company with
+  a shortest **evidence chain** (per-hop filing citation). The traversal the flat
+  store couldn't do at scale; the shape the future `owns*`/`supplies*` will take.
 - **Taxonomy**: full GICS hierarchy (8-digit code) + MSCI DM/EM/FM, curated and
   verified against public MSCI/S&P sources.
 - **Instrument model**: commodities + debt as first-class instruments wired into
