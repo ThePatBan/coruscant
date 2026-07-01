@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from coruscant.screening.pipeline import ScreeningSummary
+    from coruscant.screening.provider import ScreeningProvider
 
 from coruscant.auth.service import AuthService
 from coruscant.auth.store import SqliteUserStore
@@ -346,35 +347,65 @@ def run_ingestion(
     return report
 
 
-def run_screening(
-    settings: Settings | None = None,
-    *,
-    dataset_path: Path | None = None,
-    now: datetime | None = None,
-) -> "ScreeningSummary":
-    """Screen the graph's people against an OpenSanctions export and persist the
-    projected ``pep`` / ``sanctioned`` / ``screening_candidate`` edges plus the
-    reversible resolver log. Opt-in (needs a dataset) and idempotent; leaves the
-    rest of the graph untouched. Returns the run summary."""
+def _build_screening_provider(
+    settings: Settings, *, dataset_path: Path | None, provider_name: str | None
+) -> "tuple[ScreeningProvider, str]":
+    """Construct the configured screening provider. ``yente`` needs a running
+    sidecar (no file); ``deterministic`` needs an OpenSanctions export file."""
 
-    from coruscant.knowledge_graph.persistence import load_graph as _load_graph
-    from coruscant.screening.pipeline import screen_people
-    from coruscant.screening.provider import DeterministicScreeningProvider, load_opensanctions
+    from coruscant.screening.provider import (
+        DeterministicScreeningProvider,
+        YenteScreeningProvider,
+        load_opensanctions,
+    )
 
-    settings = settings or get_settings()
-    moment = now or datetime.now(tz=timezone.utc)
+    choice = (provider_name or settings.screening_provider).lower()
+    if choice == "yente":
+        provider = YenteScreeningProvider(
+            settings.yente_url, dataset=settings.yente_dataset,
+            cutoff=settings.yente_cutoff, limit=settings.yente_limit,
+        )
+        if not provider.connected():
+            raise ConnectionError(
+                f"yente is not reachable at {settings.yente_url}. Start the sidecar "
+                "(docker-compose.screening.yml) or set CORUSCANT_YENTE_URL."
+            )
+        return provider, f"yente:{settings.yente_dataset}"
+
     path = dataset_path or settings.screening_dataset_path
     if path is None or not Path(path).exists():
         raise FileNotFoundError(
             "No OpenSanctions dataset configured. Set CORUSCANT_SCREENING_DATASET_PATH "
             "or pass --dataset (bulk targets.nested.json or a JSON array)."
         )
+    return DeterministicScreeningProvider(load_opensanctions(Path(path))), str(path)
+
+
+def run_screening(
+    settings: Settings | None = None,
+    *,
+    dataset_path: Path | None = None,
+    provider_name: str | None = None,
+    now: datetime | None = None,
+) -> "ScreeningSummary":
+    """Screen the graph's people (deterministic file or yente sidecar) and persist
+    the projected ``pep`` / ``sanctioned`` / ``screening_candidate`` edges plus the
+    reversible resolver log. Opt-in and idempotent; leaves the rest of the graph
+    untouched. Returns the run summary."""
+
+    from coruscant.knowledge_graph.persistence import load_graph as _load_graph
+    from coruscant.screening.pipeline import screen_people
+
+    settings = settings or get_settings()
+    moment = now or datetime.now(tz=timezone.utc)
+    provider, dataset_label = _build_screening_provider(
+        settings, dataset_path=dataset_path, provider_name=provider_name
+    )
 
     store = _load_graph(settings.graph_snapshot_path)
     resolver = load_resolver(settings.resolver_snapshot_path)
-    provider = DeterministicScreeningProvider(load_opensanctions(Path(path)))
     summary = screen_people(
-        store, provider, resolver, observed_at=moment.date(), dataset=str(path)
+        store, provider, resolver, observed_at=moment.date(), dataset=dataset_label
     )
     save_graph(store, settings.graph_snapshot_path)
     save_resolver(resolver, settings.resolver_snapshot_path)
