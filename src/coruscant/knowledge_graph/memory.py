@@ -7,27 +7,41 @@ from coruscant.common.types import GraphEdge, GraphNode
 from coruscant.knowledge_graph.store import KnowledgeGraphStore
 
 
+_EdgeId = tuple[str, str, str, str, str]
+
+
 @dataclass
 class InMemoryKnowledgeGraphStore(KnowledgeGraphStore):
     nodes: dict[tuple[str, str], GraphNode] = field(default_factory=dict)
-    edges: list[GraphEdge] = field(default_factory=list)
+    _edges: list[GraphEdge] = field(default_factory=list)
+    # Identity index so upsert_edge dedups in O(1) instead of scanning every edge.
+    # Without it ingestion is O(E²) (10k companies -> ~110s); with it, O(E).
+    _edge_ids: set[_EdgeId] = field(default_factory=set, repr=False)
+
+    @staticmethod
+    def _identity(edge: GraphEdge) -> _EdgeId:
+        return (edge.source_kind, edge.source_key, edge.relation, edge.target_kind, edge.target_key)
+
+    @property
+    def edges(self) -> list[GraphEdge]:
+        return self._edges
+
+    @edges.setter
+    def edges(self, value: list[GraphEdge]) -> None:
+        # Direct reassignment (a maintenance script filtering edges) rebuilds the
+        # dedup index so later upserts stay consistent.
+        self._edges = list(value)
+        self._edge_ids = {self._identity(edge) for edge in self._edges}
 
     def upsert_node(self, node: GraphNode) -> None:
         self.nodes[(node.kind, node.key)] = node
 
     def upsert_edge(self, edge: GraphEdge) -> None:
-        key = (edge.source_kind, edge.source_key, edge.relation, edge.target_kind, edge.target_key)
-        for existing in self.edges:
-            existing_key = (
-                existing.source_kind,
-                existing.source_key,
-                existing.relation,
-                existing.target_kind,
-                existing.target_key,
-            )
-            if existing_key == key:
-                return
-        self.edges.append(edge)
+        identity = self._identity(edge)
+        if identity in self._edge_ids:  # first-write-wins
+            return
+        self._edge_ids.add(identity)
+        self._edges.append(edge)
 
     # -- queries ---------------------------------------------------------------
 
