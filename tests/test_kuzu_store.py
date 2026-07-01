@@ -61,9 +61,14 @@ def _rich_graph() -> InMemoryKnowledgeGraphStore:
         s.upsert_node(_node("Subsidiary", sub, name=sub.replace("-", " ").title()))
         s.upsert_edge(_edge("Company", co, "has_subsidiary", "Subsidiary", sub,
                             jurisdiction=juris, source_uri=f"https://sec.gov/{co}/ex21"))
-    # Co-mention references (network proximity)
+    # Co-mention references (network proximity). A directed chain
+    # microsoft -> apple -> jpmorgan -> chevron -> shell exercises multi-hop reach.
     s.upsert_edge(_edge("Company", "microsoft", "references", "Company", "apple",
                         entity_name="Apple Inc.", source_uri="https://sec.gov/msft/10k"))
+    s.upsert_edge(_edge("Company", "apple", "references", "Company", "jpmorgan",
+                        entity_name="JPMorgan Chase & Co.", source_uri="https://sec.gov/aapl/10k"))
+    s.upsert_edge(_edge("Company", "jpmorgan", "references", "Company", "chevron",
+                        entity_name="Chevron Corp", source_uri="https://sec.gov/jpm/10k"))
     s.upsert_edge(_edge("Company", "shell", "references", "Company", "chevron",
                         entity_name="Chevron Corp", source_uri="https://sec.gov/shell/20f"))
     # Countries + supplier chain (exposure_to_country / company_country_exposures)
@@ -155,6 +160,61 @@ def test_parity_country_and_debt() -> None:
     assert _j(Q.exposure_to_country(mem, "Taiwan")) == _j(Q.exposure_to_country(kz, "Taiwan"))
     assert Q.company_country_exposures(mem, "apple") == Q.company_country_exposures(kz, "apple")
     assert _j(Q.debt_for_country(mem, "United States")) == _j(Q.debt_for_country(kz, "United States"))
+
+
+@pytest.mark.parametrize("company,max_hops", [
+    ("microsoft", 1), ("microsoft", 2), ("microsoft", 3), ("microsoft", 4),
+    ("apple", 2), ("shell", 2), ("chevron", 2), ("nonexistent", 2)])
+def test_parity_company_network(company: str, max_hops: int) -> None:
+    mem, kz = _both_stores()
+    assert (Q.company_network(mem, company, max_hops).model_dump_json()
+            == Q.company_network(kz, company, max_hops).model_dump_json())
+
+
+@pytest.mark.parametrize("direction", ["out", "in", "any"])
+@pytest.mark.parametrize("max_hops", [1, 2, 3, 4])
+def test_parity_reachable(direction: str, max_hops: int) -> None:
+    mem, kz = _both_stores()
+    for company in ("microsoft", "chevron", "apple"):
+        assert (mem.reachable("Company", company, "references", max_hops, direction=direction)
+                == kz.reachable("Company", company, "references", max_hops, direction=direction))
+
+
+def test_reachable_distances_and_relation_filter() -> None:
+    # The multi-hop primitive: shortest distances along the co-mention chain, and
+    # `employs` edges must NOT bridge (relation filter).
+    mem, kz = _both_stores()
+    for store in (mem, kz):
+        r = store.reachable("Company", "microsoft", "references", 4, direction="any")
+        assert r[("Company", "apple")] == 1
+        assert r[("Company", "jpmorgan")] == 2
+        assert r[("Company", "chevron")] == 3
+        assert r[("Company", "shell")] == 4
+        assert not any(kind == "Person" for kind, _ in r)  # relation filter holds
+        assert set(store.reachable("Company", "microsoft", "references", 1, direction="any")) == {
+            ("Company", "apple")
+        }  # depth bound
+
+
+def test_reachable_direction() -> None:
+    mem, kz = _both_stores()
+    for store in (mem, kz):
+        # microsoft -> apple is directed: reachable OUT from microsoft, not IN.
+        assert ("Company", "apple") in store.reachable("Company", "microsoft", "references", 1, direction="out")
+        assert store.reachable("Company", "microsoft", "references", 1, direction="in") == {}
+        assert ("Company", "microsoft") in store.reachable("Company", "apple", "references", 1, direction="in")
+
+
+def test_company_network_evidence_chain() -> None:
+    net = Q.company_network(_rich_graph(), "microsoft", 3)
+    reached = {r.company.key: r for r in net.reached}
+    assert reached["chevron"].hops == 3
+    chain = reached["chevron"].path
+    assert [(s.from_company.key, s.to_company.key) for s in chain] == [
+        ("microsoft", "apple"), ("apple", "jpmorgan"), ("jpmorgan", "chevron")]
+    assert all(step.source for step in chain)  # every hop cites a filing (provenance)
+    # reached is ordered by (hops, name); shell is beyond 3 hops, absent.
+    assert [r.company.key for r in net.reached] == ["apple", "jpmorgan", "chevron"]
 
 
 def test_parity_entity_profile_every_node() -> None:

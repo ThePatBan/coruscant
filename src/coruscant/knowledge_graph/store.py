@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections import deque
 from typing import Any
 
 from coruscant.common.types import GraphEdge, GraphNode
@@ -78,6 +79,50 @@ class KnowledgeGraphStore(ABC):
 
     def edge_count(self) -> int:
         return len(self.all_edges())
+
+    # -- traversal ------------------------------------------------------------
+
+    def reachable(
+        self, kind: str, key: str, relation: str, max_hops: int, *, direction: str = "any"
+    ) -> dict[tuple[str, str], int]:
+        """Nodes reachable from ``(kind, key)`` within ``max_hops`` following only
+        ``relation`` edges, mapped to their shortest hop-distance (the source is
+        excluded). ``direction``: ``"out"`` | ``"in"`` | ``"any"`` (undirected).
+
+        This is the multi-hop primitive the flat JSON store could only fake with a
+        hand-rolled scan; a real graph backend answers it natively (Kùzu overrides
+        this with a variable-length ``SHORTEST`` Cypher path). The default here is a
+        backend-agnostic breadth-first search over the port, and the golden test
+        asserts the two agree — the same query, faster. It is also the shape the
+        future ``owns*`` / ``supplies*`` ownership traversals will take (swap the
+        relation, raise the depth)."""
+        start = (kind, key)
+        dist: dict[tuple[str, str], int] = {start: 0}
+        queue: deque[tuple[str, str]] = deque([start])
+        while queue:
+            current = queue.popleft()
+            depth = dist[current]
+            if depth >= max_hops:
+                continue
+            neighbours: list[tuple[str, str]] = []
+            if direction in ("out", "any"):
+                neighbours += [
+                    (e.target_kind, e.target_key)
+                    for e in self.outgoing(*current)
+                    if e.relation == relation
+                ]
+            if direction in ("in", "any"):
+                neighbours += [
+                    (e.source_kind, e.source_key)
+                    for e in self.incoming(*current)
+                    if e.relation == relation
+                ]
+            for neighbour in neighbours:
+                if neighbour not in dist:
+                    dist[neighbour] = depth + 1
+                    queue.append(neighbour)
+        dist.pop(start, None)
+        return dist
 
     # -- serialization --------------------------------------------------------
 

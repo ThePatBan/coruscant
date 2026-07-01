@@ -83,10 +83,12 @@ from coruscant.knowledge_graph.queries import (
     MarketTierCount,
     MarketTierExposure,
     SectorCount,
+    CompanyNetwork,
     SectorExposure,
     co_executives,
     commodity_exposure,
     company_country_exposures,
+    company_network,
     debt_for_country,
     entity_profile,
     exposure_to_country,
@@ -817,6 +819,18 @@ def create_app(
         if not isinstance(graph, KnowledgeGraphStore):
             return SectorExposure(sector=sector)
         return sector_exposure(graph, sector)
+
+    @app.get("/graph/company-network", response_model=CompanyNetwork, dependencies=protected)
+    def company_network_endpoint(company: str, max_hops: int = 2) -> CompanyNetwork:
+        """Multi-hop co-mention neighbourhood of `company` out to `max_hops`, each
+        reachable company with a shortest evidence chain. Orientation, not exposure
+        magnitude. Exercises the graph store's native variable-length traversal."""
+        graph = state.graph
+        if not isinstance(graph, KnowledgeGraphStore):
+            return CompanyNetwork(
+                company=EntityRef(kind="Company", key=company, name=company), max_hops=max_hops
+            )
+        return company_network(graph, company, max_hops)
 
     @app.get("/graph/gics-breakdown", response_model=list[GicsSector], dependencies=protected)
     def gics_breakdown_endpoint() -> list[GicsSector]:
