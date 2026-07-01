@@ -7,6 +7,7 @@ import { AdminPage } from "./pages/AdminPage";
 import { AlertsPage } from "./pages/AlertsPage";
 import { AtlasPage } from "./pages/AtlasPage";
 import { AskPage } from "./pages/AskPage";
+import { ChangesPage } from "./pages/ChangesPage";
 import { CompaniesPage } from "./pages/CompaniesPage";
 import { CompanyDetailPage } from "./pages/CompanyDetailPage";
 import { ComparePage } from "./pages/ComparePage";
@@ -31,6 +32,7 @@ const NAV = [
   { to: "/country", label: "Country", icon: "⬡" },
   { to: "/atlas", label: "Company graph", icon: "✦" },
   { to: "/dashboard", label: "Dashboard", icon: "◧" },
+  { to: "/changes", label: "What changed", icon: "≢" },
   { to: "/search", label: "Search", icon: "⌕" },
   { to: "/companies", label: "Companies", icon: "▤" },
   { to: "/graph", label: "Entity graph", icon: "◬" },
@@ -52,6 +54,7 @@ const CRUMBS: Array<[RegExp, string]> = [
   [/^\/country/, "Country exposure"],
   [/^\/atlas/, "Company graph"],
   [/^\/dashboard/, "Dashboard"],
+  [/^\/changes/, "What changed"],
   [/^\/search/, "Search the evidence"],
   [/^\/companies\/.+/, "Company"],
   [/^\/companies$/, "Companies"],
@@ -194,6 +197,7 @@ export default function App() {
         <Route path="/country" element={<CountryPage />} />
         <Route path="/atlas" element={<AtlasPage />} />
         <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/changes" element={<ChangesPage />} />
         <Route path="/search" element={<AskPage />} />
         <Route path="/companies" element={<CompaniesPage />} />
         <Route path="/companies/:slug" element={<CompanyDetailPage />} />
