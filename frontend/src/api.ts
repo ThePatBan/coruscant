@@ -285,6 +285,29 @@ export interface PortfolioPrices {
   note?: string | null;
 }
 
+// Non-equity instruments (commodities, debt) and their exposure into equities.
+export interface CommodityRef {
+  slug: string;
+  name: string;
+  category: string;
+  symbol?: string | null;
+  affects_sectors: string[];
+}
+export interface DebtRef {
+  slug: string;
+  name: string;
+  debt_type: string;
+  issuer_country: string;
+  symbol?: string | null;
+}
+export interface CommodityExposure {
+  slug: string;
+  commodity: string;
+  category: string;
+  affects_sectors: string[];
+  holdings: EntityRef[];
+}
+
 // Sector-index benchmarking: each GICS sector's holdings vs a sector-ETF proxy.
 export interface SectorBenchmark {
   sector: string;
@@ -622,6 +645,11 @@ export const api = {
   macro: (country: string) => get<CountryMacro>(`/macro?country=${encodeURIComponent(country)}`),
   news: (country?: string) =>
     get<NewsFeed>(`/news${country ? `?country=${encodeURIComponent(country)}` : ""}`),
+  commodities: () => get<CommodityRef[]>("/instruments/commodities"),
+  commodityExposure: (commodity: string) =>
+    get<CommodityExposure>(`/graph/commodity-exposure?commodity=${encodeURIComponent(commodity)}`),
+  countryDebt: (country: string) =>
+    get<DebtRef[]>(`/graph/country-debt?country=${encodeURIComponent(country)}`),
   retrieve: (query: string, topK = 6) => post<RetrieveResponse>("/retrieve", { query, top_k: topK }),
   // intelligence
   dashboard: () => get<Dashboard>("/dashboard"),

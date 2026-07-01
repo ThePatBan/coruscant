@@ -73,6 +73,9 @@ from coruscant.knowledge_graph.queries import (
     EntityProfile,
     EntityRef,
     ExposureResult,
+    CommodityExposure,
+    CommodityRef,
+    DebtRef,
     GicsSector,
     JurisdictionCount,
     JurisdictionExposure,
@@ -81,11 +84,15 @@ from coruscant.knowledge_graph.queries import (
     SectorCount,
     SectorExposure,
     co_executives,
+    commodity_exposure,
     company_country_exposures,
+    debt_for_country,
     entity_profile,
     exposure_to_country,
     gics_breakdown,
     jurisdiction_exposure,
+    list_commodities,
+    list_debt_instruments,
     list_entities,
     list_jurisdictions,
     list_market_tiers,
@@ -844,6 +851,38 @@ def create_app(
         if not isinstance(graph, InMemoryKnowledgeGraphStore):
             return CoExecutiveResult()
         return co_executives(graph)
+
+    @app.get("/instruments/commodities", response_model=list[CommodityRef], dependencies=protected)
+    def instruments_commodities() -> list[CommodityRef]:
+        """The commodity inventory, each with the GICS sectors it drives."""
+        graph = state.graph
+        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+            return []
+        return list_commodities(graph)
+
+    @app.get("/instruments/debt", response_model=list[DebtRef], dependencies=protected)
+    def instruments_debt() -> list[DebtRef]:
+        """The debt inventory (sovereign/corporate), each with its issuer country."""
+        graph = state.graph
+        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+            return []
+        return list_debt_instruments(graph)
+
+    @app.get("/graph/commodity-exposure", response_model=CommodityExposure, dependencies=protected)
+    def commodity_exposure_endpoint(commodity: str) -> CommodityExposure:
+        """Event on `commodity` -> the equity holdings exposed via the sectors it drives."""
+        graph = state.graph
+        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+            return CommodityExposure(slug=commodity, commodity=commodity, category="")
+        return commodity_exposure(graph, commodity)
+
+    @app.get("/graph/country-debt", response_model=list[DebtRef], dependencies=protected)
+    def country_debt_endpoint(country: str) -> list[DebtRef]:
+        """Debt instruments issued by `country` — the debt side of a country event."""
+        graph = state.graph
+        if not isinstance(graph, InMemoryKnowledgeGraphStore):
+            return []
+        return debt_for_country(graph, country)
 
     @app.get("/portfolio/prices", response_model=PortfolioPrices, dependencies=protected)
     def portfolio_prices() -> PortfolioPrices:

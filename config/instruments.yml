@@ -1,0 +1,85 @@
+# Non-equity instruments in the inventory (curated, real, public).
+#
+# Commodities carry a Yahoo futures symbol (free live price) and the GICS sectors
+# whose holdings they drive — an evidence-based linkage (e.g. crude oil drives
+# Energy-sector revenues), so a commodity event reaches equity holdings via
+# sector. Debt instruments link to their issuer country, so a country event
+# reaches its sovereign/corporate debt. This is the first proof that the exposure
+# engine generalizes beyond equities; it is deliberately small and grows with
+# real holdings, never fabricated.
+
+commodities:
+- slug: crude-oil-wti
+  name: Crude Oil (WTI)
+  category: Energy
+  symbol: CL=F
+  affects_sectors: [Energy]
+- slug: brent-crude
+  name: Brent Crude
+  category: Energy
+  symbol: BZ=F
+  affects_sectors: [Energy]
+- slug: natural-gas
+  name: Natural Gas
+  category: Energy
+  symbol: NG=F
+  affects_sectors: [Energy, Utilities]
+- slug: gold
+  name: Gold
+  category: Metals
+  symbol: GC=F
+  affects_sectors: [Materials]
+- slug: silver
+  name: Silver
+  category: Metals
+  symbol: SI=F
+  affects_sectors: [Materials]
+- slug: copper
+  name: Copper
+  category: Metals
+  symbol: HG=F
+  affects_sectors: [Materials, Industrials]
+- slug: corn
+  name: Corn
+  category: Agriculture
+  symbol: ZC=F
+  affects_sectors: [Consumer Staples]
+- slug: wheat
+  name: Wheat
+  category: Agriculture
+  symbol: ZW=F
+  affects_sectors: [Consumer Staples]
+
+debt:
+- slug: us-10y-treasury
+  name: US 10-Year Treasury
+  debt_type: sovereign
+  issuer_country: United States
+  symbol: ^TNX
+- slug: uk-10y-gilt
+  name: UK 10-Year Gilt
+  debt_type: sovereign
+  issuer_country: United Kingdom
+- slug: germany-10y-bund
+  name: Germany 10-Year Bund
+  debt_type: sovereign
+  issuer_country: Germany
+- slug: india-10y-gsec
+  name: India 10-Year G-Sec
+  debt_type: sovereign
+  issuer_country: India
+- slug: us-ig-corporate
+  name: US Investment-Grade Corporate
+  debt_type: corporate
+  issuer_country: United States
+  symbol: LQD
+- slug: us-high-yield
+  name: US High-Yield Corporate
+  debt_type: corporate
+  issuer_country: United States
+  symbol: HYG
+- slug: us-aggregate-bond
+  name: US Aggregate Bond
+  debt_type: aggregate
+  issuer_country: United States
+  symbol: AGG

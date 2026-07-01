@@ -22,6 +22,7 @@ from coruscant.common.config import (
     get_settings,
     load_companies,
     load_entities,
+    load_instruments,
     load_sources,
 )
 from coruscant.connectors.sec_edgar import RateLimiter
@@ -309,15 +310,19 @@ def run_ingestion(
     # Deterministic relationship extraction over the ingested corpus: cross-company
     # co-mention bridges + SIC sector edges, each with provenance. This is what
     # turns a larger company set into a connected graph rather than isolated nodes.
-    extraction = extract_relationships(graph_store, companies, settings.data_dir)
+    instruments = load_instruments(settings.config_dir)
+    extraction = extract_relationships(graph_store, companies, settings.data_dir, instruments)
     logger.info(
         "Extraction: %d co-mention references, %d sector (GICS) edges, %d market-tier "
-        "edges, %d subsidiaries, %d officer (people) edges (over %d documents)",
+        "edges, %d subsidiaries, %d officer (people) edges, %d commodities, %d debt "
+        "(over %d documents)",
         extraction["references"],
         extraction["in_sector"],
         extraction["market_tiers"],
         extraction["subsidiaries"],
         extraction["people"],
+        extraction["commodities"],
+        extraction["debt"],
         extraction["documents"],
     )
     save_graph(graph_store, settings.graph_snapshot_path)

@@ -234,6 +234,46 @@ function BenchmarkTable({ data }: { data: PortfolioBenchmark }) {
   );
 }
 
+// Commodity event → the GICS sectors it drives → your equity holdings there.
+function CommoditiesBlock() {
+  const { data } = useAsync(() => api.commodities(), []);
+  const [open, setOpen] = useState<string | null>(null);
+  const { data: exposure } = useAsync(
+    () => (open ? api.commodityExposure(open) : Promise.resolve(null)),
+    [open ?? ""],
+  );
+  if (!data || data.length === 0) return null;
+  return (
+    <div className="pc-block">
+      <div className="ci-section-label">
+        Commodity exposure <span className="muted">· event → sector → your holdings</span>
+      </div>
+      <ul className="chip-list">
+        {data.map((c) => (
+          <li key={c.slug}>
+            <button
+              className={`chip ${open === c.slug ? "active" : ""}`}
+              onClick={() => setOpen(open === c.slug ? null : c.slug)}
+            >
+              {c.name}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {open && exposure ? (
+        <div className="commodity-exposure small">
+          <strong>{exposure.commodity}</strong> drives {exposure.affects_sectors.join(" · ")} →{" "}
+          {exposure.holdings.length ? (
+            exposure.holdings.map((h) => h.name).join(", ")
+          ) : (
+            <span className="muted">no holdings in these sectors — itself the insight</span>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function PortfolioComposition({
   tiers,
   sectors,
@@ -259,6 +299,7 @@ function PortfolioComposition({
       <MarketTierBar tiers={tiers} />
       {prices ? <Movers prices={prices} /> : null}
       {benchmark ? <BenchmarkTable data={benchmark} /> : null}
+      <CommoditiesBlock />
       <GicsTree sectors={sectors} />
     </div>
   );
@@ -294,6 +335,7 @@ function CountryInsight({ exchange, tiers }: { exchange: Exchange; tiers: Market
     [exchange.country],
   );
   const { data: macro } = useAsync(() => api.macro(exchange.country), [exchange.country]);
+  const { data: debt } = useAsync(() => api.countryDebt(exchange.country), [exchange.country]);
   const direct = data?.direct ?? [];
   const network = data?.network ?? [];
   const total = tiers.reduce((s, t) => s + t.companies, 0);
@@ -355,6 +397,13 @@ function CountryInsight({ exchange, tiers }: { exchange: Exchange; tiers: Market
           </div>
         ) : null}
       </div>
+
+      {debt && debt.length > 0 ? (
+        <div className="ci-debt">
+          <div className="ci-section-label">Debt issued here</div>
+          <div className="small">{debt.map((d) => d.name).join(" · ")}</div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -496,6 +496,125 @@ def market_tier_exposure(store: InMemoryKnowledgeGraphStore, tier: str) -> Marke
     return result
 
 
+class CommodityRef(BaseModel):
+    slug: str
+    name: str
+    category: str
+    symbol: str | None = None
+    affects_sectors: list[str] = []
+
+
+class DebtRef(BaseModel):
+    slug: str
+    name: str
+    debt_type: str
+    issuer_country: str
+    symbol: str | None = None
+
+
+class CommodityExposure(BaseModel):
+    """An event on a commodity -> the equity holdings exposed to it, via the GICS
+    sectors it drives (e.g. crude oil -> Energy -> Chevron/Shell/BP)."""
+
+    slug: str
+    commodity: str
+    category: str
+    affects_sectors: list[str] = []
+    holdings: list[EntityRef] = []  # equities in the affected sectors
+
+
+def _companies_in_sector(store: InMemoryKnowledgeGraphStore, sector: str) -> set[str]:
+    target = sector.strip().lower()
+    return {edge.source_key for edge in store.edges_by_relation("in_sector") if _sector_of(store, edge).lower() == target}
+
+
+def _affected_sectors(store: InMemoryKnowledgeGraphStore, commodity_key: str) -> list[str]:
+    sectors: list[str] = []
+    for edge in store.outgoing("Commodity", commodity_key):
+        if edge.relation == "affects_sector":
+            sectors.append(_str_prop(edge.properties, "sector") or _name(store, edge.target_kind, edge.target_key))
+    return sectors
+
+
+def list_commodities(store: InMemoryKnowledgeGraphStore) -> list[CommodityRef]:
+    """The commodity inventory, with the GICS sectors each drives."""
+    refs: list[CommodityRef] = []
+    for node in store.nodes_of_kind("Commodity"):
+        refs.append(
+            CommodityRef(
+                slug=node.key,
+                name=str(node.properties.get("name") or node.key),
+                category=str(node.properties.get("category") or ""),
+                symbol=_str_prop(node.properties, "symbol"),
+                affects_sectors=_affected_sectors(store, node.key),
+            )
+        )
+    return sorted(refs, key=lambda r: (r.category, r.name))
+
+
+def list_debt_instruments(store: InMemoryKnowledgeGraphStore) -> list[DebtRef]:
+    """The debt inventory, with each instrument's issuer country."""
+    refs: list[DebtRef] = []
+    for node in store.nodes_of_kind("DebtInstrument"):
+        refs.append(
+            DebtRef(
+                slug=node.key,
+                name=str(node.properties.get("name") or node.key),
+                debt_type=str(node.properties.get("debt_type") or ""),
+                issuer_country=str(node.properties.get("issuer_country") or ""),
+                symbol=_str_prop(node.properties, "symbol"),
+            )
+        )
+    return sorted(refs, key=lambda r: (r.issuer_country, r.name))
+
+
+def commodity_exposure(store: InMemoryKnowledgeGraphStore, commodity: str) -> CommodityExposure:
+    """Who is exposed to an event on `commodity` (slug or name): the equity
+    holdings in the GICS sectors it drives. An empty result is a real answer."""
+    target = commodity.strip().lower()
+    node = store.get_node("Commodity", target)
+    if node is None:
+        for candidate in store.nodes_of_kind("Commodity"):
+            if str(candidate.properties.get("name") or "").strip().lower() == target:
+                node = candidate
+                break
+    if node is None:
+        return CommodityExposure(slug=commodity, commodity=commodity, category="")
+    sectors = _affected_sectors(store, node.key)
+    exposed: set[str] = set()
+    for sector in sectors:
+        exposed |= _companies_in_sector(store, sector)
+    return CommodityExposure(
+        slug=node.key,
+        commodity=str(node.properties.get("name") or node.key),
+        category=str(node.properties.get("category") or ""),
+        affects_sectors=sectors,
+        holdings=[_ref(store, "Company", key) for key in sorted(exposed)],
+    )
+
+
+def debt_for_country(store: InMemoryKnowledgeGraphStore, country: str) -> list[DebtRef]:
+    """Debt instruments issued by `country` — the debt side of a country event."""
+    country_key = entity_key(country)
+    refs: list[DebtRef] = []
+    for edge in store.incoming("Country", country_key):
+        if edge.relation != "issued_by" or edge.source_kind != "DebtInstrument":
+            continue
+        node = store.get_node("DebtInstrument", edge.source_key)
+        if node is None:
+            continue
+        refs.append(
+            DebtRef(
+                slug=node.key,
+                name=str(node.properties.get("name") or node.key),
+                debt_type=str(node.properties.get("debt_type") or ""),
+                issuer_country=str(node.properties.get("issuer_country") or country),
+                symbol=_str_prop(node.properties, "symbol"),
+            )
+        )
+    return sorted(refs, key=lambda r: r.name)
+
+
 def company_country_exposures(
     store: InMemoryKnowledgeGraphStore, company_key: str
 ) -> list[tuple[str, str]]:
