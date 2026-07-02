@@ -1,6 +1,10 @@
 PYTHON ?= python
 
-.PHONY: setup test api worker lint format up down prod backup
+.PHONY: setup test api worker lint format up down prod backup smoke
+
+# Post-deploy operational smoke test against a running instance.
+# Override the target with SMOKE_URL, e.g.  make smoke SMOKE_URL=https://app.example.com
+SMOKE_URL ?= http://localhost:8000
 
 setup:
 	$(PYTHON) -m pip install -e ".[dev]"
@@ -32,3 +36,6 @@ prod:
 
 backup:
 	$(PYTHON) -m coruscant.apps.cli backup
+
+smoke:
+	./scripts/smoke.sh $(SMOKE_URL)

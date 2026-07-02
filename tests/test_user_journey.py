@@ -54,8 +54,10 @@ def client(tmp_path: Path) -> TestClient:
 
 
 def test_login_to_change_to_evidence(client: TestClient) -> None:
-    # 1. Unauthenticated users cannot access the application.
-    assert client.get("/dashboard").status_code == 401
+    # 1. The public read surface is open (Phase 6): discovery needs no sign-in,
+    #    but user-owned monitoring surfaces still require an authenticated session.
+    assert client.get("/dashboard").status_code == 200
+    assert client.get("/portfolios").status_code == 401
 
     # 2. Create an account and authenticate.
     token = client.post(

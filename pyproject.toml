@@ -14,7 +14,9 @@ authors = [
 ]
 dependencies = [
   "fastapi>=0.115",
-  "kuzu>=0.11",
+  # Pinned exactly: the embedded graph store is storage-format sensitive and a
+  # floating minor has broken CI/prod before. Bump deliberately with a parity run.
+  "kuzu==0.11.3",
   "pydantic>=2.8",
   "pydantic-settings>=2.4",
   "PyYAML>=6.0",

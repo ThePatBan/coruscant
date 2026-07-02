@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  canEnterWorkspace,
+  isPublicReadablePath,
   isWorkspaceKind,
   postLoginPath,
   resolveHomeWorkspace,
+  routeAccess,
   WORKSPACES,
   workspaceForPath,
 } from "./workspaces";
@@ -73,5 +76,51 @@ describe("postLoginPath", () => {
   it("never lands a login on the no-auth public workspace", () => {
     // Signing in for the public product still makes no sense; send to personal.
     expect(postLoginPath({ requested: "public" })).toBe(WORKSPACES.personal.home);
+  });
+});
+
+describe("isPublicReadablePath (Phase 6 public surface)", () => {
+  it("admits the curated discovery destinations", () => {
+    for (const p of ["/companies", "/companies/apple", "/atlas", "/changes", "/search", "/graph", "/documents", "/documents/x", "/compare"]) {
+      expect(isPublicReadablePath(p)).toBe(true);
+    }
+  });
+  it("excludes monitoring, portfolio, admin and enterprise surfaces", () => {
+    for (const p of ["/portfolio", "/watchlists", "/alerts", "/settings", "/admin", "/monitoring", "/enterprise", "/enterprise/api", "/world", "/dashboard"]) {
+      expect(isPublicReadablePath(p)).toBe(false);
+    }
+  });
+  it("does not confuse look-alike prefixes", () => {
+    expect(isPublicReadablePath("/companies-house")).toBe(false);
+    expect(isPublicReadablePath("/graphql")).toBe(false);
+  });
+});
+
+describe("routeAccess (the deterministic guard)", () => {
+  it("lets a signed-in visitor go anywhere", () => {
+    expect(routeAccess("/portfolio", { authed: true })).toBe("allow");
+    expect(routeAccess("/enterprise/api", { authed: true })).toBe("allow");
+  });
+  it("lets an anonymous visitor read the public surface", () => {
+    expect(routeAccess("/companies/apple", { authed: false })).toBe("allow");
+    expect(routeAccess("/search", { authed: false })).toBe("allow");
+  });
+  it("sends an anonymous visitor to login for private surfaces", () => {
+    expect(routeAccess("/portfolio", { authed: false })).toBe("requireLogin");
+    expect(routeAccess("/enterprise", { authed: false })).toBe("requireLogin");
+    expect(routeAccess("/admin", { authed: false })).toBe("requireLogin");
+  });
+});
+
+describe("canEnterWorkspace (entitlement gate)", () => {
+  it("keeps Public open to everyone", () => {
+    expect(canEnterWorkspace("public", { authed: false })).toBe(true);
+    expect(canEnterWorkspace("public", { authed: true })).toBe(true);
+  });
+  it("requires a session for Personal and Enterprise", () => {
+    expect(canEnterWorkspace("personal", { authed: false })).toBe(false);
+    expect(canEnterWorkspace("enterprise", { authed: false })).toBe(false);
+    expect(canEnterWorkspace("personal", { authed: true })).toBe(true);
+    expect(canEnterWorkspace("enterprise", { authed: true })).toBe(true);
   });
 });

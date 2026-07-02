@@ -571,9 +571,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (init?.body) headers.set("Content-Type", "application/json");
   const res = await fetch(`${BASE}${path}`, { ...init, headers });
   if (!res.ok) {
-    // A 401 on anything other than the login/register attempt means the session
-    // expired or was revoked: clear it and send the user back to login.
-    if (res.status === 401 && !path.startsWith("/auth/login") && !path.startsWith("/auth/register")) {
+    // A 401 *while holding a token* means the session expired or was revoked: clear
+    // it and send the user back to login. An ANONYMOUS 401 (no token — a public
+    // visitor hitting an authenticated-only extra) must NOT force login; the page
+    // degrades gracefully instead, so public browsing is never yanked to sign-in.
+    if (
+      res.status === 401 &&
+      tokenStore.get() &&
+      !path.startsWith("/auth/login") &&
+      !path.startsWith("/auth/register")
+    ) {
       tokenStore.clear();
       if (typeof window !== "undefined" && window.location.pathname !== "/login") {
         window.location.assign("/login");

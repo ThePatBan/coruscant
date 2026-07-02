@@ -81,10 +81,16 @@ def client(tmp_path: Path) -> TestClient:
 
 
 def test_protected_routes_require_auth(client: TestClient) -> None:
-    assert client.get("/companies").status_code == 401
-    assert client.get("/dashboard").status_code == 401
-    assert client.get("/health").status_code == 200  # health stays public
-    assert client.get("/companies", headers={"Authorization": "Bearer garbage"}).status_code == 401
+    # User-owned / write surfaces stay locked to an authenticated session.
+    assert client.get("/portfolios").status_code == 401
+    assert client.get("/watchlists").status_code == 401
+    assert client.get("/quota").status_code == 401
+    assert client.get("/portfolios", headers={"Authorization": "Bearer garbage"}).status_code == 401
+    # Health stays public, and so does the curated public read surface (Phase 6):
+    # discovery — the reference corpus and aggregate dashboard — needs no sign-in.
+    assert client.get("/health").status_code == 200
+    assert client.get("/companies").status_code == 200
+    assert client.get("/dashboard").status_code == 200
 
 
 def test_register_login_and_access(client: TestClient) -> None:

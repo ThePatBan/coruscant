@@ -9,6 +9,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, type AnalysisReport, type EntityProfile, type Relationship } from "../api";
+import { useAuth } from "../auth";
 import { ErrorView, Loading, Skeleton } from "../components";
 import { useAsync } from "../hooks";
 import { kindGlyph, relationVerb } from "../relations";
@@ -446,6 +447,7 @@ function EvidencePane({ sel, focalName, onTravel }: { sel: Sel; focalName: strin
 /* ---- grounded ask bar ----------------------------------------------------- */
 const ASK_EX = ["What are the key risks?", "What changed recently?", "What are the opportunities?"];
 function AtlasAsk({ slug, name }: { slug: string; name: string }) {
+  const { email } = useAuth();
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<AnalysisReport | null>(null);
@@ -463,6 +465,9 @@ function AtlasAsk({ slug, name }: { slug: string; name: string }) {
       setLoading(false);
     }
   };
+  // The grounded analyst is an authenticated capability (LLM-backed). Anonymous
+  // public visitors browse the map + evidence; the Ask bar appears once signed in.
+  if (!email) return null;
   return (
     <div className="atl-ask">
       <div className="atl-ask-bar">
