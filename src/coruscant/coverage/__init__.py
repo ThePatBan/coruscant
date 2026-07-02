@@ -8,6 +8,8 @@ reconciles them into the graph by external anchor (CIK for US), enriching the
 curated companies rather than duplicating them and creating stable surrogate
 nodes for the rest. This is the *universe*, not deep filing ingestion — sectors,
 holdings, and LEIs are attached on demand by the other pipelines.
+
+Boundary: WORKSPACE (Portfolio-Exposure) — see docs/PLATFORM.md §7.
 """
 
 from __future__ import annotations

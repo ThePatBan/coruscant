@@ -1,6 +1,12 @@
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type ChangeEvent, type FormEvent, useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, type Company, type PortfolioBriefing, type Portfolio } from "../api";
+import {
+  api,
+  type Company,
+  type PortfolioBriefing,
+  type Portfolio,
+  type ResolveReport,
+} from "../api";
 import { Cat, Empty, Loading } from "../components";
 import { useAsync } from "../hooks";
 
@@ -12,10 +18,50 @@ export function PortfolioPage() {
   const [briefing, setBriefing] = useState<PortfolioBriefing | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Upload flow: read a brokerage CSV, resolve it against coverage, persist matches.
+  const [csv, setCsv] = useState("");
+  const [fileName, setFileName] = useState("");
+  const [uploadName, setUploadName] = useState("");
+  const [report, setReport] = useState<ResolveReport | null>(null);
+  const [uploadBusy, setUploadBusy] = useState(false);
+
   const reload = useCallback(async () => setPortfolios(await api.portfolios()), []);
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  async function onFile(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFileName(file.name);
+    if (!uploadName.trim()) setUploadName(file.name.replace(/\.[^.]+$/, ""));
+    setCsv(await file.text());
+    setReport(null);
+  }
+
+  async function preview() {
+    if (!csv.trim()) return;
+    setUploadBusy(true);
+    try {
+      setReport(await api.resolveHoldings(csv));
+    } finally {
+      setUploadBusy(false);
+    }
+  }
+
+  async function upload() {
+    if (!csv.trim() || !uploadName.trim()) return;
+    setUploadBusy(true);
+    try {
+      const result = await api.uploadPortfolio(uploadName.trim(), csv);
+      setReport(result.report);
+      setCsv("");
+      setFileName("");
+      await reload();
+    } finally {
+      setUploadBusy(false);
+    }
+  }
 
   function toggle(slug: string) {
     const next = new Set(selected);
@@ -48,6 +94,64 @@ export function PortfolioPage() {
           Connect your holdings and ask: what changed that affects my portfolio? Material changes
           aggregate across everything you hold.
         </p>
+      </div>
+
+      <div className="card stack gap">
+        <div className="row-between">
+          <h2>Upload holdings</h2>
+          <span className="faint" style={{ fontSize: 12.5 }}>
+            CSV from any brokerage — resolved by ticker, ISIN, SEDOL, then name
+          </span>
+        </div>
+        <div className="wrap" style={{ gap: 10, alignItems: "center" }}>
+          <label className="btn ghost" style={{ padding: "8px 14px", cursor: "pointer" }}>
+            {fileName || "Choose CSV…"}
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              onChange={onFile}
+              style={{ display: "none" }}
+            />
+          </label>
+          <input
+            className="input"
+            style={{ maxWidth: 240 }}
+            placeholder="Portfolio name"
+            value={uploadName}
+            onChange={(e) => setUploadName(e.target.value)}
+          />
+          <button className="btn ghost" type="button" disabled={uploadBusy || !csv.trim()} onClick={() => void preview()}>
+            Preview match
+          </button>
+          <button className="btn" type="button" disabled={uploadBusy || !csv.trim() || !uploadName.trim()} onClick={() => void upload()}>
+            {uploadBusy ? <span className="spinner" style={{ width: 14, height: 14 }} /> : "Upload & save"}
+          </button>
+        </div>
+
+        {report ? (
+          <div className="stack gap-sm">
+            <div className="wrap" style={{ gap: 8 }}>
+              <span className="pill">{report.resolved}/{report.total} resolved</span>
+              {report.by_ticker ? <span className="badge">{report.by_ticker} by ticker</span> : null}
+              {report.by_isin ? <span className="badge">{report.by_isin} by ISIN</span> : null}
+              {report.by_sedol ? <span className="badge">{report.by_sedol} by SEDOL</span> : null}
+              {report.by_name ? <span className="badge">{report.by_name} by name</span> : null}
+              {report.unresolved ? <span className="badge">{report.unresolved} unresolved</span> : null}
+            </div>
+            {report.unresolved > 0 ? (
+              <div className="faint" style={{ fontSize: 12.5 }}>
+                Couldn't match (left labelled, never guessed):{" "}
+                {report.positions
+                  .filter((p) => p.method === "unresolved")
+                  .slice(0, 25)
+                  .map((p) => p.input_ticker || p.input_isin || p.input_sedol || p.input_name || "—")
+                  .join(", ")}
+              </div>
+            ) : (
+              <div className="faint" style={{ fontSize: 12.5 }}>Every row matched a covered company.</div>
+            )}
+          </div>
+        ) : null}
       </div>
 
       <div className="grid cols-2">

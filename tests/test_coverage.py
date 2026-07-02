@@ -213,6 +213,106 @@ def test_resolve_ticker_punctuation_folds_dot_and_dash() -> None:
     assert report.positions[0].company_key == "us-1067983"
 
 
+def test_multi_class_tickers_one_cik_all_share_classes_resolve() -> None:
+    """Alphabet lists GOOGL (Class A) and GOOG (Class C) as two rows under one CIK
+    (1652044). The CIK dedups to a single node, but *both* tickers must resolve — a
+    book holding either class is real. Losing the second class would be a fabricated
+    'unresolved', the dishonest kind of gap."""
+
+    store = InMemoryKnowledgeGraphStore()
+    payload = {
+        "fields": ["cik", "name", "ticker", "exchange"],
+        "data": [
+            [1652044, "Alphabet Inc.", "GOOGL", "Nasdaq"],
+            [1652044, "Alphabet Inc.", "GOOG", "Nasdaq"],
+        ],
+    }
+    summary = ingest_coverage(store, UsEdgarCoverageProvider(payload=payload), observed_at="2026-07-01")
+    # One issuer node (CIK dedup), not two:
+    assert summary.created == 1 and summary.enriched == 1
+    nodes = store.nodes_of_kind("Company")
+    assert len(nodes) == 1 and nodes[0].key == "us-1652044"
+    # Both tickers survive as anchors (the primary property keeps the first-seen one):
+    tickers = {a["value"] for a in nodes[0].properties["anchors"] if a["scheme"] == "ticker"}
+    assert tickers == {"GOOGL", "GOOG"}
+    # Every share class resolves to the single issuer node (dot-folding still works):
+    report = resolve_positions(
+        store, [Position(ticker="GOOGL"), Position(ticker="GOOG"), Position(ticker="GOOG.")]
+    )
+    assert report.resolved == 3 and report.by_ticker == 3
+    assert {p.company_key for p in report.positions} == {"us-1652044"}
+    idx = build_ticker_index(store)
+    assert idx["GOOG"] == idx["GOOGL"] == "us-1652044"
+
+
+def test_multi_class_ticker_anchors_are_stable_across_reruns() -> None:
+    """Re-ingesting the same multi-class feed must not duplicate ticker anchors
+    (idempotency extends to the multi-valued anchor path)."""
+
+    store = InMemoryKnowledgeGraphStore()
+    payload = {
+        "fields": ["cik", "name", "ticker", "exchange"],
+        "data": [
+            [1652044, "Alphabet Inc.", "GOOGL", "Nasdaq"],
+            [1652044, "Alphabet Inc.", "GOOG", "Nasdaq"],
+        ],
+    }
+    provider = UsEdgarCoverageProvider(payload=payload)
+    ingest_coverage(store, provider, observed_at="2026-07-01")
+    ingest_coverage(store, provider, observed_at="2026-07-02")  # re-run
+    node = store.get_node("Company", "us-1652044")
+    assert node is not None
+    ticker_anchors = [a for a in node.properties["anchors"] if a["scheme"] == "ticker"]
+    assert [a["value"] for a in ticker_anchors] == ["GOOGL", "GOOG"]  # no duplicates
+
+
+def test_curated_ticker_anchor_still_indexes_share_class() -> None:
+    """A curated Apple node (ticker AAPL) enriched by the feed also gains any extra
+    listed class as a ticker anchor, and that anchor resolves — without clobbering the
+    curated primary ticker."""
+
+    store = InMemoryKnowledgeGraphStore()
+    _curated_apple(store)
+    provider = StaticCoverageProvider("US", [
+        IssuerRecord(market="US", name="Apple Inc.", ticker="AAPL", exchange="Nasdaq",
+                     anchors=[IssuerAnchor(scheme="cik", value="320193"),
+                              IssuerAnchor(scheme="ticker", value="AAPL")],
+                     source="sec-company-tickers"),
+        IssuerRecord(market="US", name="Apple Inc.", ticker="AAPL2", exchange="Nasdaq",
+                     anchors=[IssuerAnchor(scheme="cik", value="320193"),
+                              IssuerAnchor(scheme="ticker", value="AAPL2")],
+                     source="sec-company-tickers"),
+    ])
+    ingest_coverage(store, provider, observed_at="2026-07-01")
+    aapl = store.get_node("Company", "aapl")
+    assert aapl is not None and aapl.properties["ticker"] == "AAPL"  # curated primary preserved
+    report = resolve_positions(store, [Position(ticker="AAPL2")])
+    assert report.resolved == 1 and report.positions[0].company_key == "aapl"
+
+
+def test_empty_feed_is_an_honest_connected_run_not_a_crash() -> None:
+    """A US feed that lists zero issuers (upstream outage returning an empty table)
+    is an honest connected run: considered 0, universe empty, but ``connected`` true
+    because we did reach and parse a feed — never a fabricated universe."""
+
+    store = InMemoryKnowledgeGraphStore()
+    provider = UsEdgarCoverageProvider(payload={"fields": ["cik", "name", "ticker", "exchange"], "data": []})
+    summary = ingest_coverage(store, provider, observed_at="2026-07-01")
+    assert summary.connected is True and summary.considered == 0
+    assert summary.created == 0 and summary.enriched == 0 and summary.universe_total == 0
+    ov = Q.coverage_overview(store)
+    # A CoverageRun node exists, so the panel reports connected with an empty universe.
+    assert ov.connected is True and ov.in_universe == 0
+
+
+def test_coverage_overview_surfaces_last_run_deltas() -> None:
+    store = InMemoryKnowledgeGraphStore()
+    _curated_apple(store)
+    _ingest(store)
+    us = next(m for m in Q.coverage_overview(store).by_market if m.market == "US")
+    assert us.created == 3 and us.enriched == 1
+
+
 def test_parse_brokerage_csv_tolerates_column_naming() -> None:
     csv_text = "Symbol,Description,Quantity\nAAPL,Apple Inc,10\nMSFT,Microsoft Corp,5\nTotal,,15\n"
     positions = parse_brokerage_csv(csv_text)

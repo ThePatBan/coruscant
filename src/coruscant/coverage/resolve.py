@@ -65,13 +65,20 @@ class ResolveReport(BaseModel):
 
 
 def build_ticker_index(store: KnowledgeGraphStore) -> dict[str, str]:
-    """``{TICKER (upper) → Company node key}`` over the coverage universe."""
+    """``{TICKER (upper) → Company node key}`` over the coverage universe.
+
+    Indexes the primary ``ticker`` property *and* every ``ticker`` anchor, so each
+    listed share class of one issuer (GOOG *and* GOOGL under a single CIK) resolves
+    to its Company node rather than the second class silently going unresolved."""
 
     index: dict[str, str] = {}
     for node in store.nodes_of_kind(COMPANY_KIND):
         ticker = node.properties.get(TICKER)
         if isinstance(ticker, str) and ticker.strip():
             index.setdefault(ticker.strip().upper(), node.key)
+        for a in node.properties.get(ANCHORS) or []:
+            if isinstance(a, dict) and a.get("scheme") == "ticker" and a.get("value"):
+                index.setdefault(str(a["value"]).strip().upper(), node.key)
     return index
 
 

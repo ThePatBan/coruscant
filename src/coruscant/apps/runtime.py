@@ -21,6 +21,8 @@ if TYPE_CHECKING:
     from coruscant.anchoring.provider import LeiProvider
     from coruscant.coverage.pipeline import CoverageSummary
     from coruscant.coverage.provider import CoverageProvider
+    from coruscant.ownership.pipeline import OwnershipSummary
+    from coruscant.ownership.provider import OwnershipProvider
     from coruscant.portfolio.holdings import FundSummary
     from coruscant.screening.pipeline import ScreeningSummary
     from coruscant.screening.provider import ScreeningProvider
@@ -615,6 +617,139 @@ def run_coverage(
 
     store = _load_graph(settings.graph_snapshot_path)
     summary = ingest_coverage(store, provider, observed_at=moment.date())
+    save_graph(store, settings.graph_snapshot_path)
+    return summary
+
+
+def _covered_gb_company_numbers(store: KnowledgeGraphStore) -> list[str]:
+    """Company numbers of GB-covered issuers — the live UK PSC fetch target set.
+    Read off the coverage anchors so PSC is pulled only for companies we can resolve
+    against (enrich, don't duplicate); empty is honest, not an error."""
+
+    numbers: list[str] = []
+    seen: set[str] = set()
+    for node in store.nodes_of_kind("Company"):
+        for anchor in node.properties.get("anchors") or []:
+            if isinstance(anchor, dict) and anchor.get("scheme") == "company_number":
+                value = str(anchor.get("value") or "").strip()
+                if value and value not in seen:
+                    seen.add(value)
+                    numbers.append(value)
+    return numbers
+
+
+def _anchored_leis(store: KnowledgeGraphStore) -> list[str]:
+    """LEIs already anchored on the graph (Company/Subsidiary/LegalEntity) — the live
+    GLEIF-L2 lookup set, so consolidation is fetched only for entities we can resolve."""
+
+    leis: list[str] = []
+    seen: set[str] = set()
+    for kind in ("Company", "Subsidiary", "LegalEntity"):
+        for node in store.nodes_of_kind(kind):
+            value = node.properties.get("lei")
+            if isinstance(value, str) and value.strip() and value.strip().upper() not in seen:
+                seen.add(value.strip().upper())
+                leis.append(value.strip())
+    return leis
+
+
+def _build_ownership_provider(
+    settings: Settings,
+    *,
+    file_path: Path | None,
+    provider_name: str | None,
+    store: KnowledgeGraphStore | None = None,
+) -> "OwnershipProvider":
+    """Construct the ownership provider behind the generic ``OwnershipProvider`` seam.
+
+    * ``bods`` (default) — a downloaded BODS / OpenOwnership export (``file_path``).
+    * ``psc`` — UK Companies House PSC, a live PUBLIC beneficial-ownership register:
+      the Public Data API (needs ``companies_house_api_key``, fetched for the GB-
+      covered universe) or a downloaded bulk PSC snapshot (``file_path`` fallback).
+    * ``gleif-l2`` — GLEIF Level-2 accounting consolidation for the anchored LEIs
+      (live CC0 API) or a downloaded relationship-record export (``file_path``).
+
+    File paths are the operator fallback, never the primary path; a source with no
+    live key/anchors and no file raises an explicit, honest error (no fabricated run).
+    """
+
+    from coruscant.ownership.companies_house import CompaniesHousePscProvider
+    from coruscant.ownership.gleif_l2 import GleifL2ConsolidationProvider
+    from coruscant.ownership.provider import BodsOwnershipProvider
+
+    choice = (provider_name or "bods").lower()
+    if choice in ("psc", "companies-house", "companies-house-psc", "uk-psc"):
+        if file_path is not None and Path(file_path).exists():
+            return CompaniesHousePscProvider.from_file(Path(file_path))
+        numbers = _covered_gb_company_numbers(store) if store is not None else []
+        if settings.companies_house_api_key and numbers:
+            return CompaniesHousePscProvider(
+                api_key=settings.companies_house_api_key,
+                company_numbers=numbers,
+                base_url=settings.companies_house_api_url,
+            )
+        if settings.companies_house_api_key and not numbers:
+            raise FileNotFoundError(
+                "Companies House PSC is wired (API key set) but no GB-covered company "
+                "numbers were found to fetch. Run `coruscant coverage --market gb` first, "
+                "or pass --file with a bulk PSC snapshot."
+            )
+        raise FileNotFoundError(
+            "No UK PSC source available. Set CORUSCANT_COMPANIES_HOUSE_API_KEY for the "
+            "live Public Data API (fetches the GB-covered universe), or pass --file with "
+            "a downloaded bulk PSC snapshot (NDJSON)."
+        )
+    if choice in ("gleif-l2", "gleif_l2", "l2", "consolidation"):
+        if file_path is not None and Path(file_path).exists():
+            return GleifL2ConsolidationProvider.from_file(Path(file_path))
+        leis = _anchored_leis(store) if store is not None else []
+        if leis:
+            return GleifL2ConsolidationProvider(leis=leis)
+        raise FileNotFoundError(
+            "No GLEIF L2 source available. Anchor the graph first (`coruscant anchor`) so "
+            "there are LEIs to look up, or pass --file with a downloaded GLEIF relationship-"
+            "record export."
+        )
+    if choice != "bods":
+        raise ValueError(
+            f"No ownership provider {provider_name!r}. Implemented: bods, psc, gleif-l2."
+        )
+    if file_path is None or not Path(file_path).exists():
+        raise FileNotFoundError(
+            "No ownership dataset supplied. Pass --file with a BODS / OpenOwnership "
+            "export (a statements JSON array or newline-delimited BODS), or use "
+            "--provider psc (UK Companies House) / --provider gleif-l2 (consolidation)."
+        )
+    return BodsOwnershipProvider.from_file(Path(file_path))
+
+
+def run_ownership(
+    settings: Settings | None = None,
+    *,
+    file_path: Path | None = None,
+    provider_name: str | None = None,
+    now: datetime | None = None,
+) -> "OwnershipSummary":
+    """Ingest sourced ownership statements into the graph as the three distinct edge
+    types (``owns`` / ``beneficial_owner_of`` / ``consolidates``), each substrate-
+    stamped with provenance, access tier, and bitemporal validity. Opt-in and
+    idempotent; parties resolve to existing nodes by anchor, the rest labelled
+    unresolved — the foundation for UBO/contagion, not a completeness claim.
+
+    Live sources (``psc``, ``gleif-l2``) scope their fetch to the graph's covered/
+    anchored entities, so the store is loaded before the provider is built."""
+
+    from coruscant.knowledge_graph.persistence import load_graph as _load_graph
+    from coruscant.ownership.pipeline import ingest_ownership
+
+    settings = settings or get_settings()
+    moment = now or datetime.now(tz=timezone.utc)
+
+    store = _load_graph(settings.graph_snapshot_path)
+    provider = _build_ownership_provider(
+        settings, file_path=file_path, provider_name=provider_name, store=store
+    )
+    summary = ingest_ownership(store, provider, observed_at=moment.date())
     save_graph(store, settings.graph_snapshot_path)
     return summary
 

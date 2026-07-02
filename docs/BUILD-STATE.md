@@ -15,6 +15,11 @@ stub (`connected: false`), never a placeholder.
 Two tabs: **`/world`** (Home/World — the exposure surface) and **`/atlas`** (the
 3D company graph).
 
+This product is **one workspace** on the Coruscant Intelligence Platform (the shared
+substrate). What is platform vs what is this workspace is defined in
+[PLATFORM.md](PLATFORM.md); the boundary is drawn in docs and code organization but not
+yet enforced by module structure (that is later, deliberate work).
+
 ## Built ✅
 
 - **Two-tab SPA** (React + Vite + TS): World tab + Atlas 3D force graph.
@@ -136,6 +141,69 @@ Two tabs: **`/world`** (Home/World — the exposure surface) and **`/atlas`** (t
   not fabricated); the `bp`/`shel`/`vod`/`azn` ADRs verified **distinct** from their
   domestic `gb-<isin>` nodes; a sample book resolved 5/7 by ticker/ISIN/SEDOL (2 honest
   misses: a unit trust and a bogus symbol). See ADR-0009 + ADR-0010.
+- **US coverage hardening — multi-class tickers.** A single CIK lists several share
+  classes (GOOG/GOOGL under CIK 1652044, FOX/FOXA, UA/UAA). CIK dedup collapsed them to
+  one node but kept only the *first* ticker, so a book holding the second class went
+  unresolved — a fabricated "unresolved", the dishonest kind. Fix: `ticker`/`figi` are
+  now **multi-valued anchors** (`pipeline._merge_anchors`) that accumulate every distinct
+  value while identity anchors (cik/isin/…) stay first-write-wins; `build_ticker_index`
+  indexes the primary ticker **and** every ticker anchor, so each share class resolves to
+  its issuer. Idempotent across re-runs. `CoverageMarketCount` now also surfaces per-market
+  `created`/`enriched`/`indices` from the last run for inspection via `GET /graph/coverage`.
+- **User portfolio upload — the retail front door.** `POST /portfolios/resolve` (dry-run
+  preview) and `POST /portfolios/upload` (resolve + persist) accept a brokerage holdings
+  CSV (JSON-transported so no new multipart dep), run it through the existing deterministic
+  `resolve.py` (ticker → ISIN → SEDOL → org-name), and persist **only resolved** positions
+  as a user-scoped portfolio — two share classes of one issuer collapse to one holding,
+  unmatched rows are surfaced in the report (labelled, never fabricated into a holding).
+  A light upload panel on the Portfolio page reads the file and shows the match breakdown +
+  the unresolved list.
+- **Ownership substrate — the missing edge class (Phase 3 foundation).** New
+  `coruscant.ownership` package: three **distinct** relations, never conflated — `owns`
+  (declared %-shareholding, public), `beneficial_owner_of` (a natural person's ultimate
+  ownership/control, legitimate-interest tier), `consolidates` (accounting consolidation,
+  GLEIF-L2, public). `OwnershipProvider` seam + a **BODS** (OpenOwnership / UK-PSC-shaped)
+  parser + `StaticOwnershipProvider`; `ingest_ownership` resolves parties to existing nodes
+  by anchor (enrich, don't duplicate), labels the rest `unresolved` (counted), and
+  substrate-stamps every edge with `source` + `access_tier` (**enforced at query time** —
+  a public caller sees beneficial-owner edges only as a `restricted` count) + bitemporal
+  validity. No fabricated magnitude (exact `percentage` only when sourced; PSC/BODS ranges
+  kept verbatim as `percentage_band`); no derivation of beneficial ownership from
+  shareholding (deliberate future work). `GET /graph/ownership` + `GET
+  /graph/company/{key}/owners` (as-of aware); `coruscant ownership --file <bods.json>`.
+  See ADR-0011.
+- **Live ownership sources + UBO chains + contagion + L2 consolidation (ADR-0012).**
+  Building on the ADR-0011 substrate, all additive:
+  - **UK Companies House PSC** — the first *live* national beneficial-ownership source
+    (`--provider psc`). PSC is a **public** register (unlike EU registers post-CJEU
+    C-37/20), so individual PSCs are stamped `public` via the record's `access_tier`
+    override; a *super-secure* PSC is emitted but withheld (`restricted-authority`,
+    identity legally protected). Kind → basis (individual = beneficial owner, corporate/
+    legal-person = declared shareholding); `natures_of_control` → disclosed band verbatim
+    (never a fabricated exact %); statements counted, never edges. Live Public Data API
+    (needs `CORUSCANT_COMPANIES_HOUSE_API_KEY`, scoped to the GB-covered universe) or a
+    bulk PSC-snapshot file fallback. Corporate PSCs anchor by company number → resolve
+    onto LSE-covered nodes.
+  - **UBO chain-following** — `GET /graph/company/{key}/ownership-chain` walks incoming
+    ownership edges upward into evidence-carrying chains. Each hop keeps its **own** basis
+    (no collapse of shareholding into beneficial ownership); terminal is `beneficial_owner`
+    only where the data states it, else `root`/`unresolved`/`cycle`/`max_depth`/`restricted`.
+    Access-tier + as-of aware; cycles detected, partials labelled.
+  - **Group / UBO contagion** — `GET /graph/company/{key}/contagion` is a **separate**
+    inherited-exposure path: undirected BFS over ownership edges surfaces group members
+    (parent / subsidiary / shares-owner) that inherit exposure, each with the evidence
+    chain back to the seed. Direct vs inherited kept visibly distinct; never collapsed into
+    ordinary edges; beneficial-owner ties withheld-and-counted for unprivileged callers.
+  - **GLEIF Level-2 consolidation** — `--provider gleif-l2` turns GLEIF relationship
+    records (direct/ultimate consolidating parent) into `consolidates` edges only — an
+    auxiliary control signal, never %-ownership. Reconciles by LEI onto anchored nodes,
+    dedups direct/ultimate, coexists with (never overwrites) a declared `owns` edge for the
+    same pair. Live CC0 API (scoped to anchored LEIs) or a relationship-record file.
+  - **UI** — CompanyDetailPage gains an "Ownership & control" section (owners, UBO chains,
+    group contagion) with explicit resolved / unresolved / restricted states; the World tab
+    gains an ownership-overview tile. Honest empty states; no clutter (per-company section
+    renders only when there is data). The `OwnershipProvider` seam is now market-tagged
+    (`market`), so new national registers drop in as providers with no core-graph change.
 - **Taxonomy**: full GICS hierarchy (8-digit code) + MSCI DM/EM/FM, curated and
   verified against public MSCI/S&P sources.
 - **Instrument model**: commodities + debt as first-class instruments wired into
@@ -145,9 +213,9 @@ Two tabs: **`/world`** (Home/World — the exposure surface) and **`/atlas`** (t
   sector-ETF **proxy**, not the licensed MSCI index).
 - **Intelligence**: deterministic, cited change-detection / events / summaries;
   an LLM gateway + admin console (needs an API key to light up).
-- **Platform**: FastAPI API, CLI (`coruscant ingest|query|serve|screen|anchor|
-  portfolio`), a worker for scheduled ingestion, auth (JWT), watchlists,
-  multi-tenant quotas.
+- **Runtime & serving** (the platform assembly layer): FastAPI API, CLI (`coruscant
+  ingest|query|serve|screen|anchor|portfolio|coverage|ownership`), a worker for
+  scheduled ingestion, auth (JWT), watchlists, multi-tenant quotas.
 
 ## Storage (as-is)
 
@@ -172,16 +240,17 @@ Two tabs: **`/world`** (Home/World — the exposure surface) and **`/atlas`** (t
 
 ## Not built yet ❌ (say it plainly)
 
-- **User-forwarded portfolio upload** — 13F fund holdings now ingest as `holds`
-  edges (above); accepting a user's own forwarded portfolio (PDF/holdings) is the
-  remaining half of the front door.
-- **Real ownership / UBO edges** — no parent/`owns%`/beneficial-owner edge exists;
-  control is only ever an inferred, labelled proxy. (Identity is now anchored via
-  GLEIF LEI; ownership %/UBO is the next substrate — Phase 3, UK PSC first.)
+- **Ownership breadth + magnitude** — the substrate, live UK PSC, UBO chains,
+  contagion, and GLEIF-L2 consolidation exist (above). Still open, and honestly so:
+  *live* national registers beyond UK PSC (EU/other BODS sources are file-only, not
+  live APIs); **no derived ultimate beneficial owner** — chains are paths of distinct
+  sourced claims, and promoting a shareholding chain to a UBO stays a deliberate,
+  evidence-carrying step we have *not* taken; aggregate "control %" math over disclosed
+  *bands* (a range, not a point); and a bulk GLEIF-L2 ingest (the live path is scoped to
+  already-anchored LEIs, not the whole L2 file).
 - **PEP / sanctions at scale + external serving** — the screen is built (deterministic
   + yente sidecar); the *live* yente run + external demo await the OpenSanctions
   license in writing.
-- **Group / UBO contagion** exposure pathway (needs the ownership substrate).
 - **Whole-exchange coverage** — all three target markets now ingest as `CoverageProvider`s:
   **US** (EDGAR/CIK), **India** (NSE+BSE/ISIN), **UK** (LSE/ISIN) — see above. The universe
   pass is lightweight by design; deep filing ingestion (10-K/Exhibit-21/officers) stays
@@ -194,9 +263,12 @@ Two tabs: **`/world`** (Home/World — the exposure surface) and **`/atlas`** (t
 ## Sequenced next
 
 1. **Real graph store** — ✅ done (Kùzu behind the port; Neo4j/Neptune deferred).
-2. **Whole-exchange coverage** — ✅ US done (ADR-0009). Next: India (NSE/BSE) + UK
-   (FTSE/LSE) as new `CoverageProvider`s; then auto-add on portfolio upload.
-3. **Portfolio front door** — 13F → holding edges ✅ (ADR-0008); user upload next.
-4. **Ownership → UBO** and **PEP/sanctions** edges (free registries first).
+2. **Whole-exchange coverage** — ✅ US + India + UK (ADR-0009/0010). Next: further
+   markets (EU/JP/…) as new `CoverageProvider`s on the same seam.
+3. **Portfolio front door** — 13F → holding edges ✅ (ADR-0008); user upload ✅.
+4. **Ownership → UBO** — ✅ substrate (ADR-0011) + live UK PSC, UBO chains, group
+   contagion, GLEIF-L2 (ADR-0012). Next: more live registers, aggregate control-%
+   magnitude over bands, and (deliberately, with evidence) chain-derived UBO.
+5. **PEP/sanctions** live serving (OpenSanctions license in writing).
 
 Full plan of record: [global-exposure-architecture.md](global-exposure-architecture.md).

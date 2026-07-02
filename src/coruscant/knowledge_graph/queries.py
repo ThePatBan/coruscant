@@ -1208,7 +1208,10 @@ class CoverageMarketCount(BaseModel):
     in_universe: int  # of those, part of an ingested exchange universe
     provider: str | None = None
     considered: int = 0  # issuers the last run listed
+    created: int = 0  # new surrogate nodes on the last run
+    enriched: int = 0  # existing nodes enriched (external-key match) on the last run
     excluded: dict[str, int] = {}  # filtered upstream (blank/OTC), by reason
+    indices: dict[str, int] = {}  # index name → constituents linked (Nifty/Sensex/FTSE)
     observed_at: str | None = None
 
 
@@ -1264,12 +1267,16 @@ def coverage_overview(store: KnowledgeGraphStore) -> CoverageOverview:
     def _market(m: str) -> CoverageMarketCount:
         run = runs.get(m, {})
         excluded = run.get("excluded")
+        indices = run.get("indices")
         return CoverageMarketCount(
             market=m, companies=market_total.get(m, 0),
             in_universe=market_universe.get(m, 0),
             provider=_str_prop(run, "provider"),
             considered=int(run.get("considered") or 0),
+            created=int(run.get("created") or 0),
+            enriched=int(run.get("enriched") or 0),
             excluded={str(k): int(v) for k, v in excluded.items()} if isinstance(excluded, dict) else {},
+            indices={str(k): int(v) for k, v in indices.items()} if isinstance(indices, dict) else {},
             observed_at=_str_prop(run, "observed_at"),
         )
 
@@ -1283,4 +1290,150 @@ def coverage_overview(store: KnowledgeGraphStore) -> CoverageOverview:
         curated=len(companies) - in_universe,
         by_market=[_market(m) for m in markets],
         by_exchange=by_exchange,
+    )
+
+
+# -- Ownership substrate panel -------------------------------------------------
+# The three DISTINCT ownership edge types, never conflated (architecture §2.4).
+# Access-tier aware: a public caller does not see beneficial-owner edges — they are
+# counted as ``restricted`` so their existence is transparent without exposing them.
+_OWNERSHIP_RUN_KIND = "OwnershipRun"
+_OWNERSHIP_RELATIONS = ("owns", "beneficial_owner_of", "consolidates")
+
+
+class OwnershipOverview(BaseModel):
+    """The ownership panel: how much declared ownership / beneficial ownership /
+    accounting consolidation the graph holds, at the caller's clearance.
+    ``connected: false`` before any ownership run — the honest empty state."""
+
+    connected: bool
+    owns: int = 0  # declared %-shareholding edges visible to the caller
+    beneficial_owner_of: int = 0  # beneficial-owner edges visible to the caller
+    consolidates: int = 0  # accounting-consolidation edges visible to the caller
+    restricted: int = 0  # edges withheld by access tier (their existence, not content)
+    subjects_unresolved: int = 0  # last run: subjects with no anchored node
+    holders_unresolved: int = 0  # last run: holders (people/entities) not yet resolved
+    provider: str | None = None
+    observed_at: str | None = None
+    market: str | None = None
+    note: str = (
+        "Declared ownership, beneficial ownership, and accounting consolidation are "
+        "distinct edge types and never equated; percentages appear only where sourced."
+    )
+
+
+class OwnerEdge(BaseModel):
+    """One ownership statement about a company, with its basis and evidence."""
+
+    holder_kind: str
+    holder_key: str
+    holder_name: str | None = None
+    relation: str  # owns | beneficial_owner_of | consolidates
+    basis: str | None = None
+    percentage: float | None = None
+    percentage_band: str | None = None
+    interest: str | None = None
+    source: str | None = None
+    source_url: str | None = None
+    access_tier: str | None = None
+    valid_from: str | None = None
+    valid_to: str | None = None
+    holder_resolved: bool | None = None
+
+
+class CompanyOwners(BaseModel):
+    """The ownership statements pointing at one company, access-tier filtered.
+    ``restricted`` counts edges the caller may not see (transparency without leak)."""
+
+    company_key: str
+    connected: bool = False
+    owners: list[OwnerEdge] = []
+    restricted: int = 0
+    provider: str | None = None
+    observed_at: str | None = None
+    market: str | None = None
+
+
+def ownership_overview(
+    store: KnowledgeGraphStore,
+    *,
+    clearance: substrate.AccessTier | str = substrate.AccessTier.PUBLIC,
+) -> OwnershipOverview:
+    """The ownership panel, counted live off the graph at ``clearance``."""
+
+    run = next(iter(store.nodes_of_kind(_OWNERSHIP_RUN_KIND)), None)
+    all_edges = [e for rel in _OWNERSHIP_RELATIONS for e in store.edges_by_relation(rel)]
+    if not all_edges and run is None:
+        return OwnershipOverview(connected=False)
+
+    visible = substrate.visible(all_edges, clearance=clearance)
+    counts = {rel: 0 for rel in _OWNERSHIP_RELATIONS}
+    for edge in visible:
+        counts[edge.relation] = counts.get(edge.relation, 0) + 1
+    props = run.properties if run is not None else {}
+    return OwnershipOverview(
+        connected=True,
+        owns=counts["owns"],
+        beneficial_owner_of=counts["beneficial_owner_of"],
+        consolidates=counts["consolidates"],
+        restricted=len(all_edges) - len(visible),
+        subjects_unresolved=int(props.get("subjects_unresolved") or 0),
+        holders_unresolved=int(props.get("holders_unresolved") or 0),
+        provider=_str_prop(props, "provider"),
+        observed_at=_str_prop(props, "observed_at"),
+        market=_str_prop(props, "market"),
+    )
+
+
+def company_owners(
+    store: KnowledgeGraphStore,
+    company_key: str,
+    *,
+    clearance: substrate.AccessTier | str = substrate.AccessTier.PUBLIC,
+    as_of: date | str | None = None,
+) -> CompanyOwners:
+    """Every ownership/control statement pointing *at* ``company_key`` (incoming
+    ``owns`` / ``beneficial_owner_of`` / ``consolidates`` edges), access-tier
+    filtered and optionally as-of a date. Withheld edges are counted, not shown."""
+
+    incoming = [
+        e for e in store.incoming("Company", company_key)
+        if e.relation in _OWNERSHIP_RELATIONS
+    ]
+    if as_of is not None:
+        incoming = substrate.as_of(incoming, on=as_of)
+    visible = substrate.visible(incoming, clearance=clearance)
+    owners = [
+        OwnerEdge(
+            holder_kind=e.source_kind, holder_key=e.source_key,
+            holder_name=_str_prop(e.properties, "holder_name"),
+            relation=e.relation, basis=_str_prop(e.properties, "basis"),
+            percentage=(
+                float(e.properties["percentage"])
+                if isinstance(e.properties.get("percentage"), (int, float)) else None
+            ),
+            percentage_band=_str_prop(e.properties, "percentage_band"),
+            interest=_str_prop(e.properties, "interest"),
+            source=_str_prop(e.properties, substrate.SOURCE),
+            source_url=_str_prop(e.properties, "source_url"),
+            access_tier=substrate.tier_of(e.properties).value,
+            valid_from=_str_prop(e.properties, substrate.VALID_FROM),
+            valid_to=_str_prop(e.properties, substrate.VALID_TO),
+            holder_resolved=(
+                bool(e.properties["holder_resolved"])
+                if isinstance(e.properties.get("holder_resolved"), bool) else None
+            ),
+        )
+        for e in visible
+    ]
+    run = next(iter(store.nodes_of_kind(_OWNERSHIP_RUN_KIND)), None)
+    props = run.properties if run is not None else {}
+    return CompanyOwners(
+        company_key=company_key,
+        connected=bool(incoming),
+        owners=owners,
+        restricted=len(incoming) - len(visible),
+        provider=_str_prop(props, "provider"),
+        observed_at=_str_prop(props, "observed_at"),
+        market=_str_prop(props, "market"),
     )

@@ -29,6 +29,8 @@ from pydantic import BaseModel, Field
 
 from coruscant.common.types import GraphEdge, GraphNode
 from coruscant.coverage.provider import (
+    ANCHOR_FIGI,
+    ANCHOR_TICKER,
     CoverageProvider,
     IndexMembership,
     IssuerRecord,
@@ -76,21 +78,42 @@ def _has_gics(props: dict[str, object]) -> bool:
     return bool(props.get("gics_sector") or props.get("gics_code"))
 
 
+# Identity anchors (cik/isin/sedol/company_number/lei) are single-valued and
+# stable: first-write-wins by scheme so identity never moves across re-runs. A
+# *ticker* (and FIGI) is NOT an identity key — one issuer legitimately lists
+# several share classes under a single CIK (GOOG/GOOGL, FOX/FOXA, UA/UAA), so
+# those schemes must accumulate *every* distinct value. Collapsing them to one
+# would leave a held share class unresolvable — a fabricated "unresolved", the
+# dishonest kind of gap (Invariant #5, honesty).
+_MULTI_VALUED_ANCHOR_SCHEMES = frozenset({ANCHOR_TICKER, ANCHOR_FIGI})
+
+
 def _merge_anchors(existing: object, incoming: list[dict[str, str]]) -> list[dict[str, str]]:
-    """Union anchors by scheme, first-write-wins (a present scheme is not overwritten
-    → identity stays stable across re-runs)."""
+    """Union anchors. Identity schemes are first-write-wins by scheme (a present
+    scheme is never overwritten → identity stays stable across re-runs); ``ticker``
+    and ``figi`` accumulate every distinct value so each share class resolves."""
 
     out: list[dict[str, str]] = []
-    seen: set[str] = set()
+    seen_schemes: set[str] = set()  # single-valued identity schemes already present
+    seen_pairs: set[tuple[str, str]] = set()  # (scheme, value) for multi-valued schemes
+
+    def _add(scheme: str, value: str) -> None:
+        if scheme in _MULTI_VALUED_ANCHOR_SCHEMES:
+            pair = (scheme, value)
+            if pair not in seen_pairs:
+                out.append({"scheme": scheme, "value": value})
+                seen_pairs.add(pair)
+        elif scheme not in seen_schemes:
+            out.append({"scheme": scheme, "value": value})
+            seen_schemes.add(scheme)
+
     if isinstance(existing, list):
         for a in existing:
             if isinstance(a, dict) and a.get("scheme"):
-                out.append({"scheme": str(a["scheme"]), "value": str(a.get("value", ""))})
-                seen.add(str(a["scheme"]))
+                _add(str(a["scheme"]), str(a.get("value", "")))
     for a in incoming:
-        if a["scheme"] not in seen:
-            out.append(a)
-            seen.add(a["scheme"])
+        if a.get("scheme"):
+            _add(str(a["scheme"]), str(a.get("value", "")))
     return out
 
 

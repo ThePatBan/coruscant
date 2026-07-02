@@ -1,7 +1,9 @@
 """Country macro for the World tab: free World Bank indicators (GDP growth,
 inflation) + the country's benchmark-index move (reused from the pricing client).
 Network-gated and cached, like pricing — a missing metric is reported, never
-fabricated."""
+fabricated.
+
+Boundary: WORKSPACE (Portfolio-Exposure) — see docs/PLATFORM.md §7."""
 
 from coruscant.macro.service import (
     COUNTRY_MACRO,

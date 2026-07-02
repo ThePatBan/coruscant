@@ -43,6 +43,11 @@ from coruscant.enterprise.audit import AuditEntry, SqliteAuditStore
 from coruscant.infrastructure.dead_letter import DeadLetterEntry, SqliteDeadLetterStore
 from coruscant.infrastructure.saved_searches import SavedSearch, SqliteSavedSearchStore
 from coruscant.intelligence.changes import ReferenceChangeDetector
+from coruscant.coverage.resolve import (
+    ResolveReport,
+    parse_brokerage_csv,
+    resolve_positions,
+)
 from coruscant.portfolio.models import Holding, Portfolio, PortfolioBriefing
 from coruscant.portfolio.store import SqlitePortfolioStore
 from coruscant.workspaces.models import ITEM_TYPES, Workspace, WorkspaceItem
@@ -85,6 +90,8 @@ from coruscant.knowledge_graph.queries import (
     FundRef,
     MarketTierCount,
     MarketTierExposure,
+    OwnershipOverview,
+    CompanyOwners,
     PortfolioExposure,
     PortfolioProfile,
     ResolutionOverview,
@@ -95,8 +102,10 @@ from coruscant.knowledge_graph.queries import (
     co_executives,
     commodity_exposure,
     company_country_exposures,
+    company_owners,
     coverage_overview,
     company_network,
+    ownership_overview,
     debt_for_country,
     entity_profile,
     exposure_to_country,
@@ -116,6 +125,12 @@ from coruscant.knowledge_graph.queries import (
     resolution_overview,
     screening_overview,
     sector_exposure,
+)
+from coruscant.knowledge_graph.ownership_graph import (
+    CompanyOwnershipChains,
+    GroupContagion,
+    group_contagion,
+    ownership_chains,
 )
 from coruscant.macro import CountryMacro, MacroService
 from coruscant.news import NewsFeed, NewsService
@@ -281,6 +296,31 @@ class PortfolioCreate(BaseModel):
     holdings: list[Holding] = Field(default_factory=list)
 
 
+class HoldingsResolveRequest(BaseModel):
+    """A raw brokerage/holdings CSV to resolve against the coverage universe. The
+    frontend reads the user's uploaded file and posts its text here; the transport
+    is JSON to stay consistent with the rest of the evidence-first API."""
+
+    csv: str = Field(min_length=1)
+
+
+class HoldingsUploadRequest(BaseModel):
+    """Resolve a holdings CSV *and* persist the matched positions as a user-scoped
+    portfolio. Unresolved rows are surfaced in the report, never persisted as
+    holdings (a holding must point at a real Company node)."""
+
+    name: str = Field(min_length=1)
+    csv: str = Field(min_length=1)
+
+
+class PortfolioUploadResult(BaseModel):
+    """The outcome of an upload: the persisted portfolio (resolved holdings only)
+    plus the full resolve report so the caller can show what did *not* match."""
+
+    portfolio: Portfolio
+    report: ResolveReport
+
+
 class WorkspaceCreate(BaseModel):
     name: str
     members: list[str] = Field(default_factory=list)
@@ -407,6 +447,23 @@ def create_app(
     expose_reset_token: bool = False,
     load_from_storage: bool = False,
 ) -> FastAPI:
+    """Assemble the single serving app: platform services + the Portfolio-Exposure workspace.
+
+    Route-group boundary map (see docs/PLATFORM.md §6-7). The section banners below are
+    tagged [PLATFORM] (domain-neutral substrate), [WORKSPACE] (the Portfolio-Exposure
+    product), or [SHARED] (generic reads fused with product logic):
+
+    - [PLATFORM]  auth, reference corpus & retrieval, saved searches & compare,
+                  workspaces (collaboration), API keys, admin/RBAC, orgs/plans/billing,
+                  admin console.
+    - [WORKSPACE] watchlists & notifications, portfolios, portfolio market data.
+    - [SHARED]    entity graph / relationship intelligence (generic graph reads + the
+                  exposure engine), intelligence (doc summaries + product analysis).
+
+    Today everything lives on one FastAPI instance with no routers/prefixes; splitting
+    into a platform router + a workspace router is a recorded seam (docs/PLATFORM.md §9,
+    seam 2). This docstring is behavior-neutral — it documents the boundary, nothing else.
+    """
     settings = get_settings()
     # Fail closed: enforcement is on unless a caller explicitly opts out (tests).
     enforce_auth = require_auth or load_from_storage
@@ -576,7 +633,7 @@ def create_app(
         )
         return _watchlists().add_notifications(email, watchlist.id, notifications)
 
-    # ---- Authentication ----------------------------------------------------
+    # ---- [PLATFORM] Authentication ----------------------------------------------------
 
     @app.post("/auth/register", response_model=TokenResponse)
     def register(body: RegisterRequest) -> TokenResponse:
@@ -643,6 +700,7 @@ def create_app(
             graph_nodes=state.graph.node_count(),
         )
 
+    # ---- [PLATFORM] Reference corpus & retrieval ---------------------------
     @app.get("/companies", response_model=list[CompanyOut], dependencies=protected)
     def companies() -> list[CompanyOut]:
         return [
@@ -711,7 +769,7 @@ def create_app(
         reasoning = TemplateReasoningLayer(state.engine)
         return AnswerResponse(query=q, answer=reasoning.answer(q))
 
-    # ---- Saved searches & document comparison (analyst workflow) -----------
+    # ---- [PLATFORM] Saved searches & document comparison (analyst workflow) -----------
 
     def _searches() -> SqliteSavedSearchStore:
         if state.saved_searches is None:
@@ -768,7 +826,7 @@ def create_app(
         ]
         return GraphResponse(company_slug=slug, found=True, neighbors=neighbors)
 
-    # ---- Entity graph / relationship intelligence --------------------------
+    # ---- [SHARED] Entity graph / relationship intelligence (generic reads + exposure engine) --------------------------
 
     @app.get("/entities", response_model=list[EntityRef], dependencies=protected)
     def entities(kind: str | None = None) -> list[EntityRef]:
@@ -911,6 +969,76 @@ def create_app(
             return CoverageOverview(connected=False)
         return coverage_overview(graph)
 
+    @app.get("/graph/ownership", response_model=OwnershipOverview, dependencies=protected)
+    def graph_ownership() -> OwnershipOverview:
+        """Ownership substrate: declared ownership, beneficial ownership, and
+        accounting consolidation as three distinct edge types (never conflated).
+        Access-tier aware — beneficial-owner edges are withheld from the public tier
+        and reported only as a ``restricted`` count. ``connected: false`` until an
+        ownership run has ingested statements."""
+        graph = state.graph
+        if not isinstance(graph, KnowledgeGraphStore):
+            return OwnershipOverview(connected=False)
+        return ownership_overview(graph)
+
+    @app.get(
+        "/graph/company/{company_key}/owners",
+        response_model=CompanyOwners,
+        dependencies=protected,
+    )
+    def graph_company_owners(company_key: str, as_of: str | None = None) -> CompanyOwners:
+        """The ownership/control statements pointing at a company, access-tier
+        filtered; optional ``as_of=YYYY-MM-DD`` for the bitemporal "who controlled it
+        then?" query. Withheld (restricted-tier) edges are counted, not shown."""
+        graph = state.graph
+        if not isinstance(graph, KnowledgeGraphStore):
+            return CompanyOwners(
+                company_key=company_key,
+                connected=False,
+                owners=[],
+                restricted=0,
+                provider=None,
+                observed_at=None,
+                market=None,
+            )
+        return company_owners(graph, company_key, as_of=as_of)
+
+    @app.get(
+        "/graph/company/{company_key}/ownership-chain",
+        response_model=CompanyOwnershipChains,
+        dependencies=protected,
+    )
+    def graph_ownership_chain(company_key: str, as_of: str | None = None) -> CompanyOwnershipChains:
+        """UBO chain-following: the ownership chains leading up to a company, each hop
+        keeping its own basis (declared / beneficial / consolidation — never conflated)
+        and its evidence. Chains are labelled resolved / unresolved / cycle / restricted;
+        a beneficial-owner terminal appears only where the data states it. Access-tier
+        filtered; optional ``as_of=YYYY-MM-DD``."""
+        graph = state.graph
+        if not isinstance(graph, KnowledgeGraphStore):
+            return CompanyOwnershipChains(
+                company=EntityRef(kind="Company", key=company_key, name=company_key)
+            )
+        return ownership_chains(graph, company_key, as_of=as_of)
+
+    @app.get(
+        "/graph/company/{company_key}/contagion",
+        response_model=GroupContagion,
+        dependencies=protected,
+    )
+    def graph_contagion(company_key: str, as_of: str | None = None) -> GroupContagion:
+        """Group / UBO contagion: given a directly-exposed company, the group members
+        that inherit exposure through shared control (owns / consolidates / beneficial-
+        owner ties), each with the ownership evidence path back to the seed. Direct and
+        inherited exposure are kept distinct; beneficial-owner ties are withheld from
+        unprivileged callers and only counted. Access-tier filtered; optional ``as_of``."""
+        graph = state.graph
+        if not isinstance(graph, KnowledgeGraphStore):
+            return GroupContagion(
+                seed=EntityRef(kind="Company", key=company_key, name=company_key)
+            )
+        return group_contagion(graph, company_key, as_of=as_of)
+
     @app.get("/graph/funds", response_model=list[FundRef], dependencies=protected)
     def graph_funds() -> list[FundRef]:
         """Funds whose 13F holdings have been ingested (the books events trace into)."""
@@ -1047,7 +1175,7 @@ def create_app(
             return NewsFeed(connected=False, scope="global", note="News not configured.")
         return service.headlines(scope="country" if country else "global", country=country)
 
-    # ---- Watchlists & notifications ----------------------------------------
+    # ---- [WORKSPACE] Watchlists & notifications ----------------------------------------
 
     @app.post("/watchlists", response_model=WatchlistCreated, dependencies=protected)
     def create_watchlist(body: WatchlistCreate, email: str = Depends(current_email)) -> WatchlistCreated:
@@ -1109,7 +1237,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="notification not found")
         return {"ok": True}
 
-    # ---- Portfolios --------------------------------------------------------
+    # ---- [WORKSPACE] Portfolios --------------------------------------------------------
 
     def _portfolios() -> SqlitePortfolioStore:
         if state.portfolios is None:
@@ -1123,6 +1251,52 @@ def create_app(
         )
         _audit(email, "portfolio.create", body.name)
         return portfolio
+
+    def _resolve_csv(csv_text: str) -> ResolveReport:
+        """Parse a holdings CSV and resolve it against the coverage universe.
+        Precision-first and deterministic (ticker → ISIN → SEDOL → org-name); rows
+        that clear nothing are reported unresolved, never fabricated into a match."""
+
+        graph = state.graph
+        positions = parse_brokerage_csv(csv_text)
+        if not isinstance(graph, KnowledgeGraphStore):
+            # No graph to resolve against: honest empty resolution, all unresolved.
+            return resolve_positions(InMemoryKnowledgeGraphStore(), positions)
+        return resolve_positions(graph, positions)
+
+    @app.post("/portfolios/resolve", response_model=ResolveReport, dependencies=protected)
+    def resolve_holdings(body: HoldingsResolveRequest) -> ResolveReport:
+        """Dry-run: resolve an uploaded holdings CSV against coverage and report the
+        rate + which rows matched (by ticker/ISIN/SEDOL/name) and which did not.
+        Nothing is persisted — this is the preview before an upload."""
+
+        return _resolve_csv(body.csv)
+
+    @app.post("/portfolios/upload", response_model=PortfolioUploadResult, dependencies=protected)
+    def upload_portfolio(
+        body: HoldingsUploadRequest, email: str = Depends(current_email)
+    ) -> PortfolioUploadResult:
+        """Upload a holdings file: resolve it against coverage, then persist the
+        matched positions as a new user-scoped portfolio. Unresolved rows are
+        returned in the report (labelled, never fabricated) so the caller can show
+        exactly what could not be matched — they are not saved as holdings."""
+
+        report = _resolve_csv(body.csv)
+        # One holding per resolved Company node (two share classes of one issuer,
+        # e.g. GOOG + GOOGL, collapse to one node); first label wins.
+        holdings: list[Holding] = []
+        seen: set[str] = set()
+        for pos in report.positions:
+            if pos.company_key is None or pos.company_key in seen:
+                continue
+            seen.add(pos.company_key)
+            label = pos.input_name or pos.input_ticker or pos.input_isin or pos.input_sedol
+            holdings.append(Holding(company_slug=pos.company_key, label=label))
+        portfolio = _portfolios().create_portfolio(
+            email, body.name, holdings, created_at=datetime.now(tz=timezone.utc).isoformat()
+        )
+        _audit(email, "portfolio.upload", f"{body.name}: {len(holdings)}/{report.total} resolved")
+        return PortfolioUploadResult(portfolio=portfolio, report=report)
 
     @app.get("/portfolios", response_model=list[Portfolio], dependencies=protected)
     def list_portfolios(email: str = Depends(current_email)) -> list[Portfolio]:
@@ -1170,7 +1344,7 @@ def create_app(
             companies_with_changes=len(changed),
         )
 
-    # ---- Workspaces (team collaboration) -----------------------------------
+    # ---- [PLATFORM] Workspaces (team collaboration; see docs/PLATFORM.md §5) -----------------------------------
 
     def _workspaces() -> SqliteWorkspaceStore:
         if state.workspaces is None:
@@ -1242,7 +1416,7 @@ def create_app(
         _audit(email, "workspace.delete", workspace_id)
         return {"ok": True}
 
-    # ---- API keys (programmatic / ecosystem access) ------------------------
+    # ---- [PLATFORM] API keys (programmatic / ecosystem access) ------------------------
 
     def _api_keys() -> SqliteApiKeyStore:
         if state.api_keys is None:
@@ -1266,9 +1440,9 @@ def create_app(
         _audit(email, "api_key.revoke", key_id)
         return {"ok": True}
 
-    # ---- Admin (RBAC) ------------------------------------------------------
+    # ---- [PLATFORM] Admin (RBAC) ------------------------------------------------------
 
-    # ---- Organizations, plans, usage & billing (commercialization) ---------
+    # ---- [PLATFORM] Organizations, plans, usage & billing (commercialization) ---------
 
     def _orgs() -> SqliteOrgStore:
         if state.orgs is None:
@@ -1359,7 +1533,7 @@ def create_app(
     def admin_dead_letter(_: StoredUser = Depends(require_admin), limit: int = 200) -> list[DeadLetterEntry]:
         return state.dead_letters.list_entries(limit=limit) if state.dead_letters else []
 
-    # ---- Intelligence ------------------------------------------------------
+    # ---- [SHARED] Intelligence (generic doc-intelligence + product analysis) ------------------------------------------------------
 
     @app.get("/documents/{canonical_id}/summary", response_model=AISummary, dependencies=protected)
     def document_summary(canonical_id: str) -> AISummary:
@@ -1466,7 +1640,7 @@ def create_app(
             recent_opportunities=opportunities,
         )
 
-    # ---- Admin console (single pane): model routing + customers --------------
+    # ---- [PLATFORM] Admin console (single pane): model routing + customers --------------
     class ProviderOut(BaseModel):
         kind: str
         base_url: str
