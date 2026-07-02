@@ -1,13 +1,27 @@
+from typing import Any
+
 from coruscant.common.types import NormalizedDocument
 from coruscant.apps.api import create_app
 from coruscant.search.reference import InMemoryRetrievalEngine
 from fastapi.testclient import TestClient
 
 
+def _route_paths(app: Any) -> set[str]:
+    # Version-robust across FastAPI/Starlette: an included router appears either
+    # flattened (routes with `.path`) or, on Starlette 1.x, as an `_IncludedRouter`
+    # wrapper exposing `.original_router` — descend both.
+    paths: set[str] = set()
+    for route in app.routes:
+        if hasattr(route, "path"):
+            paths.add(route.path)
+        elif hasattr(route, "original_router"):
+            paths |= {r.path for r in route.original_router.routes if hasattr(r, "path")}
+    return paths
+
+
 def test_health_route() -> None:
     app = create_app()
-    routes = [route.path for route in app.routes]
-    assert "/health" in routes
+    assert "/health" in _route_paths(app)
 
 
 def test_retrieve_route_returns_evidence() -> None:

@@ -15,7 +15,16 @@ from coruscant.apps.api import create_app
 
 
 def _paths(app: Any) -> set[str]:
-    return {r.path for r in app.routes if hasattr(r, "methods")}
+    # Version-robust across FastAPI/Starlette: an included router appears either
+    # flattened (routes with `.path`) or, on Starlette 1.x, as an `_IncludedRouter`
+    # wrapper exposing `.original_router` — descend both.
+    paths: set[str] = set()
+    for r in app.routes:
+        if hasattr(r, "path"):
+            paths.add(r.path)
+        elif hasattr(r, "original_router"):
+            paths |= {s.path for s in r.original_router.routes if hasattr(s, "path")}
+    return paths
 
 
 def test_platform_and_workspace_both_mounted() -> None:
