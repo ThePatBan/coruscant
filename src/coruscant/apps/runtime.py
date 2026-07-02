@@ -2,6 +2,13 @@
 
 Centralizes how the durable stores (filesystem artifacts, SQLite catalog, graph
 snapshot) are constructed and how an ingestion run is assembled and replayed.
+
+Boundary: PLATFORM (assembly). This module still interleaves platform store builders
+(``build_auth_service`` / ``build_org_store`` / ``build_api_key_store`` / …) with
+workspace pipelines (``run_screening`` / ``run_anchor`` / ``run_portfolio`` /
+``run_coverage`` / ``run_ownership``). Splitting the workspace pipelines into a workspace
+runtime module is a follow-up to the Phase 2 API composition split (docs/PLATFORM.md §9);
+the API surface was separated first because it is the higher-traffic boundary.
 """
 
 from __future__ import annotations
