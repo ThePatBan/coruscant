@@ -8,8 +8,10 @@ import logging
 import secrets
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+
+from coruscant.apps import composition
 from pydantic import BaseModel, Field
 
 from coruscant.apps.runtime import (
@@ -447,22 +449,27 @@ def create_app(
     expose_reset_token: bool = False,
     load_from_storage: bool = False,
 ) -> FastAPI:
-    """Assemble the single serving app: platform services + the Portfolio-Exposure workspace.
+    """Compose the serving app: a shared PLATFORM router + registry-driven WORKSPACE routers.
 
-    Route-group boundary map (see docs/PLATFORM.md §6-7). The section banners below are
-    tagged [PLATFORM] (domain-neutral substrate), [WORKSPACE] (the Portfolio-Exposure
-    product), or [SHARED] (generic reads fused with product logic):
+    Phase 2 of the platform/workspace split (ADR-0013, docs/PLATFORM.md §6): every route
+    is registered on one of two boundary routers instead of directly on the app —
 
-    - [PLATFORM]  auth, reference corpus & retrieval, saved searches & compare,
-                  workspaces (collaboration), API keys, admin/RBAC, orgs/plans/billing,
-                  admin console.
-    - [WORKSPACE] watchlists & notifications, portfolios, portfolio market data.
-    - [SHARED]    entity graph / relationship intelligence (generic graph reads + the
-                  exposure engine), intelligence (doc summaries + product analysis).
+    - ``plat`` — the shared platform surface: auth, reference corpus & retrieval, saved
+      searches & compare, generic entity-graph reads (``/entities``, ``/graph/company``,
+      ``/graph/company-network``, co-executives, resolution), collaboration workspaces,
+      API keys, admin/RBAC, orgs/plans/billing, run status & source monitoring, document
+      summaries, and the admin console.
+    - ``pe`` — the Portfolio-Exposure workspace surface: the exposure engine
+      (``/graph/*-exposure``, jurisdictions, sectors, market tiers, gics, commodities,
+      debt), ownership/funds/screening/coverage reads, portfolio market data, watchlists
+      & notifications, portfolios, and the company-scoped analyst/signals/dashboard.
 
-    Today everything lives on one FastAPI instance with no routers/prefixes; splitting
-    into a platform router + a workspace router is a recorded seam (docs/PLATFORM.md §9,
-    seam 2). This docstring is behavior-neutral — it documents the boundary, nothing else.
+    The routers are mounted at the end via the ``composition`` registry
+    (``enabled_workspaces()``), not a hard-coded list — a new workspace edition is a
+    registry entry + its router, not an edit here. Behavior-preserving: routers carry no
+    prefix, so every path and method is identical to the pre-split surface (asserted by
+    ``tests/test_api_composition.py`` and the route table). Per-route boundary is visible
+    in the ``@plat``/``@pe`` decorators below.
     """
     settings = get_settings()
     # Fail closed: enforcement is on unless a caller explicitly opts out (tests).
@@ -514,6 +521,16 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Phase 2 (docs/PLATFORM.md §6): the app is composed from a shared PLATFORM router
+    # plus one router per WORKSPACE (registry: coruscant.apps.composition). `plat` = the
+    # shared platform surface; `pe` = the Portfolio-Exposure workspace. Behavior-preserving
+    # — no prefixes, so every route path is unchanged; only the owning router differs.
+    plat = APIRouter()
+    workspace_routers: dict[str, APIRouter] = {
+        ws.slug: APIRouter() for ws in composition.WORKSPACES
+    }
+    pe = workspace_routers[composition.PORTFOLIO_EXPOSURE.slug]
 
     def require_user(request: Request) -> StoredUser | None:
         if not enforce_auth:
@@ -635,7 +652,7 @@ def create_app(
 
     # ---- [PLATFORM] Authentication ----------------------------------------------------
 
-    @app.post("/auth/register", response_model=TokenResponse)
+    @plat.post("/auth/register", response_model=TokenResponse)
     def register(body: RegisterRequest) -> TokenResponse:
         service = _auth()
         try:
@@ -644,7 +661,7 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return TokenResponse(token=service.issue_token(user.email), email=user.email)
 
-    @app.post("/auth/login", response_model=TokenResponse)
+    @plat.post("/auth/login", response_model=TokenResponse)
     def login(body: LoginRequest) -> TokenResponse:
         service = _auth()
         try:
@@ -655,18 +672,18 @@ def create_app(
         _audit(email, "login", "password login")
         return TokenResponse(token=token, email=email)
 
-    @app.post("/auth/logout")
+    @plat.post("/auth/logout")
     def logout() -> dict[str, bool]:
         # Tokens are stateless; the client discards the token on logout.
         return {"ok": True}
 
-    @app.get("/auth/me", response_model=UserOut)
+    @plat.get("/auth/me", response_model=UserOut)
     def me(user: StoredUser | None = Depends(require_user)) -> UserOut:
         if user is None:
             raise HTTPException(status_code=401, detail="authentication required")
         return UserOut(email=user.email, created_at=user.created_at, role=user.role)
 
-    @app.post("/auth/reset/request", response_model=ResetIssued)
+    @plat.post("/auth/reset/request", response_model=ResetIssued)
     def reset_request(body: ResetRequest) -> ResetIssued:
         # Always returns an identical generic response (no account enumeration).
         # The token is included only when explicitly enabled for offline/dev use.
@@ -677,7 +694,7 @@ def create_app(
             reset_token=token if expose_reset_token else None,
         )
 
-    @app.post("/auth/reset/confirm")
+    @plat.post("/auth/reset/confirm")
     def reset_confirm(body: ResetConfirm) -> dict[str, bool]:
         service = _auth()
         try:
@@ -688,11 +705,11 @@ def create_app(
             raise HTTPException(status_code=400, detail="invalid or expired reset token")
         return {"ok": True}
 
-    @app.get("/version", response_model=VersionResponse)
+    @plat.get("/version", response_model=VersionResponse)
     def version() -> VersionResponse:
         return VersionResponse(api_version=API_VERSION, schema_version=SCHEMA_VERSION)
 
-    @app.get("/health", response_model=HealthResponse)
+    @plat.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:
         return HealthResponse(
             status="ok",
@@ -701,14 +718,14 @@ def create_app(
         )
 
     # ---- [PLATFORM] Reference corpus & retrieval ---------------------------
-    @app.get("/companies", response_model=list[CompanyOut], dependencies=protected)
+    @plat.get("/companies", response_model=list[CompanyOut], dependencies=protected)
     def companies() -> list[CompanyOut]:
         return [
             CompanyOut(slug=c.slug, name=c.name, industry=c.industry, country=c.country)
             for c in load_companies(settings.config_dir)
         ]
 
-    @app.get("/sources", response_model=list[SourceOut], dependencies=protected)
+    @plat.get("/sources", response_model=list[SourceOut], dependencies=protected)
     def sources() -> list[SourceOut]:
         return [
             SourceOut(
@@ -719,7 +736,7 @@ def create_app(
             for definition in default_registry().definitions()
         ]
 
-    @app.get("/documents", response_model=list[DocumentSummary], dependencies=protected)
+    @plat.get("/documents", response_model=list[DocumentSummary], dependencies=protected)
     def documents(company: str | None = None, source_type: str | None = None) -> list[DocumentSummary]:
         results: list[DocumentSummary] = []
         for document in _all_documents(state.engine):
@@ -731,7 +748,7 @@ def create_app(
             results.append(_to_summary(document))
         return results
 
-    @app.get("/documents/{canonical_id}", response_model=DocumentDetail, dependencies=protected)
+    @plat.get("/documents/{canonical_id}", response_model=DocumentDetail, dependencies=protected)
     def document_detail(canonical_id: str) -> DocumentDetail:
         for document in _all_documents(state.engine):
             if document.canonical_id == canonical_id:
@@ -744,7 +761,7 @@ def create_app(
                 )
         raise HTTPException(status_code=404, detail="document not found")
 
-    @app.post("/retrieve", response_model=RetrieveResponse, dependencies=protected)
+    @plat.post("/retrieve", response_model=RetrieveResponse, dependencies=protected)
     def retrieve(request: RetrieveRequest, email: str = Depends(current_email)) -> RetrieveResponse:
         _enforce_api_quota(email)
         _record_usage(email, "retrieve")
@@ -764,7 +781,7 @@ def create_app(
             query=request.query, answer=reasoning.answer(request.query), results=results
         )
 
-    @app.get("/answer", response_model=AnswerResponse, dependencies=protected)
+    @plat.get("/answer", response_model=AnswerResponse, dependencies=protected)
     def answer(q: str) -> AnswerResponse:
         reasoning = TemplateReasoningLayer(state.engine)
         return AnswerResponse(query=q, answer=reasoning.answer(q))
@@ -776,7 +793,7 @@ def create_app(
             raise HTTPException(status_code=503, detail="saved searches are not configured")
         return state.saved_searches
 
-    @app.post("/saved-searches", response_model=SavedSearch, dependencies=protected)
+    @plat.post("/saved-searches", response_model=SavedSearch, dependencies=protected)
     def create_saved_search(body: SavedSearchCreate, email: str = Depends(current_email)) -> SavedSearch:
         return _searches().create(
             email,
@@ -786,17 +803,17 @@ def create_app(
             created_at=datetime.now(tz=timezone.utc).isoformat(),
         )
 
-    @app.get("/saved-searches", response_model=list[SavedSearch], dependencies=protected)
+    @plat.get("/saved-searches", response_model=list[SavedSearch], dependencies=protected)
     def list_saved_searches(email: str = Depends(current_email)) -> list[SavedSearch]:
         return _searches().list_searches(email)
 
-    @app.delete("/saved-searches/{search_id}", dependencies=protected)
+    @plat.delete("/saved-searches/{search_id}", dependencies=protected)
     def delete_saved_search(search_id: str, email: str = Depends(current_email)) -> dict[str, bool]:
         if not _searches().delete(email, search_id):
             raise HTTPException(status_code=404, detail="saved search not found")
         return {"ok": True}
 
-    @app.get("/compare", response_model=ChangeSet, dependencies=protected)
+    @plat.get("/compare", response_model=ChangeSet, dependencies=protected)
     def compare(a: str, b: str) -> ChangeSet:
         """Side-by-side comparison of two documents: what is in `a` but not `b`."""
         by_id = {d.canonical_id: d for d in _all_documents(state.engine)}
@@ -810,7 +827,7 @@ def create_app(
             source_type=str(doc_a.metadata.get("source_name") or doc_a.document_type),
         )
 
-    @app.get("/graph/company/{slug}", response_model=GraphResponse, dependencies=protected)
+    @plat.get("/graph/company/{slug}", response_model=GraphResponse, dependencies=protected)
     def graph_company(slug: str) -> GraphResponse:
         node = state.graph.get_node("Company", slug)
         if node is None:
@@ -828,14 +845,14 @@ def create_app(
 
     # ---- [SHARED] Entity graph / relationship intelligence (generic reads + exposure engine) --------------------------
 
-    @app.get("/entities", response_model=list[EntityRef], dependencies=protected)
+    @plat.get("/entities", response_model=list[EntityRef], dependencies=protected)
     def entities(kind: str | None = None) -> list[EntityRef]:
         graph = state.graph
         if not isinstance(graph, KnowledgeGraphStore):
             return []
         return list_entities(graph, kind)
 
-    @app.get("/entities/{kind}/{key}", response_model=EntityProfile, dependencies=protected)
+    @plat.get("/entities/{kind}/{key}", response_model=EntityProfile, dependencies=protected)
     def entity(kind: str, key: str) -> EntityProfile:
         graph = state.graph
         profile = (
@@ -847,14 +864,14 @@ def create_app(
             raise HTTPException(status_code=404, detail="entity not found")
         return profile
 
-    @app.get("/graph/exposure", response_model=ExposureResult, dependencies=protected)
+    @pe.get("/graph/exposure", response_model=ExposureResult, dependencies=protected)
     def exposure(country: str) -> ExposureResult:
         graph = state.graph
         if not isinstance(graph, KnowledgeGraphStore):
             return ExposureResult(country=country)
         return exposure_to_country(graph, country)
 
-    @app.get("/graph/jurisdictions", response_model=list[JurisdictionCount], dependencies=protected)
+    @pe.get("/graph/jurisdictions", response_model=list[JurisdictionCount], dependencies=protected)
     def jurisdictions() -> list[JurisdictionCount]:
         """The menu of geographic 'events' — jurisdictions where holdings have a
         legal footprint, by exposed-company count."""
@@ -863,7 +880,7 @@ def create_app(
             return []
         return list_jurisdictions(graph)
 
-    @app.get(
+    @pe.get(
         "/graph/jurisdiction-exposure",
         response_model=JurisdictionExposure,
         dependencies=protected,
@@ -875,7 +892,7 @@ def create_app(
             return JurisdictionExposure(jurisdiction=jurisdiction)
         return jurisdiction_exposure(graph, jurisdiction)
 
-    @app.get("/graph/sectors", response_model=list[SectorCount], dependencies=protected)
+    @pe.get("/graph/sectors", response_model=list[SectorCount], dependencies=protected)
     def sectors() -> list[SectorCount]:
         """The menu of thematic 'events' — sectors by company count."""
         graph = state.graph
@@ -883,7 +900,7 @@ def create_app(
             return []
         return list_sectors(graph)
 
-    @app.get("/graph/sector-exposure", response_model=SectorExposure, dependencies=protected)
+    @pe.get("/graph/sector-exposure", response_model=SectorExposure, dependencies=protected)
     def sector_exposure_endpoint(sector: str) -> SectorExposure:
         """Thematic event on a GICS level `sector` (a sector like Information
         Technology or a sub-industry like Semiconductors) -> who is in it."""
@@ -892,7 +909,7 @@ def create_app(
             return SectorExposure(sector=sector)
         return sector_exposure(graph, sector)
 
-    @app.get("/graph/company-network", response_model=CompanyNetwork, dependencies=protected)
+    @plat.get("/graph/company-network", response_model=CompanyNetwork, dependencies=protected)
     def company_network_endpoint(company: str, max_hops: int = 2) -> CompanyNetwork:
         """Multi-hop co-mention neighbourhood of `company` out to `max_hops`, each
         reachable company with a shortest evidence chain. Orientation, not exposure
@@ -904,7 +921,7 @@ def create_app(
             )
         return company_network(graph, company, max_hops)
 
-    @app.get("/graph/gics-breakdown", response_model=list[GicsSector], dependencies=protected)
+    @pe.get("/graph/gics-breakdown", response_model=list[GicsSector], dependencies=protected)
     def gics_breakdown_endpoint() -> list[GicsSector]:
         """The portfolio's GICS composition: sector -> sub-industry -> holdings."""
         graph = state.graph
@@ -912,7 +929,7 @@ def create_app(
             return []
         return gics_breakdown(graph)
 
-    @app.get("/graph/market-tiers", response_model=list[MarketTierCount], dependencies=protected)
+    @pe.get("/graph/market-tiers", response_model=list[MarketTierCount], dependencies=protected)
     def market_tiers() -> list[MarketTierCount]:
         """The portfolio's MSCI Developed/Emerging/Frontier composition (pathway 4)."""
         graph = state.graph
@@ -920,7 +937,7 @@ def create_app(
             return []
         return list_market_tiers(graph)
 
-    @app.get(
+    @pe.get(
         "/graph/market-tier-exposure",
         response_model=MarketTierExposure,
         dependencies=protected,
@@ -932,14 +949,14 @@ def create_app(
             return MarketTierExposure(tier=tier, label="")
         return market_tier_exposure(graph, tier)
 
-    @app.get("/graph/co-executives", response_model=CoExecutiveResult, dependencies=protected)
+    @plat.get("/graph/co-executives", response_model=CoExecutiveResult, dependencies=protected)
     def graph_co_executives() -> CoExecutiveResult:
         graph = state.graph
         if not isinstance(graph, KnowledgeGraphStore):
             return CoExecutiveResult()
         return co_executives(graph)
 
-    @app.get("/graph/screening", response_model=ScreeningOverview, dependencies=protected)
+    @pe.get("/graph/screening", response_model=ScreeningOverview, dependencies=protected)
     def graph_screening(as_of: str | None = None) -> ScreeningOverview:
         """PEP/sanctions screening of the people in the graph. ``connected: false``
         until a screen has run; optional ``as_of=YYYY-MM-DD`` answers "was this
@@ -950,7 +967,7 @@ def create_app(
             return ScreeningOverview(connected=False)
         return screening_overview(graph, as_of=as_of)
 
-    @app.get("/graph/resolution", response_model=ResolutionOverview, dependencies=protected)
+    @plat.get("/graph/resolution", response_model=ResolutionOverview, dependencies=protected)
     def graph_resolution(as_of: str | None = None) -> ResolutionOverview:
         """GLEIF LEI-anchoring coverage: how much of the graph is resolved to a
         stable identity. ``connected: false`` until an anchoring run; optional
@@ -960,7 +977,7 @@ def create_app(
             return ResolutionOverview(connected=False)
         return resolution_overview(graph, as_of=as_of)
 
-    @app.get("/graph/coverage", response_model=CoverageOverview, dependencies=protected)
+    @pe.get("/graph/coverage", response_model=CoverageOverview, dependencies=protected)
     def graph_coverage() -> CoverageOverview:
         """Whole-exchange coverage: the size and shape of the resolvable universe by
         market/exchange. ``connected: false`` until a coverage run has ingested one."""
@@ -969,7 +986,7 @@ def create_app(
             return CoverageOverview(connected=False)
         return coverage_overview(graph)
 
-    @app.get("/graph/ownership", response_model=OwnershipOverview, dependencies=protected)
+    @pe.get("/graph/ownership", response_model=OwnershipOverview, dependencies=protected)
     def graph_ownership() -> OwnershipOverview:
         """Ownership substrate: declared ownership, beneficial ownership, and
         accounting consolidation as three distinct edge types (never conflated).
@@ -981,7 +998,7 @@ def create_app(
             return OwnershipOverview(connected=False)
         return ownership_overview(graph)
 
-    @app.get(
+    @pe.get(
         "/graph/company/{company_key}/owners",
         response_model=CompanyOwners,
         dependencies=protected,
@@ -1003,7 +1020,7 @@ def create_app(
             )
         return company_owners(graph, company_key, as_of=as_of)
 
-    @app.get(
+    @pe.get(
         "/graph/company/{company_key}/ownership-chain",
         response_model=CompanyOwnershipChains,
         dependencies=protected,
@@ -1021,7 +1038,7 @@ def create_app(
             )
         return ownership_chains(graph, company_key, as_of=as_of)
 
-    @app.get(
+    @pe.get(
         "/graph/company/{company_key}/contagion",
         response_model=GroupContagion,
         dependencies=protected,
@@ -1039,7 +1056,7 @@ def create_app(
             )
         return group_contagion(graph, company_key, as_of=as_of)
 
-    @app.get("/graph/funds", response_model=list[FundRef], dependencies=protected)
+    @pe.get("/graph/funds", response_model=list[FundRef], dependencies=protected)
     def graph_funds() -> list[FundRef]:
         """Funds whose 13F holdings have been ingested (the books events trace into)."""
         graph = state.graph
@@ -1047,7 +1064,7 @@ def create_app(
             return []
         return list_funds(graph)
 
-    @app.get("/graph/fund/{fund_key}", response_model=FundHoldings, dependencies=protected)
+    @pe.get("/graph/fund/{fund_key}", response_model=FundHoldings, dependencies=protected)
     def graph_fund(fund_key: str, as_of: str | None = None) -> FundHoldings:
         """A fund's covered holdings; optional ``as_of=YYYY-MM-DD``."""
         graph = state.graph
@@ -1056,7 +1073,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="fund not found")
         return result
 
-    @app.get("/graph/fund/{fund_key}/exposure", response_model=PortfolioExposure, dependencies=protected)
+    @pe.get("/graph/fund/{fund_key}/exposure", response_model=PortfolioExposure, dependencies=protected)
     def graph_fund_exposure(fund_key: str, pathway: str, term: str, as_of: str | None = None) -> PortfolioExposure:
         """Event → this fund's exposed holdings. ``pathway`` ∈ sector | jurisdiction
         | market_tier | commodity | country; ``term`` is the event (e.g. "Energy",
@@ -1068,7 +1085,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="fund not found")
         return result
 
-    @app.get("/graph/fund/{fund_key}/profile", response_model=PortfolioProfile, dependencies=protected)
+    @pe.get("/graph/fund/{fund_key}/profile", response_model=PortfolioProfile, dependencies=protected)
     def graph_fund_profile(fund_key: str, as_of: str | None = None) -> PortfolioProfile:
         """The shape of a fund's book — value-weighted by sector and market tier."""
         graph = state.graph
@@ -1078,7 +1095,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="fund not found")
         return result
 
-    @app.get("/instruments/commodities", response_model=list[CommodityRef], dependencies=protected)
+    @pe.get("/instruments/commodities", response_model=list[CommodityRef], dependencies=protected)
     def instruments_commodities() -> list[CommodityRef]:
         """The commodity inventory, each with the GICS sectors it drives."""
         graph = state.graph
@@ -1086,7 +1103,7 @@ def create_app(
             return []
         return list_commodities(graph)
 
-    @app.get("/instruments/debt", response_model=list[DebtRef], dependencies=protected)
+    @pe.get("/instruments/debt", response_model=list[DebtRef], dependencies=protected)
     def instruments_debt() -> list[DebtRef]:
         """The debt inventory (sovereign/corporate), each with its issuer country."""
         graph = state.graph
@@ -1094,7 +1111,7 @@ def create_app(
             return []
         return list_debt_instruments(graph)
 
-    @app.get("/graph/commodity-exposure", response_model=CommodityExposure, dependencies=protected)
+    @pe.get("/graph/commodity-exposure", response_model=CommodityExposure, dependencies=protected)
     def commodity_exposure_endpoint(commodity: str) -> CommodityExposure:
         """Event on `commodity` -> the equity holdings exposed via the sectors it drives."""
         graph = state.graph
@@ -1102,7 +1119,7 @@ def create_app(
             return CommodityExposure(slug=commodity, commodity=commodity, category="")
         return commodity_exposure(graph, commodity)
 
-    @app.get("/graph/country-debt", response_model=list[DebtRef], dependencies=protected)
+    @pe.get("/graph/country-debt", response_model=list[DebtRef], dependencies=protected)
     def country_debt_endpoint(country: str) -> list[DebtRef]:
         """Debt instruments issued by `country` — the debt side of a country event."""
         graph = state.graph
@@ -1110,7 +1127,7 @@ def create_app(
             return []
         return debt_for_country(graph, country)
 
-    @app.get("/portfolio/prices", response_model=PortfolioPrices, dependencies=protected)
+    @pe.get("/portfolio/prices", response_model=PortfolioPrices, dependencies=protected)
     def portfolio_prices() -> PortfolioPrices:
         """Live "since yesterday" quotes for the tracked universe (Yahoo, free).
         Returns connected=false when live prices are off — never a fabricated feed.
@@ -1123,7 +1140,7 @@ def create_app(
         quotes = service.quotes([symbol for _, _, symbol in holdings_meta])
         return summarize(holdings_meta, quotes, total=len(companies), connected=True)
 
-    @app.get("/portfolio/benchmark", response_model=PortfolioBenchmark, dependencies=protected)
+    @pe.get("/portfolio/benchmark", response_model=PortfolioBenchmark, dependencies=protected)
     def portfolio_benchmark() -> PortfolioBenchmark:
         """Benchmark each GICS sector's holdings against its sector-index proxy
         (SPDR Select Sector ETF — free; the licensed MSCI index is a later feed).
@@ -1157,7 +1174,7 @@ def create_app(
             ),
         )
 
-    @app.get("/macro", response_model=CountryMacro, dependencies=protected)
+    @pe.get("/macro", response_model=CountryMacro, dependencies=protected)
     def country_macro(country: str) -> CountryMacro:
         """Country macro for the World tab: World Bank GDP/inflation + the
         benchmark-index move. Returns connected=false when the feed is off."""
@@ -1166,7 +1183,7 @@ def create_app(
             return CountryMacro(country=country, connected=False, note="Macro not configured.")
         return service.country_macro(country)
 
-    @app.get("/news", response_model=NewsFeed, dependencies=protected)
+    @pe.get("/news", response_model=NewsFeed, dependencies=protected)
     def news(country: str | None = None) -> NewsFeed:
         """Business-news headlines: global, or scoped to `country` (free GDELT).
         Returns connected=false when the feed is off — never fabricated headlines."""
@@ -1177,7 +1194,7 @@ def create_app(
 
     # ---- [WORKSPACE] Watchlists & notifications ----------------------------------------
 
-    @app.post("/watchlists", response_model=WatchlistCreated, dependencies=protected)
+    @pe.post("/watchlists", response_model=WatchlistCreated, dependencies=protected)
     def create_watchlist(body: WatchlistCreate, email: str = Depends(current_email)) -> WatchlistCreated:
         store = _watchlists()
         for item in body.items:
@@ -1191,11 +1208,11 @@ def create_app(
         _audit(email, "watchlist.create", body.name)
         return WatchlistCreated(watchlist=watchlist, notifications_created=created)
 
-    @app.get("/watchlists", response_model=list[Watchlist], dependencies=protected)
+    @pe.get("/watchlists", response_model=list[Watchlist], dependencies=protected)
     def list_watchlists(email: str = Depends(current_email)) -> list[Watchlist]:
         return _watchlists().list_watchlists(email)
 
-    @app.post("/watchlists/evaluate-all", response_model=EvaluateAllResult, dependencies=protected)
+    @pe.post("/watchlists/evaluate-all", response_model=EvaluateAllResult, dependencies=protected)
     def evaluate_all_watchlists(email: str = Depends(current_email)) -> EvaluateAllResult:
         """Re-evaluate all of the user's watchlists in one pass (the "check for
         updates" action). Idempotent: notification de-dup means an unchanged
@@ -1204,34 +1221,34 @@ def create_app(
         created = sum(_evaluate_watchlist(email, wl) for wl in watchlists)
         return EvaluateAllResult(watchlists_evaluated=len(watchlists), notifications_created=created)
 
-    @app.delete("/watchlists/{watchlist_id}", dependencies=protected)
+    @pe.delete("/watchlists/{watchlist_id}", dependencies=protected)
     def delete_watchlist(watchlist_id: str, email: str = Depends(current_email)) -> dict[str, bool]:
         if not _watchlists().delete_watchlist(email, watchlist_id):
             raise HTTPException(status_code=404, detail="watchlist not found")
         _audit(email, "watchlist.delete", watchlist_id)
         return {"ok": True}
 
-    @app.post("/watchlists/{watchlist_id}/evaluate", dependencies=protected)
+    @pe.post("/watchlists/{watchlist_id}/evaluate", dependencies=protected)
     def evaluate_watchlist(watchlist_id: str, email: str = Depends(current_email)) -> dict[str, int]:
         watchlist = _watchlists().get_watchlist(email, watchlist_id)
         if watchlist is None:
             raise HTTPException(status_code=404, detail="watchlist not found")
         return {"notifications_created": _evaluate_watchlist(email, watchlist)}
 
-    @app.get("/notifications/summary", response_model=NotificationSummary, dependencies=protected)
+    @pe.get("/notifications/summary", response_model=NotificationSummary, dependencies=protected)
     def notifications_summary(email: str = Depends(current_email)) -> NotificationSummary:
         total, unread = _watchlists().summary(email)
         return NotificationSummary(total=total, unread=unread)
 
-    @app.get("/notifications", response_model=list[Notification], dependencies=protected)
+    @pe.get("/notifications", response_model=list[Notification], dependencies=protected)
     def notifications(unread_only: bool = False, email: str = Depends(current_email)) -> list[Notification]:
         return _watchlists().list_notifications(email, unread_only=unread_only)
 
-    @app.post("/notifications/read-all", dependencies=protected)
+    @pe.post("/notifications/read-all", dependencies=protected)
     def read_all_notifications(email: str = Depends(current_email)) -> dict[str, int]:
         return {"marked": _watchlists().mark_all_read(email)}
 
-    @app.post("/notifications/{notification_id}/read", dependencies=protected)
+    @pe.post("/notifications/{notification_id}/read", dependencies=protected)
     def read_notification(notification_id: str, email: str = Depends(current_email)) -> dict[str, bool]:
         if not _watchlists().mark_read(email, notification_id):
             raise HTTPException(status_code=404, detail="notification not found")
@@ -1244,7 +1261,7 @@ def create_app(
             raise HTTPException(status_code=503, detail="portfolios are not configured")
         return state.portfolios
 
-    @app.post("/portfolios", response_model=Portfolio, dependencies=protected)
+    @pe.post("/portfolios", response_model=Portfolio, dependencies=protected)
     def create_portfolio(body: PortfolioCreate, email: str = Depends(current_email)) -> Portfolio:
         portfolio = _portfolios().create_portfolio(
             email, body.name, body.holdings, created_at=datetime.now(tz=timezone.utc).isoformat()
@@ -1264,7 +1281,7 @@ def create_app(
             return resolve_positions(InMemoryKnowledgeGraphStore(), positions)
         return resolve_positions(graph, positions)
 
-    @app.post("/portfolios/resolve", response_model=ResolveReport, dependencies=protected)
+    @pe.post("/portfolios/resolve", response_model=ResolveReport, dependencies=protected)
     def resolve_holdings(body: HoldingsResolveRequest) -> ResolveReport:
         """Dry-run: resolve an uploaded holdings CSV against coverage and report the
         rate + which rows matched (by ticker/ISIN/SEDOL/name) and which did not.
@@ -1272,7 +1289,7 @@ def create_app(
 
         return _resolve_csv(body.csv)
 
-    @app.post("/portfolios/upload", response_model=PortfolioUploadResult, dependencies=protected)
+    @pe.post("/portfolios/upload", response_model=PortfolioUploadResult, dependencies=protected)
     def upload_portfolio(
         body: HoldingsUploadRequest, email: str = Depends(current_email)
     ) -> PortfolioUploadResult:
@@ -1298,18 +1315,18 @@ def create_app(
         _audit(email, "portfolio.upload", f"{body.name}: {len(holdings)}/{report.total} resolved")
         return PortfolioUploadResult(portfolio=portfolio, report=report)
 
-    @app.get("/portfolios", response_model=list[Portfolio], dependencies=protected)
+    @pe.get("/portfolios", response_model=list[Portfolio], dependencies=protected)
     def list_portfolios(email: str = Depends(current_email)) -> list[Portfolio]:
         return _portfolios().list_portfolios(email)
 
-    @app.delete("/portfolios/{portfolio_id}", dependencies=protected)
+    @pe.delete("/portfolios/{portfolio_id}", dependencies=protected)
     def delete_portfolio(portfolio_id: str, email: str = Depends(current_email)) -> dict[str, bool]:
         if not _portfolios().delete_portfolio(email, portfolio_id):
             raise HTTPException(status_code=404, detail="portfolio not found")
         _audit(email, "portfolio.delete", portfolio_id)
         return {"ok": True}
 
-    @app.get("/portfolios/{portfolio_id}/briefing", response_model=PortfolioBriefing, dependencies=protected)
+    @pe.get("/portfolios/{portfolio_id}/briefing", response_model=PortfolioBriefing, dependencies=protected)
     def portfolio_briefing(portfolio_id: str, email: str = Depends(current_email)) -> PortfolioBriefing:
         portfolio = _portfolios().get_portfolio(email, portfolio_id)
         if portfolio is None:
@@ -1351,7 +1368,7 @@ def create_app(
             raise HTTPException(status_code=503, detail="workspaces are not configured")
         return state.workspaces
 
-    @app.post("/workspaces", response_model=Workspace, dependencies=protected)
+    @plat.post("/workspaces", response_model=Workspace, dependencies=protected)
     def create_workspace(body: WorkspaceCreate, email: str = Depends(current_email)) -> Workspace:
         members = [m.strip().lower() for m in body.members if m.strip()]
         workspace = _workspaces().create_workspace(
@@ -1360,18 +1377,18 @@ def create_app(
         _audit(email, "workspace.create", workspace.name)
         return workspace
 
-    @app.get("/workspaces", response_model=list[Workspace], dependencies=protected)
+    @plat.get("/workspaces", response_model=list[Workspace], dependencies=protected)
     def list_workspaces(email: str = Depends(current_email)) -> list[Workspace]:
         return _workspaces().list_workspaces(email)
 
-    @app.get("/workspaces/{workspace_id}", response_model=Workspace, dependencies=protected)
+    @plat.get("/workspaces/{workspace_id}", response_model=Workspace, dependencies=protected)
     def get_workspace(workspace_id: str, email: str = Depends(current_email)) -> Workspace:
         workspace = _workspaces().get_workspace(email, workspace_id)
         if workspace is None:
             raise HTTPException(status_code=404, detail="workspace not found")
         return workspace
 
-    @app.post("/workspaces/{workspace_id}/items", response_model=WorkspaceItem, dependencies=protected)
+    @plat.post("/workspaces/{workspace_id}/items", response_model=WorkspaceItem, dependencies=protected)
     def add_workspace_item(
         workspace_id: str, body: WorkspaceItemCreate, email: str = Depends(current_email)
     ) -> WorkspaceItem:
@@ -1391,7 +1408,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="workspace not found")
         return stored
 
-    @app.delete("/workspaces/{workspace_id}/items/{item_id}", dependencies=protected)
+    @plat.delete("/workspaces/{workspace_id}/items/{item_id}", dependencies=protected)
     def delete_workspace_item(
         workspace_id: str, item_id: str, email: str = Depends(current_email)
     ) -> dict[str, bool]:
@@ -1399,7 +1416,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="item not found")
         return {"ok": True}
 
-    @app.post("/workspaces/{workspace_id}/members", dependencies=protected)
+    @plat.post("/workspaces/{workspace_id}/members", dependencies=protected)
     def add_workspace_member(
         workspace_id: str, body: MemberAdd, email: str = Depends(current_email)
     ) -> dict[str, bool]:
@@ -1409,7 +1426,7 @@ def create_app(
         _audit(email, "workspace.member.add", f"{workspace_id}:{member}")
         return {"ok": True}
 
-    @app.delete("/workspaces/{workspace_id}", dependencies=protected)
+    @plat.delete("/workspaces/{workspace_id}", dependencies=protected)
     def delete_workspace(workspace_id: str, email: str = Depends(current_email)) -> dict[str, bool]:
         if not _workspaces().delete_workspace(email, workspace_id):
             raise HTTPException(status_code=404, detail="workspace not found")
@@ -1423,17 +1440,17 @@ def create_app(
             raise HTTPException(status_code=503, detail="api keys are not configured")
         return state.api_keys
 
-    @app.post("/api-keys", response_model=ApiKeyCreated, dependencies=protected)
+    @plat.post("/api-keys", response_model=ApiKeyCreated, dependencies=protected)
     def create_api_key(body: ApiKeyCreate, email: str = Depends(current_email)) -> ApiKeyCreated:
         created = _api_keys().create(email, body.name, created_at=datetime.now(tz=timezone.utc).isoformat())
         _audit(email, "api_key.create", body.name)
         return created
 
-    @app.get("/api-keys", response_model=list[ApiKey], dependencies=protected)
+    @plat.get("/api-keys", response_model=list[ApiKey], dependencies=protected)
     def list_api_keys(email: str = Depends(current_email)) -> list[ApiKey]:
         return _api_keys().list_keys(email)
 
-    @app.delete("/api-keys/{key_id}", dependencies=protected)
+    @plat.delete("/api-keys/{key_id}", dependencies=protected)
     def revoke_api_key(key_id: str, email: str = Depends(current_email)) -> dict[str, bool]:
         if not _api_keys().revoke(email, key_id):
             raise HTTPException(status_code=404, detail="api key not found")
@@ -1449,7 +1466,7 @@ def create_app(
             raise HTTPException(status_code=503, detail="organizations are not configured")
         return state.orgs
 
-    @app.post("/organizations", response_model=Organization, dependencies=protected)
+    @plat.post("/organizations", response_model=Organization, dependencies=protected)
     def create_organization(body: OrgCreate, email: str = Depends(current_email)) -> Organization:
         plan = body.plan if body.plan in PLANS else "free"
         # Membership is owner-only at creation. Additional members must come through
@@ -1462,11 +1479,11 @@ def create_app(
         _audit(email, "organization.create", org.name)
         return org
 
-    @app.get("/organizations", response_model=list[Organization], dependencies=protected)
+    @plat.get("/organizations", response_model=list[Organization], dependencies=protected)
     def list_organizations(email: str = Depends(current_email)) -> list[Organization]:
         return _orgs().list_orgs(email)
 
-    @app.post("/organizations/{org_id}/plan", response_model=Organization, dependencies=protected)
+    @plat.post("/organizations/{org_id}/plan", response_model=Organization, dependencies=protected)
     def set_org_plan(org_id: str, body: PlanUpdate, email: str = Depends(current_email)) -> Organization:
         if body.plan not in PLANS:
             raise HTTPException(status_code=400, detail=f"unknown plan: {body.plan}")
@@ -1478,7 +1495,7 @@ def create_app(
         _audit(email, "organization.plan", f"{org_id}:{body.plan}")
         return org
 
-    @app.get("/organizations/{org_id}/billing", response_model=BillingSummary, dependencies=protected)
+    @plat.get("/organizations/{org_id}/billing", response_model=BillingSummary, dependencies=protected)
     def org_billing(org_id: str, email: str = Depends(current_email)) -> BillingSummary:
         org = _orgs().get_org(email, org_id)
         if org is None:
@@ -1498,11 +1515,11 @@ def create_app(
             within_limits=usage.total <= plan.max_api_calls_per_day,
         )
 
-    @app.get("/usage", response_model=UsageSummary, dependencies=protected)
+    @plat.get("/usage", response_model=UsageSummary, dependencies=protected)
     def usage(email: str = Depends(current_email)) -> UsageSummary:
         return state.usage.summary([email]) if state.usage else UsageSummary()
 
-    @app.get("/quota", response_model=QuotaStatus, dependencies=protected)
+    @plat.get("/quota", response_model=QuotaStatus, dependencies=protected)
     def quota(email: str = Depends(current_email)) -> QuotaStatus:
         """The caller's effective plan, today's usage, and remaining headroom.
 
@@ -1525,44 +1542,44 @@ def create_app(
             enforced=_quota_enforced(),
         )
 
-    @app.get("/admin/audit", response_model=list[AuditEntry])
+    @plat.get("/admin/audit", response_model=list[AuditEntry])
     def admin_audit(_: StoredUser = Depends(require_admin), limit: int = 200) -> list[AuditEntry]:
         return state.audit.list_entries(limit=limit) if state.audit else []
 
-    @app.get("/admin/dead-letter", response_model=list[DeadLetterEntry])
+    @plat.get("/admin/dead-letter", response_model=list[DeadLetterEntry])
     def admin_dead_letter(_: StoredUser = Depends(require_admin), limit: int = 200) -> list[DeadLetterEntry]:
         return state.dead_letters.list_entries(limit=limit) if state.dead_letters else []
 
     # ---- [SHARED] Intelligence (generic doc-intelligence + product analysis) ------------------------------------------------------
 
-    @app.get("/documents/{canonical_id}/summary", response_model=AISummary, dependencies=protected)
+    @plat.get("/documents/{canonical_id}/summary", response_model=AISummary, dependencies=protected)
     def document_summary(canonical_id: str) -> AISummary:
         summary = state.intelligence.get_summary(canonical_id) if state.intelligence else None
         if summary is None:
             raise HTTPException(status_code=404, detail="summary not available")
         return summary
 
-    @app.get("/companies/{slug}/timeline", response_model=list[ExtractedEvent], dependencies=protected)
+    @pe.get("/companies/{slug}/timeline", response_model=list[ExtractedEvent], dependencies=protected)
     def company_timeline(slug: str, limit: int = 50) -> list[ExtractedEvent]:
         if state.intelligence is None:
             return []
         return state.intelligence.list_events(company_slug=slug, limit=limit)
 
-    @app.get("/companies/{slug}/changes", response_model=list[ChangeSet], dependencies=protected)
+    @pe.get("/companies/{slug}/changes", response_model=list[ChangeSet], dependencies=protected)
     def company_changes(slug: str) -> list[ChangeSet]:
         if state.intelligence is None:
             return []
         return state.intelligence.list_change_sets(company_slug=slug)
 
-    @app.get("/status", response_model=RunStatus | None, dependencies=protected)
+    @plat.get("/status", response_model=RunStatus | None, dependencies=protected)
     def status() -> RunStatus | None:
         return load_run_status(settings)
 
-    @app.get("/monitoring", response_model=list[SourceReliability], dependencies=protected)
+    @plat.get("/monitoring", response_model=list[SourceReliability], dependencies=protected)
     def monitoring() -> list[SourceReliability]:
         return source_monitoring(settings)
 
-    @app.post("/analyst/{slug}", response_model=AnalysisReport, dependencies=protected)
+    @pe.post("/analyst/{slug}", response_model=AnalysisReport, dependencies=protected)
     def analyst(slug: str, body: AnalystRequest, email: str = Depends(current_email)) -> AnalysisReport:
         _enforce_api_quota(email)
         _record_usage(email, "analyst")
@@ -1596,7 +1613,7 @@ def create_app(
                 logger.warning("LLM analyst unavailable (%s); using deterministic fallback.", exc)
         return _run(ReferenceAnalyst())
 
-    @app.get("/signals/{slug}", response_model=list[Signal], dependencies=protected)
+    @pe.get("/signals/{slug}", response_model=list[Signal], dependencies=protected)
     def signals(slug: str) -> list[Signal]:
         company = next((c for c in load_companies(settings.config_dir) if c.slug == slug), None)
         name = company.name if company else slug
@@ -1617,7 +1634,7 @@ def create_app(
             country_exposures=exposures,
         )
 
-    @app.get("/dashboard", response_model=DashboardResponse, dependencies=protected)
+    @pe.get("/dashboard", response_model=DashboardResponse, dependencies=protected)
     def dashboard() -> DashboardResponse:
         documents = _all_documents(state.engine)
         latest = sorted(documents, key=lambda d: d.published_at or "", reverse=True)[:6]
@@ -1687,11 +1704,11 @@ def create_app(
             available={tier: gateway.available(tier) for tier in llm.TIERS},
         )
 
-    @app.get("/admin/llm", response_model=LLMConfigOut)
+    @plat.get("/admin/llm", response_model=LLMConfigOut)
     def admin_llm_get(_: StoredUser = Depends(require_admin)) -> LLMConfigOut:
         return _llm_config_out(llm.load_config(settings.data_dir))
 
-    @app.put("/admin/llm", response_model=LLMConfigOut)
+    @plat.put("/admin/llm", response_model=LLMConfigOut)
     def admin_llm_put(body: LLMConfigIn, _: StoredUser = Depends(require_admin)) -> LLMConfigOut:
         current = llm.load_config(settings.data_dir)
         providers: dict[str, llm.ProviderConfig] = {}
@@ -1708,11 +1725,11 @@ def create_app(
         llm.save_config(settings.data_dir, updated)
         return _llm_config_out(updated)
 
-    @app.post("/admin/llm/test/{tier}")
+    @plat.post("/admin/llm/test/{tier}")
     def admin_llm_test(tier: str, _: StoredUser = Depends(require_admin)) -> dict[str, object]:
         return LLMGateway(settings.data_dir).test(tier)
 
-    @app.get("/admin/customers", response_model=list[CustomerOut])
+    @plat.get("/admin/customers", response_model=list[CustomerOut])
     def admin_customers(_: StoredUser = Depends(require_admin)) -> list[CustomerOut]:
         users = state.auth.store.list_users() if state.auth is not None else []
         out: list[CustomerOut] = []
@@ -1722,6 +1739,12 @@ def create_app(
                 CustomerOut(email=user.email, role=user.role, created_at=user.created_at, api_calls=calls)
             )
         return out
+
+    # Compose the app: the shared platform surface + each enabled workspace's router,
+    # mounted from the registry (coruscant.apps.composition) rather than a hard-coded list.
+    app.include_router(plat)
+    for ws in composition.enabled_workspaces():
+        app.include_router(workspace_routers[ws.slug])
 
     return app
 

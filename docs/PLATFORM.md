@@ -211,21 +211,29 @@ is about where they live and what depends on them, not about erasing them.
 
 ## 9. Known coupling seams to resolve in later phases
 
-Drawing the boundary in docs and organization is Phase 1. Enforcing it in code is
-later, deliberate work. The concrete seams, in rough priority order:
+Drawing the boundary in docs and organization was Phase 1. Enforcing it in code is
+later, deliberate work — **Phase 2 (ADR-0013) enforced seams 1 and 2 and wrapped seam 3
+at the API layer**; the rest remain. The concrete seams, in rough priority order:
 
 1. **Domain config in the shared layer.** `common/config.py` defines investment models
    (`CompanyConfig`, `CommodityConfig`, `DebtConfig`, `InstrumentsConfig`) and product
    flags on `Settings` (`enable_live_prices/macro/news`, screening/anchoring/
    companies-house). A platform `Settings` should not import a domain schema. → move
-   domain config into a workspace config module.
-2. **Monolithic API app.** `apps/api.py` declares all ~95 routes on one `FastAPI` with
-   no routers/prefixes/tags, and `_AppState` bundles platform stores with product
-   services. → split into a platform router set + a Portfolio-Exposure workspace router,
-   composed at assembly time. (Banners are tagged now as a first step.)
+   domain config into a workspace config module. **✅ Phase 2: isolated** — the domain
+   models moved to `common/domain_config.py` (re-exported from `common/config.py` for
+   compatibility); the product *flags* on `Settings` remain (follow-up).
+2. **Monolithic API app.** `apps/api.py` declared all ~95 routes on one `FastAPI` with
+   no routers, and `_AppState` bundles platform stores with product services. → split
+   into a platform router set + a Portfolio-Exposure workspace router, composed at
+   assembly time. **✅ Phase 2: done (composition level)** — routes are split across a
+   `plat` (platform) router and a `pe` (Portfolio-Exposure) router, mounted via the
+   `apps/composition` registry (`enabled_workspaces()`). Behavior-preserving (no prefix;
+   route table unchanged). The `_AppState` store bundling remains (follow-up).
 3. **Exposure engine inside `knowledge_graph`.** The generic store and the product
    query engine share a package. → extract `queries.py`/`taxonomy.py`/`entities.py`
-   into a workspace `exposure` package that depends on the store port.
+   into a workspace `exposure` package that depends on the store port. **◐ Phase 2:
+   wrapped at the API layer** — the exposure endpoints are isolated on the `pe` workspace
+   router; the physical package extraction is still pending.
 4. **Finance defaults wired into generic ingestion.** `ingestion/registry.py` default
    definitions are finance-only. → move defaults into the workspace; keep the registry
    empty/pluggable at the platform layer.
@@ -239,8 +247,9 @@ later, deliberate work. The concrete seams, in rough priority order:
 7. **`workspaces` naming collision.** Resolve by renaming the collaboration package to
    `collaboration` once a code-touching phase is warranted (§5).
 
-Each of these is behavior-preserving to *mark* (Phase 1) and a real refactor to
-*move* (later). None is done in this phase.
+Each of these was behavior-preserving to *mark* (Phase 1) and a real refactor to
+*move* (later). Phase 2 moved seams 1 and 2 and wrapped seam 3; seams 4–7 remain, each
+to be done when it is the highest-value next step — not speculatively.
 
 ## 10. How future workspaces compose (the evolution path)
 
