@@ -194,7 +194,7 @@ def test_ingest_psc_is_idempotent() -> None:
 # -- runtime + CLI wiring ------------------------------------------------------
 
 def test_run_ownership_psc_from_bulk_file(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    from coruscant.apps.runtime import run_ownership
+    from coruscant.apps.workspace_runtime import run_ownership
     from coruscant.common.config import Settings
     from coruscant.knowledge_graph.persistence import load_graph, save_graph
 
@@ -211,7 +211,7 @@ def test_run_ownership_psc_from_bulk_file(tmp_path) -> None:  # type: ignore[no-
 
 
 def test_run_ownership_psc_requires_a_source(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    from coruscant.apps.runtime import run_ownership
+    from coruscant.apps.workspace_runtime import run_ownership
     from coruscant.common.config import Settings
     from coruscant.knowledge_graph.persistence import save_graph
 
@@ -232,7 +232,7 @@ def test_cli_ownership_accepts_psc_provider() -> None:
 def test_run_ownership_psc_live_scopes_to_covered_gb_numbers(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
     # With an API key set and GB coverage present, the live provider is built and
     # scoped to the covered company numbers (fetch itself is monkeypatched off).
-    from coruscant.apps import runtime
+    from coruscant.apps import workspace_runtime
     from coruscant.common.config import Settings
     from coruscant.knowledge_graph.persistence import save_graph
     from coruscant.ownership.companies_house import CompaniesHousePscProvider as Prov
@@ -247,5 +247,5 @@ def test_run_ownership_psc_live_scopes_to_covered_gb_numbers(monkeypatch, tmp_pa
         return _PSC_API
 
     monkeypatch.setattr(Prov, "_fetch_company", fake_fetch)
-    summary = runtime.run_ownership(settings, file_path=None, provider_name="psc")
+    summary = workspace_runtime.run_ownership(settings, file_path=None, provider_name="psc")
     assert summary.beneficial_owner_of == 2 and summary.owns == 1

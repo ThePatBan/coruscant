@@ -21,15 +21,20 @@ from coruscant.apps.runtime import (
     build_dead_letter_store,
     build_intelligence_store,
     build_org_store,
-    build_portfolio_store,
     build_saved_search_store,
     build_usage_store,
-    build_watchlist_store,
     build_workspace_store,
     load_engine,
     load_graph_store,
     load_run_status,
     source_monitoring,
+)
+from coruscant.apps.workspace_runtime import (
+    build_macro_service,
+    build_news_service,
+    build_portfolio_store,
+    build_price_service,
+    build_watchlist_store,
 )
 from coruscant.commercial.models import (
     DEFAULT_PLAN,
@@ -489,9 +494,9 @@ def create_app(
         saved_searches=saved_search_store,
         orgs=org_store,
         usage=usage_store,
-        prices=PriceService(enabled=settings.enable_live_prices),
-        macro=MacroService(enabled=settings.enable_live_macro),
-        news=NewsService(enabled=settings.enable_live_news),
+        prices=build_price_service(settings),
+        macro=build_macro_service(settings),
+        news=build_news_service(settings),
     )
 
     @asynccontextmanager

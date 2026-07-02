@@ -216,7 +216,7 @@ def test_company_owners_access_tier_and_as_of() -> None:
 # -- runtime + CLI wiring ------------------------------------------------------
 
 def test_run_ownership_offline_file_is_idempotent(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    from coruscant.apps.runtime import run_ownership
+    from coruscant.apps.workspace_runtime import run_ownership
     from coruscant.common.config import Settings
     from coruscant.knowledge_graph.persistence import load_graph, save_graph
 
@@ -238,7 +238,7 @@ def test_run_ownership_offline_file_is_idempotent(tmp_path) -> None:  # type: ig
 def test_run_ownership_requires_a_dataset() -> None:
     import pytest
 
-    from coruscant.apps.runtime import run_ownership
+    from coruscant.apps.workspace_runtime import run_ownership
     from coruscant.common.config import Settings
 
     settings = Settings(data_dir="/tmp/x", database_url="sqlite:///:memory:")

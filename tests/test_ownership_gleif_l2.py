@@ -174,7 +174,7 @@ def test_live_provider_scopes_to_supplied_leis(monkeypatch) -> None:  # type: ig
 # -- runtime wiring ------------------------------------------------------------
 
 def test_run_ownership_gleif_l2_from_file(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    from coruscant.apps.runtime import run_ownership
+    from coruscant.apps.workspace_runtime import run_ownership
     from coruscant.common.config import Settings
     from coruscant.knowledge_graph.persistence import load_graph, save_graph
 
@@ -191,7 +191,7 @@ def test_run_ownership_gleif_l2_from_file(tmp_path) -> None:  # type: ignore[no-
 
 
 def test_run_ownership_gleif_l2_live_scopes_to_anchored_leis(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
-    from coruscant.apps.runtime import run_ownership
+    from coruscant.apps.workspace_runtime import run_ownership
     from coruscant.common.config import Settings
     from coruscant.knowledge_graph.persistence import save_graph
 
