@@ -25,6 +25,8 @@ apps/console/node_modules/
 apps/console/dist/
 apps/admin/node_modules/
 apps/admin/dist/
+apps/marketing/node_modules/
+apps/marketing/dist/
 
 # Editor / OS
 .DS_Store
