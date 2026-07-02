@@ -1,9 +1,11 @@
 # Coruscant local stack:
 #   ingest  one-shot lifecycle run that populates the shared data volume
 #   api     FastAPI service that loads the persisted corpus on startup
-#   web     nginx serving the built SPA and reverse-proxying /api -> api
+#   web     nginx serving the customer console SPA, reverse-proxying /api -> api
+#   admin   nginx serving the internal admin SPA, reverse-proxying /api -> api
 #
-# Usage:  docker compose up --build      then open http://localhost:8080
+# Usage:  docker compose up --build      then open http://localhost:8080 (console)
+#                                          and  http://localhost:8081 (internal admin)
 services:
   ingest:
     build:
@@ -63,6 +65,20 @@ services:
     image: coruscant-web:local
     ports:
       - "8080:80"
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # Internal admin console (admin.coruscant.com). Same-origin /api proxy as the console;
+  # staff-only access is enforced by the API (`require_admin`), not by this container.
+  admin:
+    build:
+      context: ./apps/admin
+      dockerfile: Dockerfile
+    image: coruscant-admin:local
+    ports:
+      - "8081:80"
     restart: unless-stopped
     depends_on:
       api:

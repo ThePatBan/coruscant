@@ -32,7 +32,7 @@ describe("workspaceForPath", () => {
   });
   it("routes /enterprise* to the enterprise workspace", () => {
     expect(workspaceForPath("/enterprise")).toBe("enterprise");
-    expect(workspaceForPath("/enterprise/policy")).toBe("enterprise");
+    expect(workspaceForPath("/enterprise/organization")).toBe("enterprise");
   });
   it("treats every other signed-in path as personal", () => {
     expect(workspaceForPath("/world")).toBe("personal");
@@ -86,8 +86,8 @@ describe("isPublicReadablePath (Phase 6 public surface)", () => {
       expect(isPublicReadablePath(p)).toBe(true);
     }
   });
-  it("excludes monitoring, portfolio, admin and enterprise surfaces", () => {
-    for (const p of ["/portfolio", "/watchlists", "/alerts", "/settings", "/admin", "/monitoring", "/enterprise", "/enterprise/api", "/world", "/dashboard"]) {
+  it("excludes monitoring, portfolio and enterprise surfaces", () => {
+    for (const p of ["/portfolio", "/watchlists", "/alerts", "/settings", "/monitoring", "/enterprise", "/enterprise/api", "/enterprise/organization", "/world", "/dashboard"]) {
       expect(isPublicReadablePath(p)).toBe(false);
     }
   });
@@ -109,7 +109,7 @@ describe("routeAccess (the deterministic guard)", () => {
   it("sends an anonymous visitor to login for private surfaces", () => {
     expect(routeAccess("/portfolio", { authed: false })).toBe("requireLogin");
     expect(routeAccess("/enterprise", { authed: false })).toBe("requireLogin");
-    expect(routeAccess("/admin", { authed: false })).toBe("requireLogin");
+    expect(routeAccess("/enterprise/organization", { authed: false })).toBe("requireLogin");
   });
 });
 

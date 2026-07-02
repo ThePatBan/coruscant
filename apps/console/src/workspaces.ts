@@ -73,15 +73,16 @@ const PUBLIC_NAV: NavItem[] = [
   { to: "/changes", label: "What changed", Icon: IconChanged },
 ];
 
-// Enterprise reframes the org/collaboration/policy surfaces under its own spine.
-// Deep features live under /enterprise/* so the enterprise shell stays sticky.
+// Enterprise reframes the org/collaboration surfaces under its own spine. Deep features
+// live under /enterprise/* so the enterprise shell stays sticky. Internal Coruscant
+// operations are NOT here — they moved to the separate admin app (apps/admin) in Phase 9.
 const ENTERPRISE_NAV: NavItem[] = [
   { to: "/enterprise", label: "Overview", Icon: IconDashboard },
   { to: "/enterprise/collaboration", label: "Collaboration", Icon: IconCompany },
   { to: "/enterprise/sources", label: "Data sources", Icon: IconSignals },
   { to: "/enterprise/monitoring", label: "Monitoring", Icon: IconBell },
   { to: "/enterprise/api", label: "API & access", Icon: IconGear },
-  { to: "/enterprise/policy", label: "Policy & audit", Icon: IconShield },
+  { to: "/enterprise/organization", label: "Organization", Icon: IconShield },
 ];
 
 export const WORKSPACES: Record<WorkspaceKind, WorkspaceMeta> = {
@@ -120,11 +121,11 @@ export const WORKSPACES: Record<WorkspaceKind, WorkspaceMeta> = {
     label: "Enterprise",
     eyebrow: "For teams & organizations",
     blurb:
-      "Org-level intelligence. Shared workspaces, policy & audit, and programmatic API access for your whole team.",
+      "Org-level intelligence. Shared workspaces, organization administration, and programmatic API access for your whole team.",
     bullets: [
       "Shared workspaces & collaboration",
       "Scoped API keys & programmatic access",
-      "Policy, audit & admin controls",
+      "Organization settings & members",
     ],
     home: "/enterprise",
     requiresAuth: true,

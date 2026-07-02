@@ -12,7 +12,6 @@ import {
   IconShield,
 } from "./icons";
 import { canUseEnterprise, resolveHomeWorkspace, routeAccess, WORKSPACES, workspaceForPath, workspaceStore } from "./workspaces";
-import { AdminPage } from "./pages/AdminPage";
 import { AlertsPage } from "./pages/AlertsPage";
 import { AtlasStakeholderPage } from "./pages/AtlasStakeholderPage";
 import { AskPage } from "./pages/AskPage";
@@ -31,6 +30,7 @@ import { LandingPage } from "./pages/LandingPage";
 import { LiveSignalsPage } from "./pages/LiveSignalsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MonitoringPage } from "./pages/MonitoringPage";
+import { OrganizationPage } from "./pages/OrganizationPage";
 import { PortfolioPage } from "./pages/PortfolioPage";
 import { PublicHomePage } from "./pages/PublicHomePage";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -39,10 +39,16 @@ import { WatchlistsPage } from "./pages/WatchlistsPage";
 import { WorkspacesPage } from "./pages/WorkspacesPage";
 
 // Platform vs workspace (see docs/PLATFORM.md): the app SHELL — auth, health pills,
-// notifications, the user menu, /settings, /admin — is a PLATFORM surface shared by
-// every workspace. The primary nav per workspace (Public / Personal / Enterprise) is
+// notifications, the user menu, /settings — is a PLATFORM surface shared by every
+// workspace. The primary nav per workspace (Public / Personal / Enterprise) is
 // defined once in workspaces.ts and rendered by the shared shell below, so the three
 // products stay visually cohesive while feeling distinct.
+//
+// Internal Coruscant operations (the ops admin console) are NOT part of this
+// customer-facing console — they live in the separate apps/admin app on
+// admin.coruscant.com (Phase 9). Admins get a clearly-external link to it from the
+// user menu; nothing internal renders inside the console.
+const ADMIN_APP_URL = import.meta.env.VITE_ADMIN_URL ?? "https://admin.coruscant.com";
 
 // Breadcrumbs drive the browser tab title. Most specific patterns first.
 const CRUMBS: Array<[RegExp, string]> = [
@@ -50,7 +56,7 @@ const CRUMBS: Array<[RegExp, string]> = [
   [/^\/enterprise\/sources/, "Data sources"],
   [/^\/enterprise\/monitoring/, "Monitoring"],
   [/^\/enterprise\/api/, "API & access"],
-  [/^\/enterprise\/policy/, "Policy & audit"],
+  [/^\/enterprise\/organization/, "Organization"],
   [/^\/enterprise/, "Enterprise"],
   [/^\/public/, "Discover"],
   [/^\/world/, "Live signals"],
@@ -72,7 +78,6 @@ const CRUMBS: Array<[RegExp, string]> = [
   [/^\/compare/, "Compare documents"],
   [/^\/sources$/, "Sources"],
   [/^\/monitoring/, "Source monitoring"],
-  [/^\/admin/, "Admin console"],
   [/^\/settings/, "Settings"],
 ];
 
@@ -243,9 +248,20 @@ function UserMenu({
               <IconCard /> Plan &amp; usage
             </NavLink>
             {role === "admin" ? (
-              <NavLink to="/admin" className="usermenu-item" role="menuitem" onClick={() => setOpen(false)}>
-                <IconShield /> Admin console
-              </NavLink>
+              // Internal ops live on the separate admin app (admin.coruscant.com). This
+              // link leaves the customer console entirely — make that explicit (opens in
+              // a new tab, external-link affordance) and show it only to admins.
+              <a
+                href={ADMIN_APP_URL}
+                className="usermenu-item"
+                role="menuitem"
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => setOpen(false)}
+                title="Opens the internal admin app in a new tab"
+              >
+                <IconShield /> Internal admin ↗
+              </a>
             ) : null}
           </div>
 
@@ -494,7 +510,6 @@ export default function App() {
         <Route path="/compare" element={<ComparePage />} />
         <Route path="/sources" element={<SourcesPage />} />
         <Route path="/monitoring" element={<MonitoringPage />} />
-        <Route path="/admin" element={<AdminPage />} />
         <Route path="/settings" element={<SettingsPage />} />
 
         {/* Enterprise workspace — org-level surfaces under a sticky /enterprise shell.
@@ -504,7 +519,7 @@ export default function App() {
         <Route path="/enterprise/sources" element={<SourcesPage />} />
         <Route path="/enterprise/monitoring" element={<MonitoringPage />} />
         <Route path="/enterprise/api" element={<SettingsPage />} />
-        <Route path="/enterprise/policy" element={<AdminPage />} />
+        <Route path="/enterprise/organization" element={<OrganizationPage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

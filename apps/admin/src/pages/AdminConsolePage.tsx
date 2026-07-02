@@ -12,8 +12,9 @@ import { Loading } from "../components";
 
 // The admin console — a single pane for running the business: route each task
 // tier to a model (local Gemma for bulk work, Opus for the hard reasoning) and
-// see who's using the platform.
-export function AdminPage() {
+// see who's using the platform. Moved out of the customer console (apps/console)
+// in Phase 9 so internal operations live on admin.coruscant.com only.
+export function AdminConsolePage() {
   const { data, error, loading } = useAsync(() => api.adminLLM(), []);
   if (loading || (!data && !error)) return <Loading label="Loading admin console" />;
   if (error || !data) {
