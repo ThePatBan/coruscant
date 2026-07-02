@@ -10,7 +10,7 @@ from __future__ import annotations
 from coruscant.common.types import GraphNode
 from coruscant.knowledge_graph import substrate
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
-from coruscant.knowledge_graph.ownership_graph import ownership_chains
+from coruscant.exposure.ownership_graph import ownership_chains
 from coruscant.ownership import (
     OwnershipBasis,
     OwnershipParty,

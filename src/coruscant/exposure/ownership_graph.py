@@ -37,7 +37,7 @@ from pydantic import BaseModel
 
 from coruscant.common.types import GraphEdge
 from coruscant.knowledge_graph import substrate
-from coruscant.knowledge_graph.queries import EntityRef
+from coruscant.exposure.queries import EntityRef
 from coruscant.knowledge_graph.store import KnowledgeGraphStore
 
 # Mirrors coruscant.ownership.pipeline (kept local so this layer stays independent of

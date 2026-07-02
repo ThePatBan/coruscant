@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from coruscant.apps.runtime import evaluate_all_watchlists, run_ingestion
+from coruscant.apps.runtime import run_ingestion
+from coruscant.apps.workspace_runtime import evaluate_all_watchlists
 from coruscant.common.config import Settings
 from coruscant.watchlists.models import WatchItem
 from coruscant.watchlists.store import SqliteWatchlistStore

@@ -23,7 +23,7 @@ from coruscant.coverage.resolve import (
     parse_brokerage_csv,
     resolve_positions,
 )
-from coruscant.knowledge_graph import queries as Q
+from coruscant.exposure import queries as Q
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 
 # The real SEC company_tickers_exchange.json envelope, in miniature: a keep, an
@@ -327,7 +327,7 @@ def test_parse_brokerage_csv_tolerates_column_naming() -> None:
 def test_run_coverage_offline_file_is_idempotent(tmp_path) -> None:  # type: ignore[no-untyped-def]
     import json
 
-    from coruscant.apps.runtime import run_coverage
+    from coruscant.apps.workspace_runtime import run_coverage
     from coruscant.common.config import Settings
     from coruscant.knowledge_graph.persistence import load_graph, save_graph
 
@@ -352,7 +352,7 @@ def test_run_coverage_offline_file_is_idempotent(tmp_path) -> None:  # type: ign
 def test_run_coverage_rejects_unimplemented_market(tmp_path) -> None:  # type: ignore[no-untyped-def]
     import pytest
 
-    from coruscant.apps.runtime import run_coverage
+    from coruscant.apps.workspace_runtime import run_coverage
     from coruscant.common.config import Settings
 
     settings = Settings(data_dir=tmp_path / "d", database_url="sqlite:///:memory:")
@@ -618,7 +618,7 @@ def test_resolve_indian_book_by_symbol_and_isin() -> None:
 
 
 def test_run_coverage_india_offline_files_idempotent(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    from coruscant.apps.runtime import run_coverage
+    from coruscant.apps.workspace_runtime import run_coverage
     from coruscant.common.config import Settings
     from coruscant.knowledge_graph.persistence import load_graph
 
@@ -753,7 +753,7 @@ def test_resolve_uk_book_by_ticker_isin_and_sedol() -> None:
 
 
 def test_run_coverage_uk_offline_files_idempotent_and_market_alias(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    from coruscant.apps.runtime import run_coverage
+    from coruscant.apps.workspace_runtime import run_coverage
     from coruscant.common.config import Settings
     from coruscant.knowledge_graph.persistence import load_graph
 

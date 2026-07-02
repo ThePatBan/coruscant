@@ -26,7 +26,7 @@ from pydantic import BaseModel
 
 from coruscant.common.types import GraphEdge, GraphNode
 from coruscant.knowledge_graph import substrate
-from coruscant.knowledge_graph.entities import entity_key
+from coruscant.exposure.entities import entity_key
 from coruscant.knowledge_graph.resolution import Resolver, Verdict
 from coruscant.knowledge_graph.store import KnowledgeGraphStore
 from coruscant.screening.provider import ScreeningMatch, ScreeningProvider, ScreeningQuery

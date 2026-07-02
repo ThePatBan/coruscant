@@ -15,13 +15,15 @@ from coruscant.apps.runtime import (
     due_source_types,
     load_engine,
     load_graph_store,
+    run_ingestion,
+    seed_demo_user,
+)
+from coruscant.apps.workspace_runtime import (
     run_anchor,
     run_coverage,
-    run_ingestion,
     run_ownership,
     run_portfolio,
     run_screening,
-    seed_demo_user,
 )
 from coruscant.common.config import get_settings, load_companies
 from coruscant.common.logging import configure_logging

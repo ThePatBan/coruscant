@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from coruscant.common.types import GraphNode
-from coruscant.knowledge_graph import queries as Q
+from coruscant.exposure import queries as Q
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 from coruscant.knowledge_graph.resolution import Resolver, Verdict
 from coruscant.knowledge_graph.substrate import AccessTier

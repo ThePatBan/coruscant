@@ -213,7 +213,8 @@ is about where they live and what depends on them, not about erasing them.
 
 Drawing the boundary in docs and organization was Phase 1. Enforcing it in code is
 later, deliberate work — **Phase 2 (ADR-0013) enforced seams 1 and 2 and wrapped seam 3
-at the API layer**; the rest remain. The concrete seams, in rough priority order:
+at the API layer; Phase 3 physically extracted seam 3 and split the runtime + `_AppState`**;
+the rest remain. The concrete seams, in rough priority order:
 
 1. **Domain config in the shared layer.** `common/config.py` defines investment models
    (`CompanyConfig`, `CommodityConfig`, `DebtConfig`, `InstrumentsConfig`) and product
@@ -228,12 +229,20 @@ at the API layer**; the rest remain. The concrete seams, in rough priority order
    assembly time. **✅ Phase 2: done (composition level)** — routes are split across a
    `plat` (platform) router and a `pe` (Portfolio-Exposure) router, mounted via the
    `apps/composition` registry (`enabled_workspaces()`). Behavior-preserving (no prefix;
-   route table unchanged). The `_AppState` store bundling remains (follow-up).
+   route table unchanged). **✅ Phase 3: `_AppState` reduced** — the workspace product
+   services (`watchlists`, `portfolios`, `prices`, `macro`, `news`) moved into a
+   `WorkspaceServices` struct reached via `state.workspace`, built by `workspace_runtime`;
+   `engine`/`graph`/`intelligence` remain the shared core on `_AppState`.
 3. **Exposure engine inside `knowledge_graph`.** The generic store and the product
-   query engine share a package. → extract `queries.py`/`taxonomy.py`/`entities.py`
-   into a workspace `exposure` package that depends on the store port. **◐ Phase 2:
-   wrapped at the API layer** — the exposure endpoints are isolated on the `pe` workspace
-   router; the physical package extraction is still pending.
+   query engine shared a package. → extract into a workspace `exposure` package that
+   depends on the store port. **✅ Phase 3: extracted** — `queries` (exposure engine),
+   `taxonomy` (GICS/MSCI), `entities` (projection), `ownership_graph` (UBO/contagion),
+   and `extraction` (ingestion projection) now live in `coruscant.exposure`;
+   `knowledge_graph` is domain-neutral and imports nothing from `exposure`.
+   Runtime followed: the workspace store builders, market-data services, and pipelines
+   (`run_screening`/`run_anchor`/`run_portfolio`/`run_coverage`/`run_ownership`/
+   `evaluate_all_watchlists`) moved from platform `apps/runtime.py` to
+   `apps/workspace_runtime.py`.
 4. **Finance defaults wired into generic ingestion.** `ingestion/registry.py` default
    definitions are finance-only. → move defaults into the workspace; keep the registry
    empty/pluggable at the platform layer.
@@ -248,8 +257,9 @@ at the API layer**; the rest remain. The concrete seams, in rough priority order
    `collaboration` once a code-touching phase is warranted (§5).
 
 Each of these was behavior-preserving to *mark* (Phase 1) and a real refactor to
-*move* (later). Phase 2 moved seams 1 and 2 and wrapped seam 3; seams 4–7 remain, each
-to be done when it is the highest-value next step — not speculatively.
+*move* (later). Phase 2 moved seams 1 and 2 (routing) and wrapped seam 3; Phase 3
+physically moved seam 3 (exposure package) and split the runtime + `_AppState`. Seams
+4–7 remain, each to be done when it is the highest-value next step — not speculatively.
 
 ## 10. How future workspaces compose (the evolution path)
 
