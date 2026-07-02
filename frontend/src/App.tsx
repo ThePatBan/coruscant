@@ -37,8 +37,6 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { SourcesPage } from "./pages/SourcesPage";
 import { WatchlistsPage } from "./pages/WatchlistsPage";
 import { WorkspacesPage } from "./pages/WorkspacesPage";
-// TODO(retire): WorldPage was the markets-globe World view, superseded by
-// LiveSignalsPage at /world. File kept for reference; delete once signed off.
 
 // Platform vs workspace (see docs/PLATFORM.md): the app SHELL — auth, health pills,
 // notifications, the user menu, /settings, /admin — is a PLATFORM surface shared by
@@ -55,7 +53,7 @@ const CRUMBS: Array<[RegExp, string]> = [
   [/^\/enterprise\/policy/, "Policy & audit"],
   [/^\/enterprise/, "Enterprise"],
   [/^\/public/, "Discover"],
-  [/^\/world/, "World markets"],
+  [/^\/world/, "Live signals"],
   [/^\/country/, "Country exposure"],
   [/^\/atlas/, "Company graph"],
   [/^\/dashboard/, "Dashboard"],
@@ -177,11 +175,13 @@ function ThemeToggle({ theme, setTheme }: { theme: Theme; setTheme: (t: Theme) =
 
 function UserMenu({
   email,
+  role,
   theme,
   setTheme,
   onLogout,
 }: {
   email: string;
+  role: string | null;
   theme: Theme;
   setTheme: (t: Theme) => void;
   onLogout: () => void;
@@ -240,11 +240,13 @@ function UserMenu({
               <IconGear /> Settings
             </NavLink>
             <NavLink to="/settings" className="usermenu-item" role="menuitem" onClick={() => setOpen(false)}>
-              <IconCard /> Billing &amp; subscription
+              <IconCard /> Plan &amp; usage
             </NavLink>
-            <NavLink to="/admin" className="usermenu-item" role="menuitem" onClick={() => setOpen(false)}>
-              <IconShield /> Admin console
-            </NavLink>
+            {role === "admin" ? (
+              <NavLink to="/admin" className="usermenu-item" role="menuitem" onClick={() => setOpen(false)}>
+                <IconShield /> Admin console
+              </NavLink>
+            ) : null}
           </div>
 
           <button className="usermenu-item danger" role="menuitem" onClick={onLogout}>
@@ -263,7 +265,7 @@ function UserMenu({
  * so hook order stays stable across the loading → ready transition.
  */
 function WorkspaceShell() {
-  const { email, ready, logout } = useAuth();
+  const { email, role, ready, logout } = useAuth();
   const location = useLocation();
   const [theme, setTheme] = useTheme();
   const [navCollapsed, toggleNav] = useNavCollapsed();
@@ -344,7 +346,7 @@ function WorkspaceShell() {
             {email ? (
               <>
                 <NotificationBell />
-                <UserMenu email={email} theme={theme} setTheme={setTheme} onLogout={logout} />
+                <UserMenu email={email} role={role} theme={theme} setTheme={setTheme} onLogout={logout} />
               </>
             ) : (
               // Anonymous public browsing: no notifications/account menu — just the
@@ -465,10 +467,6 @@ export default function App() {
         {/* Personal (monitoring) spine */}
         <Route path="/world" element={<LiveSignalsPage />} />
         <Route path="/country" element={<CountryPage />} />
-        {/* TODO(retire): the 3D force-graph AtlasPage is superseded by the
-            labeled stakeholder map. File src/pages/AtlasPage.tsx (+ Atlas3D,
-            force3d, spatial, graph helpers it uses) kept for reference; delete
-            once the stakeholder map is signed off. */}
         <Route path="/atlas" element={<AtlasStakeholderPage />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/changes" element={<ChangesPage />} />

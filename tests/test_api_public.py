@@ -14,6 +14,7 @@ from coruscant.apps.api import create_app
 from coruscant.auth.service import AuthService
 from coruscant.auth.store import SqliteUserStore
 from coruscant.common.config import Settings
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 
@@ -159,3 +160,134 @@ def test_production_fails_closed_on_unsafe_config() -> None:
     Settings(production=False, cors_origins=["*"], secret_key="").ensure_launch_safe()
     # A safe production config boots fine.
     Settings(production=True, cors_origins=["https://x"], secret_key="strong").ensure_launch_safe()
+
+
+# ---- Closed-world guards on the auth boundary ------------------------------------
+#
+# The tests above spot-check a curated list. These two assert a CLOSED WORLD over the
+# actual route table, so accidental over-exposure (a new `dependencies=public` route,
+# or a route with NO auth gate at all) fails CI instead of shipping silently. They are
+# the automated backstop for the manual "keep this in sync" note above.
+
+# Paths intentionally reachable with no auth gate: liveness/readiness and the
+# unauthenticated auth endpoints themselves. Everything else MUST carry a gate.
+OPEN_ROUTES = {
+    "/health",
+    "/livez",
+    "/readyz",
+    "/version",
+    "/auth/register",
+    "/auth/login",
+    "/auth/logout",
+    "/auth/reset/request",
+    "/auth/reset/confirm",
+}
+
+# The COMPLETE anonymous public-read surface — every (method, path) reachable through
+# the `public_read` gate. This set IS the public boundary: making a route public (or
+# un-publishing one) must be a conscious edit here, or the drift guard below fails.
+EXPECTED_PUBLIC_ROUTES = {
+    ("POST", "/retrieve"),
+    ("GET", "/answer"),
+    ("GET", "/companies"),
+    ("GET", "/sources"),
+    ("GET", "/documents"),
+    ("GET", "/documents/{canonical_id}"),
+    ("GET", "/documents/{canonical_id}/summary"),
+    ("GET", "/compare"),
+    ("GET", "/entities"),
+    ("GET", "/entities/{kind}/{key}"),
+    ("GET", "/dashboard"),
+    ("GET", "/companies/{slug}/timeline"),
+    ("GET", "/companies/{slug}/changes"),
+    ("GET", "/graph/company/{slug}"),
+    ("GET", "/graph/company-network"),
+    ("GET", "/graph/company/{company_key}/owners"),
+    ("GET", "/graph/company/{company_key}/ownership-chain"),
+    ("GET", "/graph/company/{company_key}/contagion"),
+    ("GET", "/graph/co-executives"),
+    ("GET", "/graph/screening"),
+    ("GET", "/graph/resolution"),
+    ("GET", "/graph/coverage"),
+    ("GET", "/graph/exposure"),
+    ("GET", "/graph/ownership"),
+}
+
+# The auth-gate dependency callables. A route is "gated" iff one of these is reachable
+# from its dependant tree. (anon_rate_limit throttles but does NOT authenticate, so it
+# is deliberately excluded — auth routes carry it yet remain in OPEN_ROUTES.)
+_AUTH_GATES = {"require_user", "public_read", "require_admin"}
+
+
+def _api_routes(app: object) -> list[APIRoute]:
+    # Version-robust: routes appear either flattened (APIRoute with `.path`) or, on
+    # Starlette 1.x, under an `_IncludedRouter` wrapper exposing `.original_router`.
+    routes: list[APIRoute] = []
+    for r in getattr(app, "routes", []):
+        if isinstance(r, APIRoute):
+            routes.append(r)
+        elif hasattr(r, "original_router"):
+            routes.extend(s for s in r.original_router.routes if isinstance(s, APIRoute))
+    return routes
+
+
+def _gate_names(route: APIRoute) -> set[str]:
+    names: set[str] = set()
+    stack = list(route.dependant.dependencies)
+    while stack:
+        dep = stack.pop()
+        name = getattr(dep.call, "__name__", "")
+        if name:
+            names.add(name)
+        stack.extend(dep.dependencies)
+    return names
+
+
+def test_every_route_is_gated_or_explicitly_open(tmp_path: Path) -> None:
+    app = _client(tmp_path).app
+    routes = _api_routes(app)
+    assert routes, "route introspection found no APIRoutes — the FastAPI wrapper changed"
+    unguarded = sorted(
+        {
+            route.path
+            for route in routes
+            if not (_AUTH_GATES & _gate_names(route)) and route.path not in OPEN_ROUTES
+        }
+    )
+    assert not unguarded, (
+        "these routes carry no auth gate — add require_user/public_read/require_admin, "
+        f"or add the path to OPEN_ROUTES if it is intentionally open: {unguarded}"
+    )
+
+
+def test_public_read_surface_matches_the_allow_list(tmp_path: Path) -> None:
+    app = _client(tmp_path).app
+    actual = {
+        (method, route.path)
+        for route in _api_routes(app)
+        if "public_read" in _gate_names(route)
+        for method in route.methods - {"HEAD", "OPTIONS"}
+    }
+    assert actual == EXPECTED_PUBLIC_ROUTES, (
+        f"public surface drifted — newly exposed: {sorted(actual - EXPECTED_PUBLIC_ROUTES)}; "
+        f"no longer public: {sorted(EXPECTED_PUBLIC_ROUTES - actual)}"
+    )
+
+
+def test_auth_endpoints_are_rate_limited(tmp_path: Path, monkeypatch) -> None:
+    # Unauthenticated auth endpoints are PBKDF2-heavy; a per-IP fixed window blunts
+    # brute-force and CPU-amplification. Bad credentials still 401 until the window
+    # fills, then further attempts are throttled with 429.
+    from coruscant.apps import api as api_module
+
+    settings = api_module.get_settings()
+    monkeypatch.setattr(settings, "auth_rate_limit", 3)
+    client = _client(tmp_path)
+    statuses = [
+        client.post(
+            "/auth/login", json={"email": "nobody@example.com", "password": "password123"}
+        ).status_code
+        for _ in range(5)
+    ]
+    assert statuses.count(401) == 3  # first three attempts reach the (failing) login
+    assert statuses.count(429) == 2  # the 4th and 5th are throttled before hashing

@@ -662,6 +662,18 @@ def create_app(
     protected = [Depends(require_user)]
     public = [Depends(public_read)]
 
+    # Unauthenticated auth endpoints (login/register/reset) run PBKDF2 at 240k
+    # iterations, so an unthrottled burst is both a brute-force vector and a CPU DoS.
+    # Throttle per client IP on a separate, stricter budget than the read surface.
+    # In-process / single-instance (same follow-up as the public limiter); coarse
+    # anti-abuse, not authz.
+    auth_limiter = _FixedWindowRateLimiter(settings.auth_rate_limit)
+
+    def anon_rate_limit(request: Request) -> None:
+        auth_limiter.check(_client_ip(request))
+
+    auth_throttle = [Depends(anon_rate_limit)]
+
     def current_email(request: Request) -> str:
         # The caller's usage/ownership scope. Authenticated → their email; anonymous
         # (public surface) or auth-disabled (tests) → a shared anonymous scope. Never
@@ -767,7 +779,7 @@ def create_app(
 
     # ---- [PLATFORM] Authentication ----------------------------------------------------
 
-    @plat.post("/auth/register", response_model=TokenResponse)
+    @plat.post("/auth/register", response_model=TokenResponse, dependencies=auth_throttle)
     def register(body: RegisterRequest) -> TokenResponse:
         service = _auth()
         try:
@@ -776,7 +788,7 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return TokenResponse(token=service.issue_token(user.email), email=user.email)
 
-    @plat.post("/auth/login", response_model=TokenResponse)
+    @plat.post("/auth/login", response_model=TokenResponse, dependencies=auth_throttle)
     def login(body: LoginRequest) -> TokenResponse:
         service = _auth()
         try:
@@ -798,7 +810,7 @@ def create_app(
             raise HTTPException(status_code=401, detail="authentication required")
         return UserOut(email=user.email, created_at=user.created_at, role=user.role)
 
-    @plat.post("/auth/reset/request", response_model=ResetIssued)
+    @plat.post("/auth/reset/request", response_model=ResetIssued, dependencies=auth_throttle)
     def reset_request(body: ResetRequest) -> ResetIssued:
         # Always returns an identical generic response (no account enumeration).
         # The token is included only when explicitly enabled for offline/dev use.
@@ -911,10 +923,18 @@ def create_app(
                 )
         raise HTTPException(status_code=404, detail="document not found")
 
-    @plat.post("/retrieve", response_model=RetrieveResponse, dependencies=public)
-    def retrieve(request: RetrieveRequest, email: str = Depends(current_email)) -> RetrieveResponse:
-        _enforce_api_quota(email)
-        _record_usage(email, "retrieve")
+    @plat.post("/retrieve", response_model=RetrieveResponse)
+    def retrieve(
+        request: RetrieveRequest, user: StoredUser | None = Depends(public_read)
+    ) -> RetrieveResponse:
+        # Meter authenticated callers against their plan. Anonymous public callers are
+        # already fixed-window rate-limited per IP by ``public_read``; they must NOT be
+        # metered against the single shared "anonymous@local" quota bucket, or one IP
+        # could exhaust the free-plan daily cap and lock discovery for every anon
+        # visitor (with an "upgrade the plan" 429 they cannot act on).
+        if user is not None:
+            _enforce_api_quota(user.email)
+            _record_usage(user.email, "retrieve")
         reasoning = TemplateReasoningLayer(state.engine)
         matches = state.engine.retrieve_with_evidence(request.query, top_k=request.top_k)
         results = [

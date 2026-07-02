@@ -124,3 +124,17 @@ describe("canEnterWorkspace (entitlement gate)", () => {
     expect(canEnterWorkspace("enterprise", { authed: true })).toBe(true);
   });
 });
+
+describe("Public nav advertises only anon-reachable destinations", () => {
+  it("every Public workspace nav target clears the anonymous read gate", () => {
+    // The Public nav is what an unauthenticated visitor sees. /public (and any
+    // /public/* sub-page) is served by the unguarded PublicShell; every other target
+    // must satisfy isPublicReadablePath, or an anon click bounces to /login — silently
+    // breaking the "free & open" promise. Keeps PUBLIC_NAV and the read gate in lockstep.
+    for (const item of WORKSPACES.public.nav) {
+      const reachable =
+        item.to === "/public" || item.to.startsWith("/public/") || isPublicReadablePath(item.to);
+      expect(reachable, `Public nav advertises ${item.to} but it is not anon-readable`).toBe(true);
+    }
+  });
+});

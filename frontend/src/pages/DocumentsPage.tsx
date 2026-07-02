@@ -1,12 +1,15 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { docTypeLabel, Empty, ErrorView, Loading, sourceLabel } from "../components";
 import { useAsync } from "../hooks";
 
 export function DocumentsPage() {
+  // Seed the source filter from the URL so per-source "View documents →" links
+  // (SourcesPage) land pre-scoped; defaults to unfiltered when no param is present.
+  const [params] = useSearchParams();
   const [company, setCompany] = useState("");
-  const [sourceType, setSourceType] = useState("");
+  const [sourceType, setSourceType] = useState(() => params.get("source_type") ?? "");
 
   const filters = useAsync(
     async () => {

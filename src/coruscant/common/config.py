@@ -80,6 +80,12 @@ class Settings(BaseSettings):
     # Anonymous requests/minute per client IP against the public surface. Signed-in
     # callers are exempt (they have per-plan quotas instead). Fixed-window, in-proc.
     public_read_rate_limit: int = 120
+    # Requests/minute per client IP against the unauthenticated auth endpoints
+    # (login/register/reset). These run PBKDF2 at 240k iterations, so an unthrottled
+    # burst is both a credential brute-force vector and a CPU-amplification DoS. Coarse
+    # per-IP defence-in-depth (not authz); stricter than the read budget. Fixed-window,
+    # in-proc. Set 0 to disable (e.g. behind an upstream limiter).
+    auth_rate_limit: int = 30
     # Assert go-live safety at startup. When true, the app REFUSES to boot with an
     # unsafe production config (wildcard CORS, missing secret) instead of silently
     # degrading. Off by default so dev/test/offline use is never blocked.

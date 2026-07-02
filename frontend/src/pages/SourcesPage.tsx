@@ -43,7 +43,11 @@ export function SourcesPage() {
                 </p>
                 <div className="row-between">
                   <span className="mono faint">{s.source_type}</span>
-                  <Link to="/documents" className="faint" style={{ fontSize: 13 }}>
+                  <Link
+                    to={`/documents?source_type=${encodeURIComponent(s.source_type)}`}
+                    className="faint"
+                    style={{ fontSize: 13 }}
+                  >
                     View documents →
                   </Link>
                 </div>

@@ -86,7 +86,7 @@ export function LiveSignalsPage() {
   const load = useAsync(loadSignals, []);
   const data = load.data;
 
-  const [filter, setFilter] = useState<"all" | "changes" | "news">("all");
+  const [filter, setFilter] = useState<"all" | "news">("all");
   const [topicsOff, setTopicsOff] = useState<Record<string, boolean>>({});
   const [selId, setSelId] = useState<string | null>(null);
 
@@ -94,7 +94,7 @@ export function LiveSignalsPage() {
 
   const shown = useMemo(() => {
     if (!data) return [];
-    return data.sigs.filter((s) => !topicsOff[s.sector] && (filter === "all" || filter === "changes"));
+    return data.sigs.filter((s) => !topicsOff[s.sector] && filter !== "news");
   }, [data, filter, topicsOff]);
 
   const located = useMemo<GlobeSignal[]>(
@@ -133,8 +133,7 @@ export function LiveSignalsPage() {
               <div className="segmented ls-filters">
                 {(
                   [
-                    ["all", "All", data?.sigs.length ?? 0],
-                    ["changes", "Signals", data?.sigs.length ?? 0],
+                    ["all", "Signals", data?.sigs.length ?? 0],
                     ["news", "News", newsOn ? data?.news?.articles.length ?? 0 : 0],
                   ] as const
                 ).map(([k, label, n]) => (
