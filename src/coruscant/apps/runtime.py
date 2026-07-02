@@ -54,7 +54,8 @@ from coruscant.ingestion.orchestrator import (
     SourceResolver,
     reference_targets,
 )
-from coruscant.ingestion.registry import SourceDefinition, SourceRegistry, default_registry
+from coruscant.ingestion.registry import SourceDefinition, SourceRegistry
+from coruscant.exposure.sources import default_registry
 from coruscant.intelligence.reliability import (
     SourceReliability,
     errors_for_source,

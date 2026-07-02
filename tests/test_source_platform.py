@@ -14,7 +14,7 @@ from coruscant.infrastructure.repositories import (
 )
 from coruscant.infrastructure.schedule_store import SqliteScheduleStore
 from coruscant.ingestion.orchestrator import IngestionOrchestrator
-from coruscant.ingestion.registry import default_registry
+from coruscant.exposure.sources import default_registry
 from coruscant.ingestion.scheduler import due_sources, is_due
 
 UTC = timezone.utc
@@ -24,6 +24,7 @@ def test_every_document_gets_common_provenance(tmp_path: Path) -> None:
     db = f"sqlite:///{tmp_path / 'c.db'}"
     catalog = SqliteDocumentCatalog(db)
     IngestionOrchestrator(
+        registry=default_registry(),
         raw_repository=FileSystemRawDocumentRepository(tmp_path),
         normalized_repository=FileSystemNormalizedDocumentRepository(tmp_path),
         catalog=catalog,

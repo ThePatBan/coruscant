@@ -69,7 +69,7 @@ from coruscant.auth.store import StoredUser
 from coruscant.common.config import get_settings, load_companies
 from coruscant.common.types import SCHEMA_VERSION, NormalizedDocument, Provenance
 from coruscant.infrastructure.intelligence_store import SqliteIntelligenceStore
-from coruscant.ingestion.registry import default_registry
+from coruscant.exposure.sources import default_registry
 from coruscant.intelligence.analyst import AnalysisReport, ReferenceAnalyst
 from coruscant.intelligence.llm_analyst import LLMAnalyst
 from coruscant.llm import LLMError

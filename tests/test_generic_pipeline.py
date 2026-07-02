@@ -9,7 +9,7 @@ from coruscant.infrastructure.repositories import (
     FileSystemRawDocumentRepository,
 )
 from coruscant.ingestion.pipeline import GenericIngestionPipeline
-from coruscant.ingestion.registry import default_registry
+from coruscant.exposure.sources import default_registry
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 from coruscant.knowledge_graph.reference import ReferenceGraphProjector
 from coruscant.search.hybrid import HybridRetrievalEngine

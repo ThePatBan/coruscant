@@ -41,11 +41,8 @@ from coruscant.ingestion.orchestrator import (
     IngestionTarget,
     reference_targets,
 )
-from coruscant.ingestion.registry import (
-    SourceDefinition,
-    SourceRegistry,
-    default_registry,
-)
+from coruscant.ingestion.registry import SourceDefinition, SourceRegistry
+from coruscant.exposure.sources import default_registry
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 from coruscant.knowledge_graph.persistence import load_graph
 from coruscant.search.hybrid import HybridRetrievalEngine
