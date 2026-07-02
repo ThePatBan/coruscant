@@ -10,7 +10,7 @@ from hashlib import sha256
 
 from coruscant.common.config import CompanyConfig
 from coruscant.intelligence.models import ChangeSet, ExtractedEvent
-from coruscant.knowledge_graph.queries import exposure_to_country
+from coruscant.exposure.queries import exposure_to_country
 from coruscant.knowledge_graph.store import KnowledgeGraphStore
 from coruscant.watchlists.models import Notification, WatchItem
 

@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from coruscant.common.types import GraphEdge, GraphNode
-from coruscant.knowledge_graph import queries as Q
+from coruscant.exposure import queries as Q
 from coruscant.knowledge_graph.kuzu_store import KuzuKnowledgeGraphStore
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 from coruscant.knowledge_graph.store import KnowledgeGraphStore

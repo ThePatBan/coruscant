@@ -23,7 +23,7 @@ from coruscant.coverage.resolve import (
     parse_brokerage_csv,
     resolve_positions,
 )
-from coruscant.knowledge_graph import queries as Q
+from coruscant.exposure import queries as Q
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 
 # The real SEC company_tickers_exchange.json envelope, in miniature: a keep, an

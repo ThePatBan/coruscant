@@ -5,9 +5,9 @@ resolves to its issuer country. Empty exposure stays a real answer."""
 from __future__ import annotations
 
 from coruscant.common.config import CommodityConfig, CompanyConfig, DebtConfig, InstrumentsConfig
-from coruscant.knowledge_graph.extraction import project_sector_edges, project_instrument_edges
+from coruscant.exposure.extraction import project_sector_edges, project_instrument_edges
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
-from coruscant.knowledge_graph.queries import (
+from coruscant.exposure.queries import (
     commodity_exposure,
     debt_for_country,
     list_commodities,

@@ -18,7 +18,7 @@ import logging
 from coruscant.common.config import CompanyConfig, CompanyEntities, SourceSetting
 from coruscant.common.types import NormalizedDocument
 from coruscant.connectors.base import FetchRequest
-from coruscant.knowledge_graph.entities import (
+from coruscant.exposure.entities import (
     entity_names_for,
     link_document_mentions,
     project_company_entities,

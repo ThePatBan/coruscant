@@ -33,6 +33,7 @@ PLATFORM_PACKAGES: frozenset[str] = frozenset(
         "commercial",
         "enterprise",
         "infrastructure",
+        "knowledge_graph",  # domain-neutral graph substrate (exposure extracted — Phase 3)
         "llm",
         "search",
         "workspaces",  # collaboration space, NOT a product workspace (docs/PLATFORM.md §5)
@@ -43,6 +44,7 @@ PLATFORM_PACKAGES: frozenset[str] = frozenset(
 WORKSPACE_PACKAGES: frozenset[str] = frozenset(
     {
         "coverage",
+        "exposure",  # extracted from knowledge_graph in Phase 3 — the exposure engine + domain graph logic
         "macro",
         "news",
         "ownership",
@@ -60,7 +62,6 @@ MIXED_PACKAGES: frozenset[str] = frozenset(
         "connectors",  # interfaces (platform) + finance connectors (workspace)
         "ingestion",  # orchestrator/registry (platform) + finance defaults (workspace) — seam 4
         "intelligence",  # summarize/diff (platform) + event taxonomy (workspace) — seam 5
-        "knowledge_graph",  # store/substrate (platform) + exposure engine (workspace) — seam 3
     }
 )
 

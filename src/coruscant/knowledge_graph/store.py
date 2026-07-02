@@ -10,7 +10,7 @@ from coruscant.common.types import GraphEdge, GraphNode
 class KnowledgeGraphStore(ABC):
     """The graph-store port. Every backend (in-memory prototype, Kùzu, and later
     a server graph DB) implements this surface so the exposure engine
-    (:mod:`coruscant.knowledge_graph.queries`) and the API depend on the port, not
+    (:mod:`coruscant.exposure.queries`) and the API depend on the port, not
     a concrete store. The read methods below were lifted onto the port so a real
     graph store can be swapped in without touching the engine.
 

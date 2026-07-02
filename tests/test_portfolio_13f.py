@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from coruscant.common.types import GraphNode
-from coruscant.knowledge_graph import queries as Q
+from coruscant.exposure import queries as Q
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 from coruscant.knowledge_graph.substrate import AccessTier
 from coruscant.portfolio.holdings import HOLDS, FUND_KIND, ingest_fund_holdings

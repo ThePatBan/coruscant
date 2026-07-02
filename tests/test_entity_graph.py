@@ -2,19 +2,19 @@ from __future__ import annotations
 
 from coruscant.common.config import CompanyConfig, CompanyEntities, PersonConfig, SupplierConfig
 from coruscant.common.types import NormalizedDocument
-from coruscant.knowledge_graph.entities import (
+from coruscant.exposure.entities import (
     entity_names_for,
     link_document_mentions,
     project_company_entities,
 )
 from coruscant.common.types import GraphEdge, GraphNode
-from coruscant.knowledge_graph.extraction import (
+from coruscant.exposure.extraction import (
     project_company_nodes,
     project_market_tier_edges,
     project_sector_edges,
 )
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
-from coruscant.knowledge_graph.queries import (
+from coruscant.exposure.queries import (
     co_executives,
     entity_profile,
     exposure_to_country,

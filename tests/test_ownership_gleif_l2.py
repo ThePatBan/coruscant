@@ -14,7 +14,7 @@ import json
 
 from coruscant.common.types import GraphNode
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
-from coruscant.knowledge_graph.queries import company_owners
+from coruscant.exposure.queries import company_owners
 from coruscant.ownership import (
     CONSOLIDATES,
     OWNS,

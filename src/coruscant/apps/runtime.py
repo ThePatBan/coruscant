@@ -67,7 +67,7 @@ from coruscant.intelligence.reliability import (
     errors_for_source,
     score_source,
 )
-from coruscant.knowledge_graph.extraction import extract_relationships
+from coruscant.exposure.extraction import extract_relationships
 from coruscant.knowledge_graph.kuzu_store import KuzuKnowledgeGraphStore
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 from coruscant.knowledge_graph.persistence import (

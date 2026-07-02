@@ -24,9 +24,9 @@ from pathlib import Path
 
 from coruscant.common.config import CompanyConfig, InstrumentsConfig
 from coruscant.common.types import GraphEdge, GraphNode, NormalizedDocument
-from coruscant.knowledge_graph.entities import entity_key
+from coruscant.exposure.entities import entity_key
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
-from coruscant.knowledge_graph.taxonomy import (
+from coruscant.exposure.taxonomy import (
     company_gics,
     country_msci_tier,
     msci_tier_label,

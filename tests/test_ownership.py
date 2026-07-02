@@ -12,7 +12,7 @@ import json
 from coruscant.common.types import GraphNode
 from coruscant.knowledge_graph import substrate
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
-from coruscant.knowledge_graph.queries import company_owners, ownership_overview
+from coruscant.exposure.queries import company_owners, ownership_overview
 from coruscant.ownership import (
     BENEFICIAL_OWNER_OF,
     CONSOLIDATES,

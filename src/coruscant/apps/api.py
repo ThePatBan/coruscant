@@ -76,7 +76,7 @@ from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 from coruscant.knowledge_graph.store import KnowledgeGraphStore
 from coruscant import llm
 from coruscant.llm import LLMGateway
-from coruscant.knowledge_graph.queries import (
+from coruscant.exposure.queries import (
     CoExecutiveResult,
     CoverageOverview,
     EntityProfile,
@@ -128,7 +128,7 @@ from coruscant.knowledge_graph.queries import (
     screening_overview,
     sector_exposure,
 )
-from coruscant.knowledge_graph.ownership_graph import (
+from coruscant.exposure.ownership_graph import (
     CompanyOwnershipChains,
     GroupContagion,
     group_contagion,
@@ -136,7 +136,7 @@ from coruscant.knowledge_graph.ownership_graph import (
 )
 from coruscant.macro import CountryMacro, MacroService
 from coruscant.news import NewsFeed, NewsService
-from coruscant.knowledge_graph.taxonomy import company_gics
+from coruscant.exposure.taxonomy import company_gics
 from coruscant.pricing import (
     PortfolioBenchmark,
     PortfolioPrices,
