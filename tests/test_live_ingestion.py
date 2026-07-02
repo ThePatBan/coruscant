@@ -13,13 +13,20 @@ from hashlib import sha256
 from pathlib import Path
 from urllib.error import URLError
 
-from coruscant.apps.runtime import (
+from coruscant.apps.runtime import build_schedule_store
+from coruscant.apps.workspace_runtime import (
     build_registry,
     build_source_resolver,
-    build_schedule_store,
     run_ingestion,
 )
-from coruscant.common.config import CompanyConfig, Settings, SourceSetting, load_entities
+from coruscant.common.config import (
+    Settings,
+    SourceSetting,
+)
+from coruscant.exposure.domain_config import (
+    CompanyConfig,
+    load_entities,
+)
 from coruscant.connectors.base import FetchRequest, SourceConnector
 from coruscant.connectors.sec_edgar import (
     EdgarHttpConnector,
@@ -41,11 +48,8 @@ from coruscant.ingestion.orchestrator import (
     IngestionTarget,
     reference_targets,
 )
-from coruscant.ingestion.registry import (
-    SourceDefinition,
-    SourceRegistry,
-    default_registry,
-)
+from coruscant.ingestion.registry import SourceDefinition, SourceRegistry
+from coruscant.exposure.sources import default_registry
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 from coruscant.knowledge_graph.persistence import load_graph
 from coruscant.search.hybrid import HybridRetrievalEngine

@@ -4,7 +4,12 @@ resolves to its issuer country. Empty exposure stays a real answer."""
 
 from __future__ import annotations
 
-from coruscant.common.config import CommodityConfig, CompanyConfig, DebtConfig, InstrumentsConfig
+from coruscant.exposure.domain_config import (
+    CommodityConfig,
+    CompanyConfig,
+    DebtConfig,
+    InstrumentsConfig,
+)
 from coruscant.exposure.extraction import project_sector_edges, project_instrument_edges
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 from coruscant.exposure.queries import (

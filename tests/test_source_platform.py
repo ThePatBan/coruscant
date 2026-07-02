@@ -5,8 +5,16 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from coruscant.apps.runtime import build_schedule_store, due_source_types, run_ingestion
-from coruscant.common.config import CompanyConfig, Settings, SourceSetting
+from coruscant.apps.runtime import build_schedule_store
+from coruscant.apps.workspace_runtime import (
+    due_source_types,
+    run_ingestion,
+)
+from coruscant.common.config import (
+    Settings,
+    SourceSetting,
+)
+from coruscant.exposure.domain_config import CompanyConfig
 from coruscant.infrastructure.catalog import SqliteDocumentCatalog
 from coruscant.infrastructure.repositories import (
     FileSystemNormalizedDocumentRepository,
@@ -14,7 +22,7 @@ from coruscant.infrastructure.repositories import (
 )
 from coruscant.infrastructure.schedule_store import SqliteScheduleStore
 from coruscant.ingestion.orchestrator import IngestionOrchestrator
-from coruscant.ingestion.registry import default_registry
+from coruscant.exposure.sources import default_registry
 from coruscant.ingestion.scheduler import due_sources, is_due
 
 UTC = timezone.utc
@@ -24,6 +32,7 @@ def test_every_document_gets_common_provenance(tmp_path: Path) -> None:
     db = f"sqlite:///{tmp_path / 'c.db'}"
     catalog = SqliteDocumentCatalog(db)
     IngestionOrchestrator(
+        registry=default_registry(),
         raw_repository=FileSystemRawDocumentRepository(tmp_path),
         normalized_repository=FileSystemNormalizedDocumentRepository(tmp_path),
         catalog=catalog,

@@ -27,7 +27,6 @@ from coruscant.apps.runtime import (
     load_engine,
     load_graph_store,
     load_run_status,
-    source_monitoring,
 )
 from coruscant.apps.workspace_runtime import (
     build_macro_service,
@@ -35,6 +34,7 @@ from coruscant.apps.workspace_runtime import (
     build_portfolio_store,
     build_price_service,
     build_watchlist_store,
+    source_monitoring,
 )
 from coruscant.commercial.models import (
     DEFAULT_PLAN,
@@ -66,10 +66,11 @@ from coruscant.infrastructure.status import RunStatus
 from coruscant.intelligence.reliability import SourceReliability
 from coruscant.auth.service import AuthError, AuthService
 from coruscant.auth.store import StoredUser
-from coruscant.common.config import get_settings, load_companies
+from coruscant.common.config import get_settings
+from coruscant.exposure.domain_config import load_companies
 from coruscant.common.types import SCHEMA_VERSION, NormalizedDocument, Provenance
 from coruscant.infrastructure.intelligence_store import SqliteIntelligenceStore
-from coruscant.ingestion.registry import default_registry
+from coruscant.exposure.sources import default_registry
 from coruscant.intelligence.analyst import AnalysisReport, ReferenceAnalyst
 from coruscant.intelligence.llm_analyst import LLMAnalyst
 from coruscant.llm import LLMError

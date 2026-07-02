@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from coruscant.ingestion.registry import SourceRegistry, UnknownSourceError, default_registry
+from coruscant.ingestion.registry import SourceRegistry, UnknownSourceError
+from coruscant.exposure.sources import default_registry
 
 EXPECTED_SOURCES = {
     "sec_edgar",

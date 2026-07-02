@@ -7,20 +7,6 @@ import yaml
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Workspace-domain config schemas now live in `domain_config` (docs/PLATFORM.md §9,
-# seam 1). Re-exported here (`import ... as ...`) so existing
-# `from coruscant.common.config import CompanyConfig` imports keep working; new code
-# should import them from `coruscant.common.domain_config`.
-from coruscant.common.domain_config import (
-    CommodityConfig as CommodityConfig,
-    CompanyConfig as CompanyConfig,
-    CompanyEntities as CompanyEntities,
-    DebtConfig as DebtConfig,
-    InstrumentsConfig as InstrumentsConfig,
-    PersonConfig as PersonConfig,
-    SupplierConfig as SupplierConfig,
-)
-
 
 class SourceSetting(BaseModel):
     type: str
@@ -129,32 +115,9 @@ def get_settings() -> Settings:
     return Settings()
 
 
-def load_companies(config_dir: Path | None = None) -> list[CompanyConfig]:
-    base = config_dir or get_settings().config_dir
-    path = base / "companies.yml"
-    data = yaml.safe_load(path.read_text()) if path.exists() else {}
-    companies = data.get("companies", [])
-    return [CompanyConfig.model_validate(company) for company in companies]
-
-
-def load_instruments(config_dir: Path | None = None) -> InstrumentsConfig:
-    base = config_dir or get_settings().config_dir
-    path = base / "instruments.yml"
-    data = yaml.safe_load(path.read_text()) if path.exists() else {}
-    return InstrumentsConfig.model_validate(data or {})
-
-
 def load_sources(config_dir: Path | None = None) -> list[SourceSetting]:
     base = config_dir or get_settings().config_dir
     path = base / "sources.yml"
     data = yaml.safe_load(path.read_text()) if path.exists() else {}
     sources = data.get("sources", []) if isinstance(data, dict) else []
     return [SourceSetting.model_validate(source) for source in sources]
-
-
-def load_entities(config_dir: Path | None = None) -> dict[str, CompanyEntities]:
-    base = config_dir or get_settings().config_dir
-    path = base / "entities.yml"
-    data = yaml.safe_load(path.read_text()) if path.exists() else {}
-    companies = data.get("companies", {}) if isinstance(data, dict) else {}
-    return {slug: CompanyEntities.model_validate(value) for slug, value in companies.items()}

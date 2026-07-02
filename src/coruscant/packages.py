@@ -58,9 +58,9 @@ WORKSPACE_PACKAGES: frozenset[str] = frozenset(
 #: Packages fusing platform substrate and workspace domain — named seams to split later.
 MIXED_PACKAGES: frozenset[str] = frozenset(
     {
-        "common",  # types/errors/logging (platform) + domain config (workspace) — seam 1
+        "common",  # platform types + Settings; product Settings flags remain (seam 1 residual)
         "connectors",  # interfaces (platform) + finance connectors (workspace)
-        "ingestion",  # orchestrator/registry (platform) + finance defaults (workspace) — seam 4
+        "ingestion",  # generic mechanism; orchestrator still projects entities (seam 4 residual)
         "intelligence",  # summarize/diff (platform) + event taxonomy (workspace) — seam 5
     }
 )

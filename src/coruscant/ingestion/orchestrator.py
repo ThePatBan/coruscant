@@ -15,7 +15,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import logging
 
-from coruscant.common.config import CompanyConfig, CompanyEntities, SourceSetting
+from coruscant.common.config import SourceSetting
+from coruscant.exposure.domain_config import (
+    CompanyConfig,
+    CompanyEntities,
+)
 from coruscant.common.types import NormalizedDocument
 from coruscant.connectors.base import FetchRequest
 from coruscant.exposure.entities import (
@@ -31,7 +35,7 @@ from coruscant.infrastructure.repositories import (
     RawDocumentRepository,
 )
 from coruscant.ingestion.pipeline import GenericIngestionPipeline
-from coruscant.ingestion.registry import SourceDefinition, SourceRegistry, default_registry
+from coruscant.ingestion.registry import SourceDefinition, SourceRegistry
 from coruscant.intelligence.changes import ReferenceChangeDetector
 from coruscant.intelligence.events import ReferenceEventExtractor
 from coruscant.intelligence.summarizer import ReferenceSummarizer
@@ -145,7 +149,7 @@ class IngestionOrchestrator:
         self.catalog = catalog
         self.graph_store = graph_store if graph_store is not None else InMemoryKnowledgeGraphStore()
         self.engine = engine if engine is not None else HybridRetrievalEngine()
-        self.registry = registry if registry is not None else default_registry()
+        self.registry = registry if registry is not None else SourceRegistry()
         self.intelligence_store = intelligence_store
         self.entities = entities or {}
         self.dead_letter_store = dead_letter_store

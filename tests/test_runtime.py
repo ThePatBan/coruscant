@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from coruscant.apps.runtime import load_engine, load_graph_store, run_ingestion
+from coruscant.apps.runtime import (
+    load_engine,
+    load_graph_store,
+)
+from coruscant.apps.workspace_runtime import run_ingestion
 from coruscant.common.config import Settings
 
 

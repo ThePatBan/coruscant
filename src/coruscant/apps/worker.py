@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from coruscant.apps.runtime import run_ingestion, seed_demo_user
-from coruscant.apps.workspace_runtime import evaluate_all_watchlists
+from coruscant.apps.runtime import seed_demo_user
+from coruscant.apps.workspace_runtime import (
+    evaluate_all_watchlists,
+    run_ingestion,
+)
 from coruscant.common.logging import configure_logging
 
 

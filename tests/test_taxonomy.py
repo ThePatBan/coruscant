@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from coruscant.common.config import load_companies
+from coruscant.exposure.domain_config import load_companies
 from coruscant.exposure.taxonomy import (
     COMPANY_GICS_CODE,
     COUNTRY_MSCI,

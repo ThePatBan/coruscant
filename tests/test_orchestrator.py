@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from coruscant.common.config import CompanyConfig, SourceSetting
+from coruscant.exposure.sources import default_registry
+from coruscant.common.config import SourceSetting
+from coruscant.exposure.domain_config import CompanyConfig
 from coruscant.infrastructure.catalog import SqliteDocumentCatalog
 from coruscant.infrastructure.intelligence_store import SqliteIntelligenceStore
 from coruscant.infrastructure.repositories import (
@@ -33,6 +35,7 @@ def _orchestrator(
     graph = InMemoryKnowledgeGraphStore()
     engine = HybridRetrievalEngine()
     orchestrator = IngestionOrchestrator(
+        registry=default_registry(),
         raw_repository=FileSystemRawDocumentRepository(tmp_path),
         normalized_repository=FileSystemNormalizedDocumentRepository(tmp_path),
         catalog=catalog,

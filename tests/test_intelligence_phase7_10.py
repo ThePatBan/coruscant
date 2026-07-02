@@ -5,8 +5,13 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from coruscant.exposure.sources import default_registry
 from coruscant.apps.api import create_app
-from coruscant.common.config import CompanyConfig, SourceSetting, load_entities
+from coruscant.common.config import SourceSetting
+from coruscant.exposure.domain_config import (
+    CompanyConfig,
+    load_entities,
+)
 from coruscant.infrastructure.catalog import SqliteDocumentCatalog
 from coruscant.infrastructure.intelligence_store import SqliteIntelligenceStore
 from coruscant.infrastructure.repositories import (
@@ -29,6 +34,7 @@ def client(tmp_path: Path) -> TestClient:
     graph = InMemoryKnowledgeGraphStore()
     engine = HybridRetrievalEngine()
     IngestionOrchestrator(
+        registry=default_registry(),
         raw_repository=FileSystemRawDocumentRepository(tmp_path),
         normalized_repository=FileSystemNormalizedDocumentRepository(tmp_path),
         catalog=catalog,

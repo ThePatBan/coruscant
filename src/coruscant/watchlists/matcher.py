@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from hashlib import sha256
 
-from coruscant.common.config import CompanyConfig
+from coruscant.exposure.domain_config import CompanyConfig
 from coruscant.intelligence.models import ChangeSet, ExtractedEvent
 from coruscant.exposure.queries import exposure_to_country
 from coruscant.knowledge_graph.store import KnowledgeGraphStore

@@ -13,6 +13,7 @@ not import this module.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -33,25 +34,63 @@ if TYPE_CHECKING:
 from coruscant.common.config import (
     Settings,
     get_settings,
+    load_sources,
+)
+from coruscant.exposure.domain_config import (
+    CompanyConfig,
     load_companies,
+    load_entities,
+    load_instruments,
 )
 from coruscant.connectors.sec_edgar import RateLimiter
+from coruscant.exposure.extraction import extract_relationships
+from coruscant.exposure.sources import default_registry
+from coruscant.infrastructure.repositories import (
+    FileSystemNormalizedDocumentRepository,
+    FileSystemRawDocumentRepository,
+)
+from coruscant.infrastructure.status import RunStatus, load_status, save_status
+from coruscant.ingestion.orchestrator import (
+    IngestionOrchestrator,
+    IngestionReport,
+    IngestionTarget,
+    SourceResolver,
+    reference_targets,
+)
+from coruscant.ingestion.registry import SourceDefinition, SourceRegistry
+from coruscant.ingestion.scheduler import due_sources
+from coruscant.intelligence.reliability import (
+    SourceReliability,
+    errors_for_source,
+    score_source,
+)
+from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 from coruscant.knowledge_graph.persistence import (
+    load_graph,
     load_resolver,
     save_graph,
     save_resolver,
 )
 from coruscant.knowledge_graph.store import KnowledgeGraphStore
 from coruscant.portfolio.store import SqlitePortfolioStore
+from coruscant.search.hybrid import HybridRetrievalEngine
 from coruscant.watchlists.matcher import match_watch_items
 from coruscant.watchlists.store import SqliteWatchlistStore
 from coruscant.macro import MacroService
 from coruscant.news import NewsService
 from coruscant.pricing import PriceService
 
-# Shared platform assembly (workspace -> platform is the allowed direction). The
-# intelligence store is generic doc-intelligence infra; the graph loader is platform.
-from coruscant.apps.runtime import build_intelligence_store, load_graph_store
+# Shared platform assembly (workspace -> platform is the allowed direction): the generic
+# intelligence store, catalog, dead-letter + schedule store builders, and graph loader.
+from coruscant.apps.runtime import (
+    build_catalog,
+    build_dead_letter_store,
+    build_intelligence_store,
+    build_schedule_store,
+    load_graph_store,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def build_watchlist_store(settings: Settings | None = None) -> SqliteWatchlistStore:
@@ -507,3 +546,160 @@ def evaluate_all_watchlists(settings: Settings | None = None, *, now: datetime |
         )
         created += watchlist_store.add_notifications(user_email, watchlist.id, notifications)
     return created
+
+
+def due_source_types(settings: Settings | None = None, now: datetime | None = None) -> list[str]:
+    """Source types whose cadence has elapsed (scheduler decision)."""
+
+    settings = settings or get_settings()
+    moment = now or datetime.now(tz=timezone.utc)
+    last_runs = build_schedule_store(settings).last_runs()
+    return due_sources(default_registry().definitions(), last_runs, moment)
+
+
+def build_registry(
+    settings: Settings | None = None, *, rate_limiter: RateLimiter | None = None
+) -> SourceRegistry:
+    """Registry with live connectors swapped in for ``settings.live_sources``."""
+
+    settings = settings or get_settings()
+    return default_registry(
+        settings.live_sources,
+        edgar_user_agent=settings.edgar_user_agent,
+        rate_limiter=rate_limiter,
+    )
+
+
+def build_source_resolver(settings: Settings | None = None) -> SourceResolver:
+    """Choose how disclosures are located per source.
+
+    Offline (default): synthetic reference targets. When ``sec_edgar`` is live,
+    its targets are the company's configured real SEC filing URLs (oldest →
+    newest so the change detector still sees a prior + current); a company with no
+    configured filings (e.g. a private company with no 10-K) simply yields nothing
+    — an observable zero, not an error. Every other source stays on reference.
+    """
+
+    settings = settings or get_settings()
+    live = set(settings.live_sources)
+    if "sec_edgar" not in live:
+        return reference_targets
+
+    def resolver(
+        company: CompanyConfig, source_type: str, definition: SourceDefinition
+    ) -> list[IngestionTarget]:
+        if source_type != "sec_edgar":
+            return reference_targets(company, source_type, definition)
+        return [
+            IngestionTarget(
+                label=f"SEC filing {revision + 1}",
+                published_at="",  # the real date comes from the parsed filing
+                source_uri=url,
+                revision=revision,
+            )
+            for revision, url in enumerate(company.sec_filings)
+        ]
+
+    return resolver
+
+
+def run_ingestion(
+    settings: Settings | None = None,
+    *,
+    respect_due: bool = False,
+    now: datetime | None = None,
+) -> IngestionReport:
+    """Run the ingestion lifecycle and persist all derived stores.
+
+    ``respect_due=True`` (the scheduled/worker path) ingests only sources whose
+    cadence has elapsed and layers them onto the existing graph snapshot, so a
+    partial run never drops not-due sources' projections. The default full run
+    (CLI/one-shot) rebuilds everything from scratch — unchanged behavior.
+    """
+
+    settings = settings or get_settings()
+    moment = now or datetime.now(tz=timezone.utc)
+    # One shared limiter for the whole run keeps the aggregate SEC request rate
+    # under the fair-access cap. Only constructed when something runs live.
+    rate_limiter = (
+        RateLimiter(1.0 / settings.sec_rate_limit_per_second)
+        if settings.live_sources and settings.sec_rate_limit_per_second > 0
+        else None
+    )
+
+    companies = load_companies(settings.config_dir)
+    sources = load_sources(settings.config_dir)
+    if respect_due:
+        due = set(due_source_types(settings, now=moment))
+        skipped = sorted(s.type for s in sources if s.enabled and s.type not in due)
+        sources = [s for s in sources if s.type in due]
+        if skipped:
+            logger.info("Scheduler: skipping not-due sources: %s", ", ".join(skipped))
+
+    # Incremental due-runs start from the persisted graph so not-due sources
+    # survive; full runs start clean. Re-projection is idempotent (dedup by id).
+    if respect_due and settings.graph_snapshot_path.exists():
+        graph_store = load_graph(settings.graph_snapshot_path)
+    else:
+        graph_store = InMemoryKnowledgeGraphStore()
+
+    orchestrator = IngestionOrchestrator(
+        raw_repository=FileSystemRawDocumentRepository(settings.data_dir),
+        normalized_repository=FileSystemNormalizedDocumentRepository(settings.data_dir),
+        catalog=build_catalog(settings),
+        graph_store=graph_store,
+        engine=HybridRetrievalEngine(),
+        registry=build_registry(settings, rate_limiter=rate_limiter),
+        intelligence_store=build_intelligence_store(settings),
+        entities=load_entities(settings.config_dir),
+        dead_letter_store=build_dead_letter_store(settings),
+        resolver=build_source_resolver(settings),
+        max_attempts=settings.ingest_max_attempts,
+    )
+    report = orchestrator.run(companies, sources)
+    # Deterministic relationship extraction over the ingested corpus: cross-company
+    # co-mention bridges + SIC sector edges, each with provenance. This is what
+    # turns a larger company set into a connected graph rather than isolated nodes.
+    instruments = load_instruments(settings.config_dir)
+    extraction = extract_relationships(graph_store, companies, settings.data_dir, instruments)
+    logger.info(
+        "Extraction: %d co-mention references, %d sector (GICS) edges, %d market-tier "
+        "edges, %d subsidiaries, %d officer (people) edges, %d commodities, %d debt "
+        "(over %d documents)",
+        extraction["references"],
+        extraction["in_sector"],
+        extraction["market_tiers"],
+        extraction["subsidiaries"],
+        extraction["people"],
+        extraction["commodities"],
+        extraction["debt"],
+        extraction["documents"],
+    )
+    save_graph(graph_store, settings.graph_snapshot_path)
+    completed_at = moment.isoformat()
+    save_status(RunStatus.from_report(report, completed_at=completed_at), settings.status_path)
+    # Record last successful run per source so the scheduler can compute due-ness.
+    schedule = build_schedule_store(settings)
+    for source_type in report.source_types:
+        schedule.record_run(source_type, completed_at)
+    return report
+
+
+def source_monitoring(settings: Settings | None = None) -> list[SourceReliability]:
+    """Per-source reliability and counts, assembled from the catalog + last run."""
+
+    settings = settings or get_settings()
+    catalog = build_catalog(settings)
+    status = load_status(settings.status_path)
+    errors = status.errors if status else []
+    reports = [
+        score_source(
+            source_type=definition.source_type,
+            label=definition.label,
+            authority=definition.authority,
+            documents=catalog.list_documents(source_type=definition.source_type),
+            error_count=errors_for_source(definition.source_type, errors),
+        )
+        for definition in default_registry().definitions()
+    ]
+    return sorted(reports, key=lambda r: r.score, reverse=True)

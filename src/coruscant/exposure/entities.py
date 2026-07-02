@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 
-from coruscant.common.config import CompanyEntities
+from coruscant.exposure.domain_config import CompanyEntities
 from coruscant.common.types import GraphEdge, GraphNode, NormalizedDocument
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 from coruscant.knowledge_graph.reference import document_node_kind

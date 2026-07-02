@@ -15,7 +15,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from coruscant.apps.api import API_VERSION, create_app
-from coruscant.common.config import CompanyConfig, SourceSetting, load_entities
+from coruscant.common.config import SourceSetting
+from coruscant.exposure.domain_config import (
+    CompanyConfig,
+    load_entities,
+)
 from coruscant.common.errors import FetchError
 from coruscant.common.types import SCHEMA_VERSION, SourceDocument, section_id
 from coruscant.connectors import sec_edgar

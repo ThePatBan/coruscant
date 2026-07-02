@@ -3,7 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from coruscant.common.config import CompanyConfig, SourceSetting
+from coruscant.common.config import SourceSetting
+from coruscant.exposure.domain_config import CompanyConfig
 from coruscant.common.types import SourceDocument
 from coruscant.connectors.base import FetchRequest, SourceConnector
 from coruscant.connectors.common import normalize_reference_document

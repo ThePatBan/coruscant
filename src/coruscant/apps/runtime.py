@@ -4,18 +4,17 @@ Centralizes how the durable stores (filesystem artifacts, SQLite catalog, graph
 snapshot) are constructed and how an ingestion run is assembled and replayed.
 
 Boundary: PLATFORM (assembly). Owns platform store builders (``build_auth_service`` /
-``build_org_store`` / ``build_api_key_store`` / …), the generic intelligence store, the
-ingestion lifecycle (``run_ingestion``), and the serving loaders (``load_engine`` /
-``load_graph_store``). The workspace-specific store builders, market-data services, and
-pipelines (``run_screening`` / ``run_anchor`` / ``run_portfolio`` / ``run_coverage`` /
-``run_ownership`` / ``evaluate_all_watchlists``) were extracted to
-``coruscant.apps.workspace_runtime`` in Phase 3 (docs/PLATFORM.md §9). This module does
-not import the workspace runtime; the dependency runs workspace -> platform only.
+``build_org_store`` / ``build_api_key_store`` / …), the generic intelligence store, and
+the serving loaders (``load_engine`` / ``load_graph_store``). The workspace-specific store
+builders, market-data services, and pipelines moved to ``coruscant.apps.workspace_runtime``
+(Phase 3), and the finance ingestion assembly (``run_ingestion`` / ``build_registry`` /
+``build_source_resolver`` / ``due_source_types`` / ``source_monitoring``) followed in
+Phase 4 — so this module imports **nothing** from ``coruscant.exposure`` or the workspace
+runtime. The dependency runs workspace -> platform only (docs/PLATFORM.md §9).
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import logging
 import secrets
 
@@ -31,41 +30,15 @@ from coruscant.auth.service import AuthService
 from coruscant.auth.store import SqliteUserStore
 from coruscant.commercial.store import SqliteOrgStore, SqliteUsageStore
 from coruscant.common.config import (
-    CompanyConfig,
     Settings,
     get_settings,
-    load_companies,
-    load_entities,
-    load_instruments,
-    load_sources,
 )
-from coruscant.connectors.sec_edgar import RateLimiter
 from coruscant.infrastructure.catalog import SqliteDocumentCatalog
 from coruscant.infrastructure.intelligence_store import SqliteIntelligenceStore
-from coruscant.infrastructure.status import RunStatus, load_status, save_status
-from coruscant.infrastructure.repositories import (
-    FileSystemNormalizedDocumentRepository,
-    FileSystemRawDocumentRepository,
-)
-from coruscant.ingestion.orchestrator import (
-    IngestionOrchestrator,
-    IngestionReport,
-    IngestionTarget,
-    SourceResolver,
-    reference_targets,
-)
-from coruscant.ingestion.registry import SourceDefinition, SourceRegistry, default_registry
-from coruscant.intelligence.reliability import (
-    SourceReliability,
-    errors_for_source,
-    score_source,
-)
-from coruscant.exposure.extraction import extract_relationships
+from coruscant.infrastructure.status import RunStatus, load_status
 from coruscant.knowledge_graph.kuzu_store import KuzuKnowledgeGraphStore
-from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 from coruscant.knowledge_graph.persistence import (
     load_graph,
-    save_graph,
 )
 from coruscant.knowledge_graph.store import KnowledgeGraphStore
 from coruscant.enterprise.api_keys import SqliteApiKeyStore
@@ -73,7 +46,6 @@ from coruscant.enterprise.audit import SqliteAuditStore
 from coruscant.infrastructure.dead_letter import SqliteDeadLetterStore
 from coruscant.infrastructure.saved_searches import SqliteSavedSearchStore
 from coruscant.infrastructure.schedule_store import SqliteScheduleStore
-from coruscant.ingestion.scheduler import due_sources
 from coruscant.search.hybrid import HybridRetrievalEngine
 from coruscant.workspaces.store import SqliteWorkspaceStore
 
@@ -146,15 +118,6 @@ def backup(settings: Settings | None = None, *, out_path: Path | None = None) ->
     return target
 
 
-def due_source_types(settings: Settings | None = None, now: datetime | None = None) -> list[str]:
-    """Source types whose cadence has elapsed (scheduler decision)."""
-
-    settings = settings or get_settings()
-    moment = now or datetime.now(tz=timezone.utc)
-    last_runs = build_schedule_store(settings).last_runs()
-    return due_sources(default_registry().definitions(), last_runs, moment)
-
-
 logger = logging.getLogger(__name__)
 
 _INSECURE_SECRETS = {"", "dev-insecure-secret-change-me"}
@@ -213,157 +176,9 @@ def seed_demo_user(settings: Settings | None = None) -> bool:
     return True
 
 
-def build_registry(
-    settings: Settings | None = None, *, rate_limiter: RateLimiter | None = None
-) -> SourceRegistry:
-    """Registry with live connectors swapped in for ``settings.live_sources``."""
-
-    settings = settings or get_settings()
-    return default_registry(
-        settings.live_sources,
-        edgar_user_agent=settings.edgar_user_agent,
-        rate_limiter=rate_limiter,
-    )
-
-
-def build_source_resolver(settings: Settings | None = None) -> SourceResolver:
-    """Choose how disclosures are located per source.
-
-    Offline (default): synthetic reference targets. When ``sec_edgar`` is live,
-    its targets are the company's configured real SEC filing URLs (oldest →
-    newest so the change detector still sees a prior + current); a company with no
-    configured filings (e.g. a private company with no 10-K) simply yields nothing
-    — an observable zero, not an error. Every other source stays on reference.
-    """
-
-    settings = settings or get_settings()
-    live = set(settings.live_sources)
-    if "sec_edgar" not in live:
-        return reference_targets
-
-    def resolver(
-        company: CompanyConfig, source_type: str, definition: SourceDefinition
-    ) -> list[IngestionTarget]:
-        if source_type != "sec_edgar":
-            return reference_targets(company, source_type, definition)
-        return [
-            IngestionTarget(
-                label=f"SEC filing {revision + 1}",
-                published_at="",  # the real date comes from the parsed filing
-                source_uri=url,
-                revision=revision,
-            )
-            for revision, url in enumerate(company.sec_filings)
-        ]
-
-    return resolver
-
-
-def run_ingestion(
-    settings: Settings | None = None,
-    *,
-    respect_due: bool = False,
-    now: datetime | None = None,
-) -> IngestionReport:
-    """Run the ingestion lifecycle and persist all derived stores.
-
-    ``respect_due=True`` (the scheduled/worker path) ingests only sources whose
-    cadence has elapsed and layers them onto the existing graph snapshot, so a
-    partial run never drops not-due sources' projections. The default full run
-    (CLI/one-shot) rebuilds everything from scratch — unchanged behavior.
-    """
-
-    settings = settings or get_settings()
-    moment = now or datetime.now(tz=timezone.utc)
-    # One shared limiter for the whole run keeps the aggregate SEC request rate
-    # under the fair-access cap. Only constructed when something runs live.
-    rate_limiter = (
-        RateLimiter(1.0 / settings.sec_rate_limit_per_second)
-        if settings.live_sources and settings.sec_rate_limit_per_second > 0
-        else None
-    )
-
-    companies = load_companies(settings.config_dir)
-    sources = load_sources(settings.config_dir)
-    if respect_due:
-        due = set(due_source_types(settings, now=moment))
-        skipped = sorted(s.type for s in sources if s.enabled and s.type not in due)
-        sources = [s for s in sources if s.type in due]
-        if skipped:
-            logger.info("Scheduler: skipping not-due sources: %s", ", ".join(skipped))
-
-    # Incremental due-runs start from the persisted graph so not-due sources
-    # survive; full runs start clean. Re-projection is idempotent (dedup by id).
-    if respect_due and settings.graph_snapshot_path.exists():
-        graph_store = load_graph(settings.graph_snapshot_path)
-    else:
-        graph_store = InMemoryKnowledgeGraphStore()
-
-    orchestrator = IngestionOrchestrator(
-        raw_repository=FileSystemRawDocumentRepository(settings.data_dir),
-        normalized_repository=FileSystemNormalizedDocumentRepository(settings.data_dir),
-        catalog=build_catalog(settings),
-        graph_store=graph_store,
-        engine=HybridRetrievalEngine(),
-        registry=build_registry(settings, rate_limiter=rate_limiter),
-        intelligence_store=build_intelligence_store(settings),
-        entities=load_entities(settings.config_dir),
-        dead_letter_store=build_dead_letter_store(settings),
-        resolver=build_source_resolver(settings),
-        max_attempts=settings.ingest_max_attempts,
-    )
-    report = orchestrator.run(companies, sources)
-    # Deterministic relationship extraction over the ingested corpus: cross-company
-    # co-mention bridges + SIC sector edges, each with provenance. This is what
-    # turns a larger company set into a connected graph rather than isolated nodes.
-    instruments = load_instruments(settings.config_dir)
-    extraction = extract_relationships(graph_store, companies, settings.data_dir, instruments)
-    logger.info(
-        "Extraction: %d co-mention references, %d sector (GICS) edges, %d market-tier "
-        "edges, %d subsidiaries, %d officer (people) edges, %d commodities, %d debt "
-        "(over %d documents)",
-        extraction["references"],
-        extraction["in_sector"],
-        extraction["market_tiers"],
-        extraction["subsidiaries"],
-        extraction["people"],
-        extraction["commodities"],
-        extraction["debt"],
-        extraction["documents"],
-    )
-    save_graph(graph_store, settings.graph_snapshot_path)
-    completed_at = moment.isoformat()
-    save_status(RunStatus.from_report(report, completed_at=completed_at), settings.status_path)
-    # Record last successful run per source so the scheduler can compute due-ness.
-    schedule = build_schedule_store(settings)
-    for source_type in report.source_types:
-        schedule.record_run(source_type, completed_at)
-    return report
-
-
 def load_run_status(settings: Settings | None = None) -> RunStatus | None:
     settings = settings or get_settings()
     return load_status(settings.status_path)
-
-
-def source_monitoring(settings: Settings | None = None) -> list[SourceReliability]:
-    """Per-source reliability and counts, assembled from the catalog + last run."""
-
-    settings = settings or get_settings()
-    catalog = build_catalog(settings)
-    status = load_status(settings.status_path)
-    errors = status.errors if status else []
-    reports = [
-        score_source(
-            source_type=definition.source_type,
-            label=definition.label,
-            authority=definition.authority,
-            documents=catalog.list_documents(source_type=definition.source_type),
-            error_count=errors_for_source(definition.source_type, errors),
-        )
-        for definition in default_registry().definitions()
-    ]
-    return sorted(reports, key=lambda r: r.score, reverse=True)
 
 
 def load_engine(settings: Settings | None = None) -> HybridRetrievalEngine:
