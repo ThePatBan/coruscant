@@ -47,7 +47,12 @@ wired up yet (deliberately deferred; see below).
 
 ## Deliberately deferred
 
-The following are **not** done yet and belong to later phases:
+The following are **not** done yet:
 
 - npm workspaces / a monorepo package manager root;
-- `packages/*` shared libraries (Phase 11 — extract only where real duplication exists).
+- `packages/*` shared libraries. Phase 11 audited the duplication across the three apps and
+  chose **no-op by design** — real console↔admin duplication exists (`index.css`,
+  `useAsync`, the api transport), but a clean extraction requires workspaces + a Docker
+  build-context restructure that outweighs the current benefit. See
+  [../docs/frontend/shared-packages-audit.md](../docs/frontend/shared-packages-audit.md) for
+  the measurements, the blocking constraint, and the trigger to revisit.
