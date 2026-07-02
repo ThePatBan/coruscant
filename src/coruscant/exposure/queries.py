@@ -226,7 +226,10 @@ def entity_profile(
         )
     for edge in store.incoming(kind, key):
         if edge.relation == "mentions":
-            mentioned_in.append(edge.source_key)
+            # A "mentions" edge exposes a source document id — gate it by tier too, so a
+            # future private mention never leaks even the existence of its document.
+            if substrate.can_see(edge.properties, clearance):
+                mentioned_in.append(edge.source_key)
             continue
         if not substrate.can_see(edge.properties, clearance):
             continue

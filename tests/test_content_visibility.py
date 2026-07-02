@@ -203,27 +203,33 @@ def test_anonymous_entity_profile_withholds_restricted_edges(tmp_path: Path) -> 
     assert all(r["relation"] != "controlled_by" for r in jane["relationships"])
 
 
-# ---- Authenticated callers keep compatible, tier-appropriate visibility ------------
+# ---- The public read surface is public-only for EVERY caller ----------------------
+#
+# Scope A: "public read routes must only return explicitly public records." Signing in
+# does NOT unlock private/restricted content through these curated read routes — it
+# matches the ownership/screening panels, which withhold sensitive edges from everyone.
+# (Privileged access, if ever needed, belongs on dedicated non-public routes.)
 
 
-def test_authenticated_analyst_sees_legitimate_interest_but_not_restricted(tmp_path: Path) -> None:
+def test_authenticated_analyst_gets_public_only(tmp_path: Path) -> None:
     client, service = _authed_client(tmp_path)
     hdr = _hdr(client, service, "ana@e.com", "analyst")
     ids = {d["canonical_id"] for d in client.get("/documents", headers=hdr).json()}
-    assert ids == {"pub1", "legit1"}  # legitimate-interest now visible, restricted still not
-    assert client.get("/documents/legit1", headers=hdr).status_code == 200
+    assert ids == {"pub1"}  # legitimate-interest + restricted stay withheld from a signed-in user
+    assert client.get("/documents/legit1", headers=hdr).status_code == 404
     assert client.get("/documents/priv1", headers=hdr).status_code == 404
 
 
-def test_admin_sees_every_tier(tmp_path: Path) -> None:
+def test_admin_also_gets_public_only_on_the_public_surface(tmp_path: Path) -> None:
     client, service = _authed_client(tmp_path)
     hdr = _hdr(client, service, "admin@e.com", "admin")
     ids = {d["canonical_id"] for d in client.get("/documents", headers=hdr).json()}
-    assert ids == {"pub1", "legit1", "priv1"}
-    assert client.get("/documents/priv1", headers=hdr).status_code == 200
-    # Admin also sees the restricted control edge on the generic graph read.
+    assert ids == {"pub1"}
+    assert client.get("/documents/priv1", headers=hdr).status_code == 404
+    # The restricted control edge is withheld on the generic graph read even from an admin
+    # — consistent with the dedicated ownership panels.
     relations = {n["relation"] for n in client.get("/graph/company/acme", headers=hdr).json()["neighbors"]}
-    assert "controlled_by" in relations
+    assert relations == {"operates_in"}
 
 
 @pytest.mark.parametrize("route", ["/documents", "/graph/company/acme", "/entities/Company/acme"])

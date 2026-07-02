@@ -57,12 +57,42 @@ def test_trusted_forwarded_header_partitions_per_client(tmp_path: Path, monkeypa
     monkeypatch.setattr(settings, "public_read_rate_limit", 2)
     monkeypatch.setattr(settings, "trust_forwarded_for", True)
     client = _client(tmp_path)
-    a = {"X-Forwarded-For": "10.0.0.1"}
-    b = {"X-Forwarded-For": "10.0.0.2"}
-    # Client A burns its budget...
+    # A trusted proxy sets X-Real-IP to the real peer; distinct peers get distinct buckets.
+    a = {"X-Real-IP": "10.0.0.1"}
+    b = {"X-Real-IP": "10.0.0.2"}
     assert [client.get("/companies", headers=a).status_code for _ in range(3)] == [200, 200, 429]
-    # ...but client B has its own untouched bucket.
     assert client.get("/companies", headers=b).status_code == 200
+
+
+def test_spoofed_leftmost_forwarded_hop_cannot_bypass_the_limit(tmp_path: Path, monkeypatch) -> None:
+    # The bundled nginx APPENDS the real peer to X-Forwarded-For, so the leftmost hop is
+    # attacker-controlled. Rotating it must NOT create fresh buckets: the RIGHTMOST hop
+    # (the one the trusted proxy appended) is the real identity and is shared.
+    from coruscant.apps import api as api_module
+
+    settings = api_module.get_settings()
+    monkeypatch.setattr(settings, "public_read_rate_limit", 3)
+    monkeypatch.setattr(settings, "trust_forwarded_for", True)
+    client = _client(tmp_path)
+    statuses = [
+        # `<spoofed>, <real peer appended by nginx>` — attacker rotates only the spoof.
+        client.get("/companies", headers={"X-Forwarded-For": f"9.9.9.{i}, 203.0.113.7"}).status_code
+        for i in range(5)
+    ]
+    assert statuses.count(200) == 3 and statuses.count(429) == 2  # keyed on the real rightmost hop
+
+
+def test_x_real_ip_takes_precedence_over_forwarded_for(tmp_path: Path, monkeypatch) -> None:
+    from coruscant.apps import api as api_module
+
+    settings = api_module.get_settings()
+    monkeypatch.setattr(settings, "public_read_rate_limit", 2)
+    monkeypatch.setattr(settings, "trust_forwarded_for", True)
+    client = _client(tmp_path)
+    # Same X-Real-IP with a rotating (spoofable) X-Forwarded-For still shares one bucket.
+    hdrs = [{"X-Real-IP": "198.51.100.9", "X-Forwarded-For": f"9.9.9.{i}"} for i in range(4)]
+    statuses = [client.get("/companies", headers=h).status_code for h in hdrs]
+    assert statuses.count(200) == 2 and statuses.count(429) == 2
 
 
 # ---- The limiter abstraction seam -------------------------------------------------

@@ -514,17 +514,19 @@ def _to_summary(document: NormalizedDocument) -> DocumentSummary:
 
 
 def _viewer_clearance(user: StoredUser | None) -> AccessTier:
-    """Access-tier clearance for a caller on the public read surface.
+    """Access-tier clearance granted on the PUBLIC READ surface.
 
-    Anonymous callers (``user is None``) see only PUBLIC content; an authenticated
-    caller keeps broader visibility (behaviour-compatible), an admin the most. Used to
-    gate documents and generic graph edges — NOT the ownership/screening endpoints,
-    which stay pinned to the public tier for every caller by design."""
-    if user is None:
-        return AccessTier.PUBLIC
-    if user.role == "admin":
-        return AccessTier.AGGREGATOR_LICENSED
-    return AccessTier.LEGITIMATE_INTEREST
+    The public read routes return only PUBLIC, evidence-safe records — to EVERY caller,
+    anonymous or authenticated (Scope A: "public read routes must only return explicitly
+    public records"). This deliberately matches the ownership/screening panels, which
+    already pin the public tier for everyone, so a signed-in caller can never read a
+    sensitive edge (e.g. beneficial ownership) through the generic ``/entities`` /
+    ``/graph/company`` reads that the dedicated panels withhold.
+
+    Kept as a function of ``user`` — not a bare constant — because this is the single
+    place a future authenticated-elevation policy (privileged, non-public routes) would
+    branch. Today every viewer's clearance is PUBLIC."""
+    return AccessTier.PUBLIC
 
 
 def _document_visible(document: NormalizedDocument, clearance: AccessTier | str) -> bool:
@@ -562,14 +564,23 @@ class _ClearanceFilteredEngine(RetrievalEngine):
 def _client_ip(request: Request, *, trust_forwarded_for: bool) -> str:
     """Best-effort client identity for rate limiting.
 
-    Trusts the first hop of ``X-Forwarded-For`` ONLY when ``trust_forwarded_for`` is
-    set (a trusted reverse proxy sets it — the compose topology puts nginx in front);
-    otherwise uses the socket peer, so a client cannot spoof the header to dodge the
-    limit. Coarse anti-abuse identity, never authz."""
+    When ``trust_forwarded_for`` is set (a trusted reverse proxy is in front — the
+    compose topology puts nginx there), derive the client from proxy-set headers;
+    otherwise use the socket peer. NEVER the LEFTMOST ``X-Forwarded-For`` hop: the
+    bundled nginx uses ``$proxy_add_x_forwarded_for``, which APPENDS the real peer to
+    any client-supplied header, so the leftmost value is fully attacker-controlled and
+    trusting it lets a caller rotate it to dodge the limit. Prefer ``X-Real-IP`` (nginx
+    sets it to ``$remote_addr`` — a single, unspoofable-behind-the-proxy value); fall
+    back to the RIGHTMOST forwarded hop (the one the trusted proxy appended). Coarse
+    anti-abuse identity, never authz."""
     if trust_forwarded_for:
+        real_ip = request.headers.get("X-Real-IP", "").strip()
+        if real_ip:
+            return real_ip
         forwarded = request.headers.get("X-Forwarded-For", "")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
+        hops = [hop.strip() for hop in forwarded.split(",") if hop.strip()]
+        if hops:
+            return hops[-1]  # rightmost = the hop OUR proxy appended, not client-supplied
     return request.client.host if request.client else "unknown"
 
 
@@ -1781,19 +1792,32 @@ def create_app(
         unknown = set(body.scopes) - KNOWN_SCOPES
         if unknown:
             raise HTTPException(status_code=400, detail=f"unknown api key scope(s): {sorted(unknown)}")
-        # A key may never exceed its owner's authority: an elevated scope can only be
-        # granted by a caller who could exercise it themselves (Scope C).
-        user, _ = _principal(request)
+        # A key may never exceed the AUTHORITY OF THE CREDENTIAL MINTING IT — otherwise a
+        # scopeless (default) key owned by an admin could bootstrap an admin-scoped key and
+        # self-escalate. So an elevated scope requires BOTH the owner's role/entitlement AND,
+        # when the caller is itself an API key, that key already carrying the scope. A session
+        # (``caller_scopes is None``) has full owner authority (Scope C).
+        user, caller_scopes = _principal(request)
         role = user.role if user is not None else "analyst"
         plan = _effective_plan(email)
-        if SCOPE_ADMIN in body.scopes and role != "admin":
-            raise HTTPException(status_code=403, detail="only an admin can grant the admin scope")
-        if SCOPE_ENTERPRISE in body.scopes and not entitlements.has_entitlement(
-            entitlements.ENTERPRISE, role=role, plan=plan.name
-        ):
-            raise HTTPException(
-                status_code=403, detail="enterprise entitlement is required to grant the enterprise scope"
-            )
+
+        def _can_grant(scope: str, owner_ok: bool, denial: str) -> None:
+            if scope not in body.scopes:
+                return
+            if not owner_ok:
+                raise HTTPException(status_code=403, detail=denial)
+            if caller_scopes is not None and scope not in caller_scopes:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"this API key cannot grant the {scope} scope it does not hold",
+                )
+
+        _can_grant(SCOPE_ADMIN, role == "admin", "only an admin can grant the admin scope")
+        _can_grant(
+            SCOPE_ENTERPRISE,
+            entitlements.has_entitlement(entitlements.ENTERPRISE, role=role, plan=plan.name),
+            "enterprise entitlement is required to grant the enterprise scope",
+        )
         now = datetime.now(tz=timezone.utc)
         expires_at = (
             (now + timedelta(days=body.expires_in_days)).isoformat() if body.expires_in_days else None

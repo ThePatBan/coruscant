@@ -133,6 +133,30 @@ def test_api_key_enterprise_scope_gates_enterprise_route(tmp_path: Path) -> None
     assert client.get("/enterprise/summary", headers={"X-API-Key": scoped["secret"]}).status_code == 200
 
 
+def test_scopeless_admin_key_cannot_mint_an_elevated_key(tmp_path: Path) -> None:
+    # Self-escalation guard: a default (scopeless) key owned by an admin must NOT be
+    # able to bootstrap an admin/enterprise-scoped key — a key never exceeds the
+    # authority of the credential minting it.
+    client, service = _client(tmp_path)
+    hdr = _login(client, service, "admin@e.com", role="admin")
+    plain = client.post("/api-keys", json={"name": "plain"}, headers=hdr).json()
+    plain_key = {"X-API-Key": plain["secret"]}
+    # The plain key mints another key, requesting admin scope -> refused (403).
+    resp = client.post("/api-keys", json={"name": "escalate", "scopes": ["admin"]}, headers=plain_key)
+    assert resp.status_code == 403
+    assert client.post(
+        "/api-keys", json={"name": "escalate2", "scopes": ["enterprise"]}, headers=plain_key
+    ).status_code == 403
+    # But an admin-scoped key MAY delegate the admin scope it holds.
+    scoped = client.post("/api-keys", json={"name": "ops", "scopes": ["admin"]}, headers=hdr).json()
+    delegated = client.post(
+        "/api-keys", json={"name": "child", "scopes": ["admin"]}, headers={"X-API-Key": scoped["secret"]}
+    )
+    assert delegated.status_code == 200
+    # And an admin SESSION (full authority) can still mint an admin-scoped key.
+    assert client.post("/api-keys", json={"name": "sess", "scopes": ["admin"]}, headers=hdr).status_code == 200
+
+
 def test_unknown_scope_is_rejected(tmp_path: Path) -> None:
     client, service = _client(tmp_path)
     hdr = _login(client, service, "admin@e.com", role="admin")
