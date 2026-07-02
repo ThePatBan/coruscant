@@ -234,12 +234,12 @@ def test_run_ownership_psc_live_scopes_to_covered_gb_numbers(monkeypatch, tmp_pa
     # scoped to the covered company numbers (fetch itself is monkeypatched off).
     from coruscant.apps import workspace_runtime
     from coruscant.common.config import Settings
+    from coruscant.exposure.settings import WorkspaceSettings
     from coruscant.knowledge_graph.persistence import save_graph
     from coruscant.ownership.companies_house import CompaniesHousePscProvider as Prov
 
     data_dir = tmp_path / "data"
-    settings = Settings(data_dir=data_dir, database_url=f"sqlite:///{data_dir / 'c.db'}",
-                        companies_house_api_key="test-key")
+    settings = Settings(data_dir=data_dir, database_url=f"sqlite:///{data_dir / 'c.db'}")
     save_graph(_acme_gb_store(), settings.graph_snapshot_path)
 
     def fake_fetch(self, number):  # noqa: ANN001
@@ -247,5 +247,8 @@ def test_run_ownership_psc_live_scopes_to_covered_gb_numbers(monkeypatch, tmp_pa
         return _PSC_API
 
     monkeypatch.setattr(Prov, "_fetch_company", fake_fetch)
-    summary = workspace_runtime.run_ownership(settings, file_path=None, provider_name="psc")
+    summary = workspace_runtime.run_ownership(
+        settings, file_path=None, provider_name="psc",
+        workspace_settings=WorkspaceSettings(companies_house_api_key="test-key"),
+    )
     assert summary.beneficial_owner_of == 2 and summary.owns == 1

@@ -31,6 +31,7 @@ PLATFORM_PACKAGES: frozenset[str] = frozenset(
         "apps",  # HTTP/CLI/worker/runtime assembly (also wires product pipelines — seam 2)
         "auth",
         "commercial",
+        "common",  # types/errors/logging + platform Settings (product flags moved out — Phase 5, seam 1 done)
         "enterprise",
         "infrastructure",
         "knowledge_graph",  # domain-neutral graph substrate (exposure extracted — Phase 3)
@@ -58,7 +59,6 @@ WORKSPACE_PACKAGES: frozenset[str] = frozenset(
 #: Packages fusing platform substrate and workspace domain — named seams to split later.
 MIXED_PACKAGES: frozenset[str] = frozenset(
     {
-        "common",  # platform types + Settings; product Settings flags remain (seam 1 residual)
         "connectors",  # interfaces (platform) + finance connectors (workspace)
         "ingestion",  # generic mechanism; orchestrator still projects entities (seam 4 residual)
         "intelligence",  # summarize/diff (platform) + event taxonomy (workspace) — seam 5

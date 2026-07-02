@@ -509,9 +509,9 @@ def create_app(
         workspace=WorkspaceServices(
             watchlists=watchlist_store,
             portfolios=portfolio_store,
-            prices=build_price_service(settings),
-            macro=build_macro_service(settings),
-            news=build_news_service(settings),
+            prices=build_price_service(),
+            macro=build_macro_service(),
+            news=build_news_service(),
         ),
     )
 
