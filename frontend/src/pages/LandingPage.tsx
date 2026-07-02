@@ -1,28 +1,30 @@
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { useAuth } from "../auth";
+import {
+  resolveHomeWorkspace,
+  WORKSPACE_KINDS,
+  WORKSPACES,
+  workspaceStore,
+  type WorkspaceKind,
+} from "../workspaces";
 
-const FEATURES = [
-  {
-    icon: "⇄",
-    title: "What changed, not just what happened",
-    body: "Coruscant diffs each new disclosure against the prior one and surfaces material changes — new risks, guidance moves, executive changes.",
-  },
-  {
-    icon: "❝",
-    title: "Every claim is traceable",
-    body: "No unsupported assertions. Every summary line, event, and change links back to the exact source span that supports it.",
-  },
-  {
-    icon: "⌕",
-    title: "Search across everything",
-    body: "Ask in natural language across filings, investor updates, transcripts, press, news, and patents — with evidence attached.",
-  },
-];
+// The home page is the product chooser AND the routing gate: it presents the three
+// Coruscant products and routes each visitor by auth state. Anonymous visitors are
+// pointed at the free public product and a sign-in path for the paid workspaces;
+// signed-in visitors get a one-click return to where they left off.
+
+function ctaFor(kind: WorkspaceKind, authed: boolean): { to: string; label: string } {
+  const ws = WORKSPACES[kind];
+  if (!ws.requiresAuth) return { to: ws.home, label: "Explore free →" };
+  if (authed) return { to: ws.home, label: `Open ${ws.label.toLowerCase()} →` };
+  return { to: `/login?ws=${kind}`, label: "Sign in →" };
+}
 
 export function LandingPage() {
   const { email } = useAuth();
-  const navigate = useNavigate();
-  const primary = email ? "/world" : "/login";
+  const authed = Boolean(email);
+  const remembered = workspaceStore.get();
+  const resume = authed ? WORKSPACES[resolveHomeWorkspace({ authed, remembered })] : null;
 
   return (
     <div className="landing">
@@ -31,9 +33,15 @@ export function LandingPage() {
           <div className="logo" />
           <div className="name">Coruscant</div>
         </div>
-        <button className="btn ghost" onClick={() => navigate(primary)}>
-          {email ? "Open workspace" : "Sign in"}
-        </button>
+        {authed ? (
+          <Link className="btn ghost" to={resume!.home}>
+            Open workspace →
+          </Link>
+        ) : (
+          <Link className="btn ghost" to="/login">
+            Sign in
+          </Link>
+        )}
       </div>
 
       <section className="hero">
@@ -41,31 +49,49 @@ export function LandingPage() {
           Evidence-based financial intelligence
         </span>
         <h1>
-          Understand what <span className="accent-text">materially changed</span> — and why it
-          matters.
+          Choose how you use <span className="accent-text">Coruscant</span>.
         </h1>
         <p>
-          Coruscant continuously ingests public company information, understands what changed since
-          the last disclosure, and shows you — with the source evidence behind every statement.
+          One evidence graph, three products. Explore public company intelligence for free, monitor
+          what matters to you, or run it across your whole organization — every insight traces back
+          to its source.
         </p>
-        <div className="cta">
-          <Link to={primary} className="btn lg">
-            {email ? "Open workspace →" : "Get started →"}
-          </Link>
-          <a className="btn ghost lg" href="#features">
-            How it works
-          </a>
-        </div>
       </section>
 
-      <section className="feature-grid" id="features">
-        {FEATURES.map((f) => (
-          <div className="card feature" key={f.title}>
-            <div className="ico-box">{f.icon}</div>
-            <h3>{f.title}</h3>
-            <p>{f.body}</p>
-          </div>
-        ))}
+      {resume ? (
+        <div className="ws-continue card" role="note">
+          <span className="muted">
+            Signed in as <strong style={{ color: "var(--text)" }}>{email}</strong> — continue in your{" "}
+            <strong style={{ color: "var(--text)" }}>{resume.label}</strong> workspace.
+          </span>
+          <Link className="btn" to={resume.home}>
+            Continue →
+          </Link>
+        </div>
+      ) : null}
+
+      <section className="feature-grid ws-grid">
+        {WORKSPACE_KINDS.map((kind) => {
+          const ws = WORKSPACES[kind];
+          const cta = ctaFor(kind, authed);
+          const current = resume?.kind === kind;
+          return (
+            <Link className="card hover ws-card" key={kind} to={cta.to}>
+              <div className="kicker">
+                {ws.eyebrow}
+                {current ? <span className="badge">current</span> : null}
+              </div>
+              <h2>{ws.label}</h2>
+              <p className="blurb">{ws.blurb}</p>
+              <ul className="ws-bullets">
+                {ws.bullets.map((b) => (
+                  <li key={b}>{b}</li>
+                ))}
+              </ul>
+              <div className={current ? "ws-cta ws-current" : "ws-cta"}>{cta.label}</div>
+            </Link>
+          );
+        })}
       </section>
     </div>
   );
