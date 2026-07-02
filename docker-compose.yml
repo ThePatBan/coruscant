@@ -1,11 +1,13 @@
 # Coruscant local stack:
 #   ingest  one-shot lifecycle run that populates the shared data volume
 #   api     FastAPI service that loads the persisted corpus on startup
-#   web     nginx serving the customer console SPA, reverse-proxying /api -> api
-#   admin   nginx serving the internal admin SPA, reverse-proxying /api -> api
+#   web       nginx serving the customer console SPA, reverse-proxying /api -> api
+#   admin     nginx serving the internal admin SPA, reverse-proxying /api -> api
+#   marketing nginx serving the static public marketing site (no /api)
 #
-# Usage:  docker compose up --build      then open http://localhost:8080 (console)
-#                                          and  http://localhost:8081 (internal admin)
+# Usage:  docker compose up --build      then open http://localhost:8080 (console),
+#                                          http://localhost:8081 (internal admin), and
+#                                          http://localhost:8082 (marketing)
 services:
   ingest:
     build:
@@ -83,6 +85,17 @@ services:
     depends_on:
       api:
         condition: service_healthy
+
+  # Public marketing site (coruscant.com). Fully static — no backend of its own; its CTAs
+  # link out to the console, so it does not depend on the api service.
+  marketing:
+    build:
+      context: ./apps/marketing
+      dockerfile: Dockerfile
+    image: coruscant-marketing:local
+    ports:
+      - "8082:80"
+    restart: unless-stopped
 
 volumes:
   coruscant-data:

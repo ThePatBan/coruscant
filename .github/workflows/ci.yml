@@ -64,6 +64,26 @@ jobs:
       - name: Build (tsc + vite)
         run: npm run build
 
+  marketing:
+    name: Marketing (typecheck + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/marketing
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/marketing/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Test (vitest)
+        run: npm test
+      - name: Build (tsc + vite)
+        run: npm run build
+
   docker:
     name: Docker images build
     runs-on: ubuntu-latest
@@ -75,3 +95,5 @@ jobs:
         run: docker build -f apps/console/Dockerfile -t coruscant-web:ci ./apps/console
       - name: Build admin image
         run: docker build -f apps/admin/Dockerfile -t coruscant-admin:ci ./apps/admin
+      - name: Build marketing image
+        run: docker build -f apps/marketing/Dockerfile -t coruscant-marketing:ci ./apps/marketing
