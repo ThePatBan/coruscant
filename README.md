@@ -6,6 +6,8 @@ Coruscant is a **portfolio-exposure intelligence** platform. It answers one ques
 
 It optimizes for **orientation, not reading**: *what changed, who it hits, why we believe it, what to investigate* — every relationship and number backed by its source.
 
+This app is **one workspace** on the **Coruscant Intelligence Platform** — the shared, domain-neutral substrate beneath it (knowledge graph, entity resolution, ingestion, retrieval, cited intelligence, LLM gateway, auth, tenancy). The investment-research surface is *a* product on that platform, not the platform itself. See the **[Platform Brief](docs/PLATFORM.md)**.
+
 > **The first rule: never fabricate.** No relationship or number on screen that the data does not support. When a live feed is off, the UI shows a labelled stub (`connected: false`), never a placeholder value. Inferred links are labelled as inferences, with the proxy they rest on.
 
 ## The product — two tabs
@@ -105,7 +107,7 @@ React SPA (nginx) ──/api──▶ FastAPI ──▶ knowledge graph · expos
 - `src/coruscant/intelligence` · `search` · `auth` · `apps` — cited intelligence, hybrid retrieval, auth, API/CLI/worker
 - `frontend/` — React + TypeScript SPA
 
-See [docs/global-exposure-architecture.md](docs/global-exposure-architecture.md) (the plan of record) and the [ADRs](docs/adr/).
+See the [Platform Brief](docs/PLATFORM.md) (what is platform vs what is this workspace), [docs/global-exposure-architecture.md](docs/global-exposure-architecture.md) (the plan of record), and the [ADRs](docs/adr/).
 
 ## Roadmap
 

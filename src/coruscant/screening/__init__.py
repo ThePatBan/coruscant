@@ -7,6 +7,8 @@ hits as ``pep`` / ``sanctioned`` edges. A :class:`ScreeningProvider` seam keeps 
 matcher swappable: PR 1 ships a hermetic, zero-dependency deterministic provider;
 PR 2 swaps in the ``yente`` HTTP service (nomenklatura's scaled scorer) behind the
 same interface, with no change to the pipeline or the graph model.
+
+Boundary: WORKSPACE (compliance/finance ER) — see docs/PLATFORM.md §7.
 """
 
 from coruscant.screening.provider import (

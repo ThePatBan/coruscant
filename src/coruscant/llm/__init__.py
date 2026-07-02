@@ -1,4 +1,7 @@
-"""LLM gateway — tiered, provider-agnostic model routing for the platform."""
+"""LLM gateway — tiered, provider-agnostic model routing for the platform.
+
+Boundary: PLATFORM primitive — see docs/PLATFORM.md §7.
+"""
 
 from coruscant.llm.config import (
     TIER_HINTS,

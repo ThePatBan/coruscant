@@ -7,6 +7,8 @@ a node and records a reversible resolver judgement; unmatched nodes are labelled
 explicitly unresolved, never dropped (absence is signal). Same provider seam as
 screening: an offline fixture provider for CI + a live GLEIF-API provider for
 operators.
+
+Boundary: PLATFORM (corporate-scoped identity) — see docs/PLATFORM.md §7.
 """
 
 from coruscant.anchoring.provider import (

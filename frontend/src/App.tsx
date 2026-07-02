@@ -45,8 +45,11 @@ import { WorkspacesPage } from "./pages/WorkspacesPage";
 // TODO(retire): WorldPage was the markets-globe World view, superseded by
 // LiveSignalsPage at /world. File kept for reference; delete once signed off.
 
-// Primary nav = the design-pack product spine (World → Country → Company, plus
-// the analytical reads). Legacy surfaces are archived from the nav below.
+// Platform vs workspace (see docs/PLATFORM.md): the app SHELL — auth, health pills,
+// notifications, the user menu, /settings, /admin — is a PLATFORM surface, reusable by
+// any workspace. The primary nav below is the Portfolio-Exposure WORKSPACE spine
+// (World → Country → Company, plus the analytical reads). Legacy surfaces are archived
+// from the nav below.
 const NAV: { to: string; label: string; Icon: Icon }[] = [
   { to: "/dashboard", label: "Dashboard", Icon: IconDashboard },
   { to: "/changes", label: "What changed", Icon: IconChanged },

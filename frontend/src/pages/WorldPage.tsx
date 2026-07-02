@@ -362,6 +362,62 @@ function PortfolioComposition({
       <CommoditiesBlock />
       <GicsTree sectors={sectors} />
       <ScreeningPanel />
+      <OwnershipPanel />
+    </div>
+  );
+}
+
+function OwnershipPanel() {
+  const { data, loading } = useAsync(() => api.ownershipOverview(), []);
+  const source = data?.provider ? data.provider.replace(/-/g, " ") : null;
+  return (
+    <div className="pc-block">
+      <div className="ci-section-label">
+        Ownership &amp; control{" "}
+        <span className="muted">· declared shareholding · beneficial ownership · consolidation</span>
+      </div>
+      {loading ? (
+        <div className="muted small">Loading ownership substrate…</div>
+      ) : !data || !data.connected ? (
+        <div className="muted small">
+          No ownership ingested yet. Run <code>coruscant ownership --provider psc</code> (live UK
+          Companies House PSC), <code>--provider gleif-l2</code> (accounting consolidation), or{" "}
+          <code>--file</code> with a BODS export. Nothing is shown until it runs.
+        </div>
+      ) : (
+        <>
+          <div className="small">
+            <strong>{data.provider ?? "unknown source"}</strong>
+            {data.market ? <span className="muted"> · market {data.market}</span> : null}
+            {data.observed_at ? <span className="muted"> · run {data.observed_at}</span> : null}
+          </div>
+          <div className="small">
+            <strong>{data.owns}</strong> declared · <strong>{data.beneficial_owner_of}</strong> beneficial
+            · <strong>{data.consolidates}</strong> consolidation
+            {data.restricted > 0 ? (
+              <>
+                {" "}
+                · <strong>{data.restricted}</strong> restricted
+              </>
+            ) : null}
+          </div>
+          <div className="muted small">
+            Three distinct claim types, never merged — percentages appear only where sourced.
+            {data.holders_unresolved > 0 || data.subjects_unresolved > 0 ? (
+              <>
+                {" "}
+                {data.holders_unresolved + data.subjects_unresolved} unresolved part
+                {data.holders_unresolved + data.subjects_unresolved === 1 ? "y" : "ies"} left labelled,
+                not fabricated.
+              </>
+            ) : null}
+            {data.restricted > 0
+              ? " Restricted edges are counted, not shown (e.g. an EU beneficial owner)."
+              : ""}
+            {source ? ` Live source: ${source}.` : ""}
+          </div>
+        </>
+      )}
     </div>
   );
 }

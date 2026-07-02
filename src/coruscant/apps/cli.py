@@ -18,6 +18,7 @@ from coruscant.apps.runtime import (
     run_anchor,
     run_coverage,
     run_ingestion,
+    run_ownership,
     run_portfolio,
     run_screening,
     seed_demo_user,
@@ -205,6 +206,30 @@ def cmd_coverage(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ownership(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    configure_logging()
+    file_path = Path(args.file) if args.file else None
+    try:
+        summary = run_ownership(file_path=file_path, provider_name=args.provider)
+    except (FileNotFoundError, ValueError, ConnectionError, RuntimeError) as error:
+        print(str(error))
+        return 1
+    print(
+        f"Ownership via {summary.provider}: {summary.considered} statements → "
+        f"{summary.owns} owns, {summary.beneficial_owner_of} beneficial-owner, "
+        f"{summary.consolidates} consolidates ({summary.edges} edges total)."
+    )
+    if summary.by_access_tier:
+        print("By access tier: " + ", ".join(f"{k}={v}" for k, v in summary.by_access_tier.items()))
+    print(
+        f"Unresolved (labelled, not fabricated): {summary.subjects_unresolved} subjects, "
+        f"{summary.holders_unresolved} holders."
+    )
+    return 0
+
+
 def cmd_backup(args: argparse.Namespace) -> int:
     from pathlib import Path
 
@@ -294,6 +319,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Resolve a brokerage holdings CSV against current coverage and report the rate",
     )
     coverage.set_defaults(func=cmd_coverage)
+
+    ownership = sub.add_parser(
+        "ownership",
+        help="Ingest ownership/control edges (owns / beneficial_owner_of / consolidates)",
+    )
+    ownership.add_argument(
+        "--file", default=None,
+        help="Fallback file: BODS export (bods), bulk PSC snapshot (psc), or GLEIF "
+             "relationship-record export (gleif-l2)",
+    )
+    ownership.add_argument(
+        "--provider", default=None, choices=["bods", "psc", "gleif-l2"],
+        help="Ownership source: 'bods' (OpenOwnership export), 'psc' (live UK Companies "
+             "House PSC register), 'gleif-l2' (GLEIF accounting consolidation)",
+    )
+    ownership.set_defaults(func=cmd_ownership)
 
     backup_p = sub.add_parser("backup", help="Back up the data directory to a tar.gz")
     backup_p.add_argument("--out", default=None, help="Output archive path")

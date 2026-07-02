@@ -2,6 +2,8 @@
 
 Deterministic, fully-cited reference implementations behind Protocol ports so a
 Claude-backed adapter can be substituted without changing callers.
+
+Boundary: MIXED (seam 5) — platform mechanism + workspace event taxonomy; docs/PLATFORM.md §9.
 """
 
 from coruscant.intelligence.changes import ReferenceChangeDetector

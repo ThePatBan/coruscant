@@ -14,6 +14,182 @@ interface ControlSignal {
   others: Array<{ key: string; name: string }>;
 }
 
+// Ownership vocabulary → evidence-first labels. Declared shareholding, beneficial
+// ownership, and accounting consolidation are kept visibly distinct — never merged.
+const RELATION_LABEL: Record<string, string> = {
+  owns: "declared shareholding",
+  beneficial_owner_of: "beneficial owner",
+  consolidates: "consolidation",
+};
+// Chain terminal → (label, chip class). resolved terminals read as settled; the
+// rest are honest incompletenesses the user should see, not hidden.
+const TERMINAL_META: Record<string, { label: string; cls: string }> = {
+  beneficial_owner: { label: "beneficial owner", cls: "active" },
+  root: { label: "declared root", cls: "active" },
+  unresolved: { label: "unresolved", cls: "" },
+  cycle: { label: "circular holding", cls: "" },
+  max_depth: { label: "depth-limited", cls: "" },
+  restricted: { label: "restricted", cls: "" },
+};
+
+function magnitude(pct: number | null, band: string | null): string | null {
+  if (pct != null) return `${pct}%`;
+  if (band) return band; // a disclosed range, never coerced to a point
+  return null;
+}
+
+function OwnershipPanel({ slug }: { slug: string }) {
+  const owners = useAsync(() => api.companyOwners(slug), [slug]);
+  const chains = useAsync(() => api.ownershipChain(slug), [slug]);
+  const group = useAsync(() => api.contagion(slug), [slug]);
+  const loading = owners.loading || chains.loading || group.loading;
+
+  const ownerRows = owners.data?.owners ?? [];
+  const ownerRestricted = owners.data?.restricted ?? 0;
+  const chainList = chains.data?.chains ?? [];
+  const inherited = group.data?.inherited ?? [];
+  const groupRestricted = group.data?.restricted ?? 0;
+
+  const hasOwners = ownerRows.length > 0 || ownerRestricted > 0;
+  const hasChains = chainList.length > 0;
+  const hasGroup = inherited.length > 0 || groupRestricted > 0;
+  // No ownership data for this company → render nothing (surface only where it helps).
+  if (!loading && !hasOwners && !hasChains && !hasGroup) return null;
+
+  return (
+    <section className="stack gap">
+      <PanelHead
+        idx="◆"
+        kicker="Ownership & control"
+        title="Who owns and controls this company"
+        sub="Declared shareholdings, beneficial owners, and accounting consolidation — three distinct claims, never merged. Unresolved and access-restricted items stay explicitly labelled."
+      />
+      {loading ? (
+        <Skeleton h={160} />
+      ) : (
+        <div className="card stack gap-sm">
+          <div className="small">
+            <strong>{owners.data?.provider ?? "ownership"}</strong>
+            {owners.data?.market ? <span className="muted"> · market {owners.data.market}</span> : null}
+            {owners.data ? <span className="muted"> · {owners.data.connected ? "connected" : "not connected"}</span> : null}
+          </div>
+          {/* Declared owners / beneficial owners / consolidation */}
+          {hasOwners ? (
+            <div className="stack gap-sm">
+              <div className="ci-section-label">
+                Owners <span className="muted">· incoming ownership statements</span>
+              </div>
+              <ul className="ci-list">
+                {ownerRows.map((o, i) => {
+                  const mag = magnitude(o.percentage, o.percentage_band);
+                  return (
+                    <li key={`${o.holder_key}-${o.relation}-${i}`}>
+                      <strong>{o.holder_name ?? o.holder_key}</strong>{" "}
+                      <span className={`chip ${o.relation === "beneficial_owner_of" ? "active" : ""}`}>
+                        {RELATION_LABEL[o.relation] ?? o.relation}
+                      </span>{" "}
+                      {mag ? <span className="pill">{mag}</span> : null}{" "}
+                      {o.interest ? <span className="muted small">{o.interest}</span> : null}{" "}
+                      <span className={`chip ${o.holder_resolved ? "" : ""}`}>
+                        {o.holder_resolved ? "resolved" : "unresolved"}
+                      </span>
+                      {o.source_url ? (
+                        <>
+                          {" · "}
+                          <a href={o.source_url} target="_blank" rel="noreferrer">
+                            {o.source ?? "source"}
+                          </a>
+                        </>
+                      ) : o.source ? (
+                        <span className="muted small"> · {o.source}</span>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+              {ownerRestricted > 0 ? (
+                <div className="muted small">
+                  {ownerRestricted} owner{ownerRestricted === 1 ? "" : "s"} withheld at this access
+                  tier — their existence is shown, their identity is not (e.g. an EU beneficial owner).
+                </div>
+              ) : null}
+              {owners.data?.observed_at ? (
+                <div className="muted small">Last ownership run: {owners.data.observed_at}</div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {/* UBO chain-following */}
+          {hasChains ? (
+            <div className="stack gap-sm">
+              <div className="ci-section-label">
+                Ownership chains{" "}
+                <span className="muted">
+                  · {chains.data?.resolved_chains ?? 0} resolved · {chains.data?.partial_chains ?? 0} partial
+                  {(chains.data?.cyclic_chains ?? 0) > 0 ? ` · ${chains.data?.cyclic_chains} circular` : ""}
+                </span>
+              </div>
+              {chainList.slice(0, 8).map((c, i) => {
+                const meta = TERMINAL_META[c.terminal] ?? { label: c.terminal, cls: "" };
+                return (
+                  <div className="ctrl-row" key={i} style={{ padding: "6px 0", flexWrap: "wrap" }}>
+                    <span className="relchip tier-proxy">{chains.data?.company.name ?? slug}</span>
+                    {c.links.map((l, j) => (
+                      <span key={j}>
+                        <span className="ctrl-arrow">
+                          {" "}
+                          {RELATION_LABEL[l.relation] ?? l.relation}
+                          {magnitude(l.percentage, l.percentage_band) ? ` ${magnitude(l.percentage, l.percentage_band)}` : ""}
+                          {" ← "}
+                        </span>
+                        <span className={`relchip ${l.holder_resolved === false ? "" : "tier-supply"}`}>
+                          {l.holder.name}
+                        </span>
+                      </span>
+                    ))}{" "}
+                    <span className={`chip ${meta.cls}`}>{meta.label}</span>
+                  </div>
+                );
+              })}
+              <div className="ctrl-note">
+                <span className="inf">evidence</span>
+                {chains.data?.note}
+              </div>
+            </div>
+          ) : null}
+
+          {/* Group / UBO contagion — a distinct, inherited-exposure path */}
+          {hasGroup ? (
+            <div className="stack gap-sm">
+              <div className="ci-section-label">
+                Group exposure <span className="muted">· inherited through shared control, not a holding</span>
+              </div>
+              <ul className="ci-list">
+                {inherited.slice(0, 12).map((m, i) => (
+                  <li key={`${m.company.key}-${i}`}>
+                    <Link to={`/companies/${m.company.key}`}>{m.company.name}</Link>{" "}
+                    <span className="chip">{m.link}</span>{" "}
+                    <span className="muted small">
+                      {m.hops} hop{m.hops === 1 ? "" : "s"}
+                      {m.shared_owner ? ` · via ${m.shared_owner.name}` : ""}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              {groupRestricted > 0 ? (
+                <div className="muted small">
+                  {groupRestricted} group tie{groupRestricted === 1 ? "" : "s"} withheld at this access
+                  tier — a beneficial-owner link exists but is not shown to unprivileged callers.
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function CompanyDetailPage() {
   const { slug = "" } = useParams();
   const g = useRelGraph();
@@ -175,6 +351,9 @@ export function CompanyDetailPage() {
               </div>
             ) : null}
           </section>
+
+          {/* Ownership & control — declared / beneficial / consolidation + UBO chains + contagion */}
+          <OwnershipPanel slug={slug} />
 
           {/* Progression — git log */}
           <section className="stack gap">

@@ -153,6 +153,13 @@ class Settings(BaseSettings):
     # (an operator-supplied GLEIF export at gleif_dataset_path).
     anchor_provider: str = "gleif-api"
     gleif_dataset_path: Path | None = None
+    # UK Companies House PSC (Persons with Significant Control) — a free, live,
+    # PUBLIC beneficial-ownership register. The Public Data API needs a free API key
+    # (register at developer.company-information.service.gov.uk); unset by default so
+    # the offline/test path never depends on it and `coruscant ownership --provider
+    # psc` reports an honest error until a key or a bulk snapshot file is supplied.
+    companies_house_api_key: str | None = None
+    companies_house_api_url: str = "https://api.company-information.service.gov.uk"
     # Enforce per-plan daily API + watchlist quotas. Only takes effect in a
     # multi-tenant deployment (when an organization store is configured); single
     # -tenant/offline use is never throttled. Set false to disable enforcement.

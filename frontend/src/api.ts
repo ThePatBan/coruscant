@@ -491,6 +491,32 @@ export interface PortfolioBriefing {
   companies_with_changes: number;
 }
 
+export interface ResolvedPosition {
+  input_ticker?: string | null;
+  input_name?: string | null;
+  input_isin?: string | null;
+  input_sedol?: string | null;
+  company_key?: string | null;
+  method: "ticker" | "isin" | "sedol" | "name" | "unresolved";
+  score?: number | null;
+}
+
+export interface ResolveReport {
+  total: number;
+  resolved: number;
+  by_ticker: number;
+  by_isin: number;
+  by_sedol: number;
+  by_name: number;
+  unresolved: number;
+  positions: ResolvedPosition[];
+}
+
+export interface PortfolioUploadResult {
+  portfolio: Portfolio;
+  report: ResolveReport;
+}
+
 export interface WorkspaceItem {
   id: string;
   type: string;
@@ -644,6 +670,113 @@ export interface ScreeningOverview {
   note: string;
 }
 
+// Ownership substrate — the three DISTINCT edge types (declared ownership ≠
+// beneficial ownership ≠ accounting consolidation), never conflated, plus the UBO
+// chains and group/UBO contagion built on top. Access-tier aware: restricted edges
+// are counted, not shown.
+export interface OwnershipOverview {
+  connected: boolean;
+  owns: number;
+  beneficial_owner_of: number;
+  consolidates: number;
+  restricted: number;
+  subjects_unresolved: number;
+  holders_unresolved: number;
+  provider: string | null;
+  observed_at: string | null;
+  market: string | null;
+  note: string;
+}
+
+export interface OwnerEdge {
+  holder_kind: string;
+  holder_key: string;
+  holder_name: string | null;
+  relation: string; // owns | beneficial_owner_of | consolidates
+  basis: string | null;
+  percentage: number | null;
+  percentage_band: string | null;
+  interest: string | null;
+  source: string | null;
+  source_url: string | null;
+  access_tier: string | null;
+  valid_from: string | null;
+  valid_to: string | null;
+  holder_resolved: boolean | null;
+}
+
+export interface CompanyOwners {
+  company_key: string;
+  connected: boolean;
+  owners: OwnerEdge[];
+  restricted: number;
+  provider: string | null;
+  observed_at: string | null;
+  market: string | null;
+}
+
+export interface ChainLink {
+  holder: EntityRef;
+  subject: EntityRef;
+  relation: string;
+  basis: string | null;
+  percentage: number | null;
+  percentage_band: string | null;
+  interest: string | null;
+  source: string | null;
+  source_url: string | null;
+  valid_from: string | null;
+  valid_to: string | null;
+  holder_resolved: boolean | null;
+  access_tier: string | null;
+}
+
+export interface OwnershipChain {
+  links: ChainLink[];
+  // beneficial_owner | root | unresolved | cycle | max_depth | restricted
+  terminal: string;
+  terminal_holder: EntityRef | null;
+  depth: number;
+  complete: boolean;
+}
+
+export interface CompanyOwnershipChains {
+  company: EntityRef;
+  chains: OwnershipChain[];
+  resolved_chains: number;
+  partial_chains: number;
+  cyclic_chains: number;
+  restricted: number;
+  note: string;
+}
+
+export interface ContagionHop {
+  from_entity: EntityRef;
+  to_entity: EntityRef;
+  relation: string;
+  direction: string; // "up" | "down"
+  basis: string | null;
+  source: string | null;
+  source_url: string | null;
+  access_tier: string | null;
+}
+
+export interface ContagionMember {
+  company: EntityRef;
+  hops: number;
+  link: string; // parent | subsidiary | shares-owner | group
+  shared_owner: EntityRef | null;
+  path: ContagionHop[];
+}
+
+export interface GroupContagion {
+  seed: EntityRef;
+  direct: EntityRef[];
+  inherited: ContagionMember[];
+  restricted: number;
+  note: string;
+}
+
 export const api = {
   // data
   health: () => get<Health>("/health"),
@@ -695,6 +828,14 @@ export const api = {
     get<ExposureResult>(`/graph/exposure?country=${encodeURIComponent(country)}`),
   coExecutives: () => get<CoExecutiveResult>("/graph/co-executives"),
   screening: () => get<ScreeningOverview>("/graph/screening"),
+  // ownership substrate
+  ownershipOverview: () => get<OwnershipOverview>("/graph/ownership"),
+  companyOwners: (key: string) =>
+    get<CompanyOwners>(`/graph/company/${encodeURIComponent(key)}/owners`),
+  ownershipChain: (key: string) =>
+    get<CompanyOwnershipChains>(`/graph/company/${encodeURIComponent(key)}/ownership-chain`),
+  contagion: (key: string) =>
+    get<GroupContagion>(`/graph/company/${encodeURIComponent(key)}/contagion`),
   // watchlists
   watchlists: () => get<Watchlist[]>("/watchlists"),
   createWatchlist: (name: string, items: WatchItem[]) =>
@@ -727,6 +868,9 @@ export const api = {
   portfolios: () => get<Portfolio[]>("/portfolios"),
   createPortfolio: (name: string, holdings: Holding[]) =>
     post<Portfolio>("/portfolios", { name, holdings }),
+  resolveHoldings: (csv: string) => post<ResolveReport>("/portfolios/resolve", { csv }),
+  uploadPortfolio: (name: string, csv: string) =>
+    post<PortfolioUploadResult>("/portfolios/upload", { name, csv }),
   deletePortfolio: (id: string) =>
     request<{ ok: boolean }>(`/portfolios/${encodeURIComponent(id)}`, { method: "DELETE" }),
   portfolioBriefing: (id: string) =>
