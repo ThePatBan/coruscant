@@ -4,13 +4,13 @@ Centralizes how the durable stores (filesystem artifacts, SQLite catalog, graph
 snapshot) are constructed and how an ingestion run is assembled and replayed.
 
 Boundary: PLATFORM (assembly). Owns platform store builders (``build_auth_service`` /
-``build_org_store`` / ``build_api_key_store`` / …), the generic intelligence store, the
-ingestion lifecycle (``run_ingestion``), and the serving loaders (``load_engine`` /
-``load_graph_store``). The workspace-specific store builders, market-data services, and
-pipelines (``run_screening`` / ``run_anchor`` / ``run_portfolio`` / ``run_coverage`` /
-``run_ownership`` / ``evaluate_all_watchlists``) were extracted to
-``coruscant.apps.workspace_runtime`` in Phase 3 (docs/PLATFORM.md §9). This module does
-not import the workspace runtime; the dependency runs workspace -> platform only.
+``build_org_store`` / ``build_api_key_store`` / …), the generic intelligence store, and
+the serving loaders (``load_engine`` / ``load_graph_store``). The workspace-specific store
+builders, market-data services, and pipelines moved to ``coruscant.apps.workspace_runtime``
+(Phase 3), and the finance ingestion assembly (``run_ingestion`` / ``build_registry`` /
+``build_source_resolver`` / ``due_source_types`` / ``source_monitoring``) followed in
+Phase 4 — so this module imports **nothing** from ``coruscant.exposure`` or the workspace
+runtime. The dependency runs workspace -> platform only (docs/PLATFORM.md §9).
 """
 
 from __future__ import annotations

@@ -1,18 +1,23 @@
-"""Workspace-domain configuration schemas (the investment universe).
+"""Workspace-domain configuration schemas + loaders (the investment universe).
 
 Boundary: WORKSPACE (Portfolio-Exposure) — see docs/PLATFORM.md §7, §9 (seam 1).
 
-Phase 2 of the platform/workspace split (ADR-0013) isolates these investment-domain
-config models out of the platform ``common/config.py`` — which now keeps only the
-platform ``Settings`` and generic source config. These are **re-exported** from
-``coruscant.common.config`` for backward compatibility, so existing imports keep working;
-new code should import them from here. Their eventual home is a dedicated workspace
-package (docs/PLATFORM.md §9) — this module is the first structural move.
+Phase 4 of the platform/workspace split (ADR-0013) relocates these investment-domain
+config schemas and their loaders out of the platform ``common`` package into the
+Portfolio-Exposure workspace. The platform ``common/config.py`` now keeps only the
+generic ``Settings``, ``SourceSetting``, ``get_settings``, and ``load_sources`` — it no
+longer imports or re-exports any workspace-domain schema. This module reaches back to the
+platform only for ``get_settings`` (workspace -> platform, the allowed direction).
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import yaml
 from pydantic import BaseModel, Field
+
+from coruscant.common.config import get_settings
 
 
 class CompanyConfig(BaseModel):
@@ -87,3 +92,26 @@ class CompanyEntities(BaseModel):
     products: list[str] = Field(default_factory=list)
     technologies: list[str] = Field(default_factory=list)
     agencies: list[str] = Field(default_factory=list)
+
+
+def load_companies(config_dir: Path | None = None) -> list[CompanyConfig]:
+    base = config_dir or get_settings().config_dir
+    path = base / "companies.yml"
+    data = yaml.safe_load(path.read_text()) if path.exists() else {}
+    companies = data.get("companies", [])
+    return [CompanyConfig.model_validate(company) for company in companies]
+
+
+def load_instruments(config_dir: Path | None = None) -> InstrumentsConfig:
+    base = config_dir or get_settings().config_dir
+    path = base / "instruments.yml"
+    data = yaml.safe_load(path.read_text()) if path.exists() else {}
+    return InstrumentsConfig.model_validate(data or {})
+
+
+def load_entities(config_dir: Path | None = None) -> dict[str, CompanyEntities]:
+    base = config_dir or get_settings().config_dir
+    path = base / "entities.yml"
+    data = yaml.safe_load(path.read_text()) if path.exists() else {}
+    companies = data.get("companies", {}) if isinstance(data, dict) else {}
+    return {slug: CompanyEntities.model_validate(value) for slug, value in companies.items()}

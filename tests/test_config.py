@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from coruscant.common.config import load_companies
+from coruscant.exposure.domain_config import load_companies
 
 
 def test_load_companies() -> None:

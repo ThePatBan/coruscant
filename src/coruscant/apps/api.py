@@ -66,7 +66,8 @@ from coruscant.infrastructure.status import RunStatus
 from coruscant.intelligence.reliability import SourceReliability
 from coruscant.auth.service import AuthError, AuthService
 from coruscant.auth.store import StoredUser
-from coruscant.common.config import get_settings, load_companies
+from coruscant.common.config import get_settings
+from coruscant.exposure.domain_config import load_companies
 from coruscant.common.types import SCHEMA_VERSION, NormalizedDocument, Provenance
 from coruscant.infrastructure.intelligence_store import SqliteIntelligenceStore
 from coruscant.exposure.sources import default_registry

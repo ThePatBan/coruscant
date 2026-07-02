@@ -25,7 +25,8 @@ from coruscant.apps.workspace_runtime import (
     run_portfolio,
     run_screening,
 )
-from coruscant.common.config import get_settings, load_companies
+from coruscant.common.config import get_settings
+from coruscant.exposure.domain_config import load_companies
 from coruscant.common.logging import configure_logging
 from coruscant.exposure.sources import default_registry
 from coruscant.search.reference import TemplateReasoningLayer

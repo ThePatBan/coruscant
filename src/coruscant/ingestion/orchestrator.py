@@ -15,7 +15,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import logging
 
-from coruscant.common.config import CompanyConfig, CompanyEntities, SourceSetting
+from coruscant.common.config import SourceSetting
+from coruscant.exposure.domain_config import (
+    CompanyConfig,
+    CompanyEntities,
+)
 from coruscant.common.types import NormalizedDocument
 from coruscant.connectors.base import FetchRequest
 from coruscant.exposure.entities import (

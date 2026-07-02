@@ -19,7 +19,14 @@ from coruscant.apps.workspace_runtime import (
     build_source_resolver,
     run_ingestion,
 )
-from coruscant.common.config import CompanyConfig, Settings, SourceSetting, load_entities
+from coruscant.common.config import (
+    Settings,
+    SourceSetting,
+)
+from coruscant.exposure.domain_config import (
+    CompanyConfig,
+    load_entities,
+)
 from coruscant.connectors.base import FetchRequest, SourceConnector
 from coruscant.connectors.sec_edgar import (
     EdgarHttpConnector,

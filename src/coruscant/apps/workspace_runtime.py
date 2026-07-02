@@ -32,13 +32,15 @@ if TYPE_CHECKING:
     from coruscant.screening.provider import ScreeningProvider
 
 from coruscant.common.config import (
-    CompanyConfig,
     Settings,
     get_settings,
+    load_sources,
+)
+from coruscant.exposure.domain_config import (
+    CompanyConfig,
     load_companies,
     load_entities,
     load_instruments,
-    load_sources,
 )
 from coruscant.connectors.sec_edgar import RateLimiter
 from coruscant.exposure.extraction import extract_relationships

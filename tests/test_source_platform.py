@@ -10,7 +10,11 @@ from coruscant.apps.workspace_runtime import (
     due_source_types,
     run_ingestion,
 )
-from coruscant.common.config import CompanyConfig, Settings, SourceSetting
+from coruscant.common.config import (
+    Settings,
+    SourceSetting,
+)
+from coruscant.exposure.domain_config import CompanyConfig
 from coruscant.infrastructure.catalog import SqliteDocumentCatalog
 from coruscant.infrastructure.repositories import (
     FileSystemNormalizedDocumentRepository,

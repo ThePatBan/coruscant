@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from coruscant.common.config import CompanyConfig, CompanyEntities, PersonConfig, SupplierConfig
+from coruscant.exposure.domain_config import (
+    CompanyConfig,
+    CompanyEntities,
+    PersonConfig,
+    SupplierConfig,
+)
 from coruscant.common.types import NormalizedDocument
 from coruscant.exposure.entities import (
     entity_names_for,

@@ -212,17 +212,23 @@ is about where they live and what depends on them, not about erasing them.
 ## 9. Known coupling seams to resolve in later phases
 
 Drawing the boundary in docs and organization was Phase 1. Enforcing it in code is
-later, deliberate work — **Phase 2 (ADR-0013) enforced seams 1 and 2 and wrapped seam 3
-at the API layer; Phase 3 physically extracted seam 3 and split the runtime + `_AppState`**;
-the rest remain. The concrete seams, in rough priority order:
+later, deliberate work — **Phase 2 enforced seams 1 and 2 (routing) and wrapped seam 3;
+Phase 3 physically extracted seam 3 and split the runtime + `_AppState`; Phase 4 moved
+seam 4 (finance ingestion catalog) and completed seam 1 (domain schemas out of `common`)**;
+seams 5–7 remain. The concrete seams, in rough priority order:
 
 1. **Domain config in the shared layer.** `common/config.py` defines investment models
    (`CompanyConfig`, `CommodityConfig`, `DebtConfig`, `InstrumentsConfig`) and product
    flags on `Settings` (`enable_live_prices/macro/news`, screening/anchoring/
    companies-house). A platform `Settings` should not import a domain schema. → move
-   domain config into a workspace config module. **✅ Phase 2: isolated** — the domain
-   models moved to `common/domain_config.py` (re-exported from `common/config.py` for
-   compatibility); the product *flags* on `Settings` remain (follow-up).
+   domain config into a workspace config module. **✅ Phase 2: isolated** into
+   `common/domain_config.py` (re-exported for compat). **✅ Phase 4: relocated** — the
+   schemas + their loaders (`load_companies`/`load_instruments`/`load_entities`) moved to
+   `coruscant.exposure.domain_config` and the `common/config.py` re-export was dropped, so
+   `common/config.py` no longer imports or implies any domain schema (all 22 import sites
+   repointed). The product *flags* on the platform `Settings` (`enable_live_*`,
+   screening/anchor/companies-house) remain — a smaller residual (a workspace `Settings`
+   split is future work).
 2. **Monolithic API app.** `apps/api.py` declared all ~95 routes on one `FastAPI` with
    no routers, and `_AppState` bundles platform stores with product services. → split
    into a platform router set + a Portfolio-Exposure workspace router, composed at
@@ -244,8 +250,19 @@ the rest remain. The concrete seams, in rough priority order:
    `evaluate_all_watchlists`) moved from platform `apps/runtime.py` to
    `apps/workspace_runtime.py`.
 4. **Finance defaults wired into generic ingestion.** `ingestion/registry.py` default
-   definitions are finance-only. → move defaults into the workspace; keep the registry
-   empty/pluggable at the platform layer.
+   definitions were finance-only. → move defaults into the workspace; keep the registry
+   empty/pluggable at the platform layer. **✅ Phase 4: extracted** — the 14 finance source
+   definitions + live-connector wiring moved to `coruscant.exposure.sources`;
+   `ingestion/registry.py` now holds only the generic `SourceDefinition`/`SourceRegistry`
+   primitives, `pipeline.py`/`scheduler.py` are generic, and the finance ingestion
+   *assembly* (`build_registry`/`build_source_resolver`/`run_ingestion`/`due_source_types`/
+   `source_monitoring`) moved from platform `apps/runtime.py` to `apps/workspace_runtime.py`
+   — so platform `runtime.py` imports nothing from `exposure`.
+   **◐ Residual:** `ingestion/orchestrator.py` still projects company entities (imports
+   `exposure.entities`) and types its run loop on the workspace `CompanyConfig`. Making it
+   fully domain-neutral needs an injected entity-projector Protocol + a generic ingestion
+   subject — deliberately deferred (a second workspace should drive that generalization;
+   building it now would be speculative, which the phase brief warns against).
 5. **Investment taxonomy in the intelligence layer.** `_MATERIAL_CATEGORIES` /
    `EVENT_CATEGORIES` and `company_slug` keying. → parameterize the category set per
    workspace.
@@ -257,9 +274,12 @@ the rest remain. The concrete seams, in rough priority order:
    `collaboration` once a code-touching phase is warranted (§5).
 
 Each of these was behavior-preserving to *mark* (Phase 1) and a real refactor to
-*move* (later). Phase 2 moved seams 1 and 2 (routing) and wrapped seam 3; Phase 3
-physically moved seam 3 (exposure package) and split the runtime + `_AppState`. Seams
-4–7 remain, each to be done when it is the highest-value next step — not speculatively.
+*move* (later). Phase 2 moved seams 1–2 (routing) and wrapped seam 3; Phase 3 moved seam 3
+(exposure package) + the runtime/`_AppState`; Phase 4 moved seam 4 (finance ingestion) and
+completed seam 1 (domain schemas out of `common`). Remaining: the orchestrator's
+entity-projection/`CompanyConfig` coupling (seam 4 residual), the platform `Settings`
+product flags (seam 1 residual), and seams 5–7 — each deferred until it is the
+highest-value next step, not done speculatively.
 
 ## 10. How future workspaces compose (the evolution path)
 

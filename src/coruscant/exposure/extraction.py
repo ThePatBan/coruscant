@@ -22,7 +22,10 @@ import json
 import re
 from pathlib import Path
 
-from coruscant.common.config import CompanyConfig, InstrumentsConfig
+from coruscant.exposure.domain_config import (
+    CompanyConfig,
+    InstrumentsConfig,
+)
 from coruscant.common.types import GraphEdge, GraphNode, NormalizedDocument
 from coruscant.exposure.entities import entity_key
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore

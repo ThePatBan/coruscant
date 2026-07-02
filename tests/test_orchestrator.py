@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from coruscant.exposure.sources import default_registry
-from coruscant.common.config import CompanyConfig, SourceSetting
+from coruscant.common.config import SourceSetting
+from coruscant.exposure.domain_config import CompanyConfig
 from coruscant.infrastructure.catalog import SqliteDocumentCatalog
 from coruscant.infrastructure.intelligence_store import SqliteIntelligenceStore
 from coruscant.infrastructure.repositories import (
