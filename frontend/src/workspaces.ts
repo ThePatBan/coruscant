@@ -3,7 +3,7 @@
 //   • public     — free, discovery-first: search, company profiles, relationships,
 //                  timelines, evidence. No monitoring framing.
 //   • personal   — the monitoring product: watchlists, alerts, portfolio, exposure.
-//   • enterprise — org-level: shared workspaces, private data, policy/audit, API access.
+//   • enterprise — org-level: shared workspaces, policy/audit, and programmatic API access.
 //
 // This module is the single source of truth for what each workspace IS (identity,
 // nav, entry path) and the pure logic that routes a visitor to the right one based
@@ -120,10 +120,10 @@ export const WORKSPACES: Record<WorkspaceKind, WorkspaceMeta> = {
     label: "Enterprise",
     eyebrow: "For teams & organizations",
     blurb:
-      "Org-level intelligence. Shared workspaces, private data, policy & audit, and programmatic API access for your whole team.",
+      "Org-level intelligence. Shared workspaces, policy & audit, and programmatic API access for your whole team.",
     bullets: [
       "Shared workspaces & collaboration",
-      "API keys & programmatic access",
+      "Scoped API keys & programmatic access",
       "Policy, audit & admin controls",
     ],
     home: "/enterprise",
@@ -176,15 +176,34 @@ export function routeAccess(pathname: string, ctx: { authed: boolean }): RouteAc
   return "requireLogin";
 }
 
+/** The entitlement inputs the enterprise gate needs: a session plus whether the
+ * account actually holds the enterprise entitlement (backend-decided — see
+ * `/entitlements` and `useAuth().enterprise`). `enterprise` is optional so anonymous
+ * callers (no entitlement known) read as not-entitled. */
+export interface EntitlementContext {
+  authed: boolean;
+  enterprise?: boolean;
+}
+
+/**
+ * The SINGLE decision point for enterprise eligibility (Phase 7, Scope B). A caller is
+ * eligible only with a session AND the enterprise entitlement — replacing the old "any
+ * authenticated account may enter enterprise". The entitlement itself is decided by the
+ * backend (admin role OR an enterprise-plan org); this stays a pure mirror so the shell
+ * guard, the landing chooser, and the overview never re-derive eligibility themselves.
+ */
+export function canUseEnterprise(ctx: EntitlementContext): boolean {
+  return ctx.authed && ctx.enterprise === true;
+}
+
 /**
  * Whether a visitor may ENTER a workspace — the deterministic entitlement gate.
- * Public is always open; Personal and Enterprise require a signed-in session. The
- * enterprise pilot admits any authenticated account today; deeper gating (org
- * membership / plan / role) is a documented follow-up and belongs here, so callers
- * never branch on entitlement themselves.
+ * Public is always open; Personal needs a session; Enterprise needs the enterprise
+ * entitlement (via `canUseEnterprise`), so callers never branch on entitlement themselves.
  */
-export function canEnterWorkspace(kind: WorkspaceKind, ctx: { authed: boolean }): boolean {
+export function canEnterWorkspace(kind: WorkspaceKind, ctx: EntitlementContext): boolean {
   if (kind === "public") return true;
+  if (kind === "enterprise") return canUseEnterprise(ctx);
   return ctx.authed;
 }
 

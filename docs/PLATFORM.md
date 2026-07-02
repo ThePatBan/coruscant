@@ -137,7 +137,7 @@ senses now coexist and the reader should note which is meant.
 The phase brief asks for three boundaries to be drawn. Here they are, mapped to code:
 
 1. **Shared platform services** — §3. Domain-neutral, reusable by any workspace.
-   Code: `common` (minus the domain config, §9), `knowledge_graph` (store/substrate),
+   Code: `common` (types/errors/logging + platform `Settings`, §9), `knowledge_graph` (store/substrate),
    `anchoring`, `ingestion`, `connectors` (interfaces), `infrastructure`, `search`,
    `intelligence` (mechanism), `llm`, `auth`, `commercial`, `enterprise`, `workspaces`.
 
@@ -163,7 +163,7 @@ that fuses both and is a named seam to split later (§9).
 
 | Package | Class | Note |
 |---|---|---|
-| `common` | Mixed (seam) | Types/errors/logging are platform; `config.py` domain models (`CompanyConfig`, `CommodityConfig`, `DebtConfig`, `InstrumentsConfig`) and product `Settings` flags are workspace. |
+| `common` | Platform | Types/errors/logging + the domain-neutral platform `Settings`. The investment domain models relocated to `coruscant.exposure.domain_config` (Phase 4) and every workspace `Settings` flag to `coruscant.exposure.settings.WorkspaceSettings` (Phase 5); Phase 7 deleted the last dead duplicates. `tests/test_platform_boundary.py` fails the build if a workspace flag reappears here. |
 | `knowledge_graph` | Mixed (seam) | `store`/`substrate`/`persistence`/`resolution`/`memory`/`kuzu_store`/`textmatch` are platform; `queries.py` (exposure engine), `taxonomy.py` (GICS/MSCI), `ownership_graph.py`, `entities.py` are workspace. |
 | `anchoring` | Platform (corporate-scoped) | Identity/keys pillar; provider seam. Scoped to corporate legal-entity resolution (GLEIF LEI). |
 | `ingestion` | Mixed (seam) | Orchestrator/registry/scheduler/pipeline are platform; `registry.py` default definitions are all finance sources. |

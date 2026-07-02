@@ -11,7 +11,7 @@ import {
   IconLogout,
   IconShield,
 } from "./icons";
-import { resolveHomeWorkspace, routeAccess, WORKSPACES, workspaceForPath, workspaceStore } from "./workspaces";
+import { canUseEnterprise, resolveHomeWorkspace, routeAccess, WORKSPACES, workspaceForPath, workspaceStore } from "./workspaces";
 import { AdminPage } from "./pages/AdminPage";
 import { AlertsPage } from "./pages/AlertsPage";
 import { AtlasStakeholderPage } from "./pages/AtlasStakeholderPage";
@@ -265,7 +265,7 @@ function UserMenu({
  * so hook order stays stable across the loading → ready transition.
  */
 function WorkspaceShell() {
-  const { email, role, ready, logout } = useAuth();
+  const { email, role, enterprise, ready, logout } = useAuth();
   const location = useLocation();
   const [theme, setTheme] = useTheme();
   const [navCollapsed, toggleNav] = useNavCollapsed();
@@ -295,6 +295,16 @@ function WorkspaceShell() {
     // Preserve the query string too, so a deep link like /search?q=… survives the
     // sign-in round-trip (the Public search box hands off here).
     return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
+  }
+  // Enterprise entitlement gate (Scope B): a signed-in account without the enterprise
+  // entitlement may see the overview (an honest upsell) but not the deep enterprise
+  // surfaces. Backend routes enforce this too; this keeps the shell from dead-ending.
+  if (
+    workspace === "enterprise" &&
+    location.pathname !== "/enterprise" &&
+    !canUseEnterprise({ authed: !anon, enterprise })
+  ) {
+    return <Navigate to="/enterprise" replace />;
   }
 
   // Spatial surfaces opt out of the centered, padded content column so the

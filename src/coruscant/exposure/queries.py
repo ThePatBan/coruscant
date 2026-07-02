@@ -195,7 +195,13 @@ def _detail_of(properties: dict[str, object]) -> str | None:
     return None
 
 
-def entity_profile(store: KnowledgeGraphStore, kind: str, key: str) -> EntityProfile | None:
+def entity_profile(
+    store: KnowledgeGraphStore,
+    kind: str,
+    key: str,
+    *,
+    clearance: substrate.AccessTier | str = substrate.AccessTier.PUBLIC,
+) -> EntityProfile | None:
     node = store.get_node(kind, key)
     if node is None:
         return None
@@ -203,6 +209,11 @@ def entity_profile(store: KnowledgeGraphStore, kind: str, key: str) -> EntityPro
     mentioned_in: list[str] = []
     for edge, _ in store.neighbors(kind, key):
         if edge.relation == "mentions":
+            continue
+        # Access-tier gate: a sensitive edge (PEP/sanctions, beneficial ownership)
+        # is withheld from callers below its clearance — never leaked through the
+        # generic entity profile (default PUBLIC keeps anonymous readers evidence-safe).
+        if not substrate.can_see(edge.properties, clearance):
             continue
         relationships.append(
             Relationship(
@@ -216,6 +227,8 @@ def entity_profile(store: KnowledgeGraphStore, kind: str, key: str) -> EntityPro
     for edge in store.incoming(kind, key):
         if edge.relation == "mentions":
             mentioned_in.append(edge.source_key)
+            continue
+        if not substrate.can_see(edge.properties, clearance):
             continue
         relationships.append(
             Relationship(
