@@ -6,6 +6,9 @@ interface AuthState {
   // Account role from /auth/me (e.g. "admin"). Null until the session resolves, or
   // for the brief window after login before the profile refetch completes.
   role: string | null;
+  // Whether the account holds the enterprise entitlement (backend /entitlements — the
+  // single source of truth). The enterprise gate reads THIS, never role/plan directly.
+  enterprise: boolean;
   ready: boolean; // initial token validation finished
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string) => Promise<void>;
@@ -17,7 +20,16 @@ const AuthContext = createContext<AuthState | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [email, setEmail] = useState<string | null>(null);
   const [role, setRole] = useState<string | null>(null);
+  const [enterprise, setEnterprise] = useState(false);
   const [ready, setReady] = useState(false);
+
+  // Refresh the enterprise entitlement from the backend (never derived client-side).
+  // A failure degrades to "not entitled" rather than clearing the session.
+  const refreshEntitlements = () =>
+    api
+      .entitlements()
+      .then((ent) => setEnterprise(ent.enterprise))
+      .catch(() => setEnterprise(false));
 
   useEffect(() => {
     const token = tokenStore.get();
@@ -27,9 +39,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     api
       .me()
-      .then((user) => {
+      .then(async (user) => {
         setEmail(user.email);
         setRole(user.role);
+        await refreshEntitlements();
       })
       .catch(() => {
         tokenStore.clear();
@@ -41,27 +54,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       email,
       role,
+      enterprise,
       ready,
       login: async (e, p) => {
         const res = await api.login(e, p);
         tokenStore.set(res.token);
         setEmail(res.email);
-        // Backfill the role; the login response only carries the token + email.
+        // Backfill role + entitlement; the login response only carries token + email.
         void api.me().then((u) => setRole(u.role)).catch(() => setRole(null));
+        void refreshEntitlements();
       },
       register: async (e, p) => {
         const res = await api.register(e, p);
         tokenStore.set(res.token);
         setEmail(res.email);
         void api.me().then((u) => setRole(u.role)).catch(() => setRole(null));
+        void refreshEntitlements();
       },
       logout: () => {
         tokenStore.clear();
         setEmail(null);
         setRole(null);
+        setEnterprise(false);
       },
     }),
-    [email, role, ready],
+    [email, role, enterprise, ready],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

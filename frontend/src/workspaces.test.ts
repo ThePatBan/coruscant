@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canEnterWorkspace,
+  canUseEnterprise,
   isPublicReadablePath,
   isWorkspaceKind,
   postLoginPath,
@@ -112,16 +113,29 @@ describe("routeAccess (the deterministic guard)", () => {
   });
 });
 
+describe("canUseEnterprise (the single enterprise decision point)", () => {
+  it("requires BOTH a session and the enterprise entitlement", () => {
+    expect(canUseEnterprise({ authed: false, enterprise: false })).toBe(false);
+    expect(canUseEnterprise({ authed: false, enterprise: true })).toBe(false); // anon can't be entitled
+    expect(canUseEnterprise({ authed: true })).toBe(false); // authed but not entitled
+    expect(canUseEnterprise({ authed: true, enterprise: false })).toBe(false);
+    expect(canUseEnterprise({ authed: true, enterprise: true })).toBe(true);
+  });
+});
+
 describe("canEnterWorkspace (entitlement gate)", () => {
   it("keeps Public open to everyone", () => {
     expect(canEnterWorkspace("public", { authed: false })).toBe(true);
     expect(canEnterWorkspace("public", { authed: true })).toBe(true);
   });
-  it("requires a session for Personal and Enterprise", () => {
+  it("requires a session for Personal", () => {
     expect(canEnterWorkspace("personal", { authed: false })).toBe(false);
-    expect(canEnterWorkspace("enterprise", { authed: false })).toBe(false);
     expect(canEnterWorkspace("personal", { authed: true })).toBe(true);
-    expect(canEnterWorkspace("enterprise", { authed: true })).toBe(true);
+  });
+  it("requires the enterprise entitlement for Enterprise — not merely a session", () => {
+    expect(canEnterWorkspace("enterprise", { authed: false })).toBe(false);
+    expect(canEnterWorkspace("enterprise", { authed: true })).toBe(false); // authed ≠ entitled
+    expect(canEnterWorkspace("enterprise", { authed: true, enterprise: true })).toBe(true);
   });
 });
 

@@ -13,15 +13,21 @@ import {
 // pointed at the free public product and a sign-in path for the paid workspaces;
 // signed-in visitors get a one-click return to where they left off.
 
-function ctaFor(kind: WorkspaceKind, authed: boolean): { to: string; label: string } {
+function ctaFor(
+  kind: WorkspaceKind,
+  ctx: { authed: boolean; enterprise: boolean },
+): { to: string; label: string } {
   const ws = WORKSPACES[kind];
   if (!ws.requiresAuth) return { to: ws.home, label: "Explore free →" };
-  if (authed) return { to: ws.home, label: `Open ${ws.label.toLowerCase()} →` };
-  return { to: `/login?ws=${kind}`, label: "Sign in →" };
+  if (!ctx.authed) return { to: `/login?ws=${kind}`, label: "Sign in →" };
+  // Enterprise is entitlement-gated: an un-entitled account is offered the overview
+  // (an honest "what you'd get" upsell), not a dead-ending "open" into locked surfaces.
+  if (kind === "enterprise" && !ctx.enterprise) return { to: "/enterprise", label: "Learn more →" };
+  return { to: ws.home, label: `Open ${ws.label.toLowerCase()} →` };
 }
 
 export function LandingPage() {
-  const { email } = useAuth();
+  const { email, enterprise } = useAuth();
   const authed = Boolean(email);
   const remembered = workspaceStore.get();
   const resume = authed ? WORKSPACES[resolveHomeWorkspace({ authed, remembered })] : null;
@@ -73,7 +79,7 @@ export function LandingPage() {
       <section className="feature-grid ws-grid">
         {WORKSPACE_KINDS.map((kind) => {
           const ws = WORKSPACES[kind];
-          const cta = ctaFor(kind, authed);
+          const cta = ctaFor(kind, { authed, enterprise });
           const current = resume?.kind === kind;
           return (
             <Link className="card hover ws-card" key={kind} to={cta.to}>

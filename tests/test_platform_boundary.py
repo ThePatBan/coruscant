@@ -43,3 +43,51 @@ def test_buckets_are_disjoint_and_cover_everything() -> None:
     assert not (PLATFORM_PACKAGES & MIXED_PACKAGES)
     assert not (WORKSPACE_PACKAGES & MIXED_PACKAGES)
     assert PLATFORM_PACKAGES | WORKSPACE_PACKAGES | MIXED_PACKAGES == set(BOUNDARY)
+
+
+# ---- Field-level drift guard on the platform Settings (Phase 7, seam 1) -----------
+#
+# The package-level guards above cannot catch a workspace flag leaking BACK onto the
+# platform `common.config.Settings` (they check package classification, not field
+# contents). These two assert the split at field granularity so the resolved drift
+# cannot silently reappear.
+
+# Workspace-specific runtime flags — must live ONLY on
+# `coruscant.exposure.settings.WorkspaceSettings`, never on the platform Settings.
+_WORKSPACE_SETTINGS_FIELDS = frozenset(
+    {
+        "screening_dataset_path",
+        "screening_provider",
+        "yente_url",
+        "yente_dataset",
+        "yente_cutoff",
+        "yente_limit",
+        "anchor_provider",
+        "gleif_dataset_path",
+        "companies_house_api_key",
+        "companies_house_api_url",
+        "edgar_user_agent",
+        "live_sources",
+        "sec_rate_limit_per_second",
+        "enable_live_prices",
+        "enable_live_macro",
+        "enable_live_news",
+    }
+)
+
+
+def test_platform_settings_carry_no_workspace_flags() -> None:
+    from coruscant.common.config import Settings
+
+    leaked = _WORKSPACE_SETTINGS_FIELDS & set(Settings.model_fields)
+    assert not leaked, (
+        "workspace-specific flags leaked onto the platform common.config.Settings — "
+        f"move them to coruscant.exposure.settings.WorkspaceSettings: {sorted(leaked)}"
+    )
+
+
+def test_workspace_settings_own_the_relocated_flags() -> None:
+    from coruscant.exposure.settings import WorkspaceSettings
+
+    missing = _WORKSPACE_SETTINGS_FIELDS - set(WorkspaceSettings.model_fields)
+    assert not missing, f"WorkspaceSettings lost a relocated flag: {sorted(missing)}"

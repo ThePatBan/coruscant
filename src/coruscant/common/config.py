@@ -43,30 +43,12 @@ class Settings(BaseSettings):
     # only (no email delivery); never expose it on an untrusted deployment.
     expose_reset_token: bool = False
     ingest_max_attempts: int = 3
-    # Path to an OpenSanctions export (bulk `targets.nested.json` or a JSON array)
-    # for PEP/sanctions screening. Unset by default so the offline/test path never
-    # depends on it and the screening panel honestly reports `connected: false`
-    # until an operator wires a dataset (see `coruscant screen`).
-    screening_dataset_path: Path | None = None
-    # Which screening matcher to use: "deterministic" (zero-dep, offline, exact/
-    # near-exact names) or "yente" (OpenSanctions' scorer at scale + fuzzy/cross-
-    # script recall, run as a Docker sidecar over HTTP — see docker-compose.screening.yml).
-    screening_provider: str = "deterministic"
-    yente_url: str = "http://localhost:8000"
-    yente_dataset: str = "default"  # yente collection ("default" | "sanctions" | "peps")
-    yente_cutoff: float = 0.7  # minimum score for yente to return a candidate
-    yente_limit: int = 5  # max candidates per person
-    # GLEIF LEI anchoring: "gleif-api" (free, CC0 public API) or "gleif-local"
-    # (an operator-supplied GLEIF export at gleif_dataset_path).
-    anchor_provider: str = "gleif-api"
-    gleif_dataset_path: Path | None = None
-    # UK Companies House PSC (Persons with Significant Control) — a free, live,
-    # PUBLIC beneficial-ownership register. The Public Data API needs a free API key
-    # (register at developer.company-information.service.gov.uk); unset by default so
-    # the offline/test path never depends on it and `coruscant ownership --provider
-    # psc` reports an honest error until a key or a bulk snapshot file is supplied.
-    companies_house_api_key: str | None = None
-    companies_house_api_url: str = "https://api.company-information.service.gov.uk"
+    # NOTE: workspace-specific runtime flags (PEP/sanctions screening, yente, GLEIF
+    # anchoring, UK Companies House PSC, live feeds, SEC EDGAR connector) live on
+    # ``coruscant.exposure.settings.WorkspaceSettings`` — NOT here. This platform
+    # ``Settings`` stays domain-neutral (docs/PLATFORM.md §9, seam 1). They share the
+    # same ``CORUSCANT_`` env prefix / ``.env`` file, so operator config is unchanged.
+    # ``tests/test_platform_boundary.py`` fails the build if a workspace flag reappears.
     # Enforce per-plan daily API + watchlist quotas. Only takes effect in a
     # multi-tenant deployment (when an organization store is configured); single
     # -tenant/offline use is never throttled. Set false to disable enforcement.
@@ -86,6 +68,17 @@ class Settings(BaseSettings):
     # per-IP defence-in-depth (not authz); stricter than the read budget. Fixed-window,
     # in-proc. Set 0 to disable (e.g. behind an upstream limiter).
     auth_rate_limit: int = 30
+    # Trust the X-Forwarded-For header when deriving the rate-limit client IP. OFF by
+    # default: the socket peer is used, so a client cannot forge its identity to dodge
+    # the anonymous limits. Turn ON only when a TRUSTED reverse proxy sets the header
+    # (the compose topology puts nginx in front). Trusting it without such a proxy lets
+    # any caller spoof X-Forwarded-For and bypass rate limiting entirely.
+    trust_forwarded_for: bool = False
+    # Rate-limit backend. "memory" (default): in-process fixed-window, correct for a
+    # single instance. A shared/distributed backend (e.g. Redis) is a documented seam
+    # in coruscant.apps.ratelimit for horizontally-scaled deployments; selecting an
+    # unimplemented backend fails closed rather than silently limiting per-instance.
+    rate_limit_backend: str = "memory"
     # Assert go-live safety at startup. When true, the app REFUSES to boot with an
     # unsafe production config (wildcard CORS, missing secret) instead of silently
     # degrading. Off by default so dev/test/offline use is never blocked.
@@ -117,7 +110,31 @@ class Settings(BaseSettings):
                 "CORUSCANT_SEED_DEMO_USER is on: a known demo account is auto-created — "
                 "disable it before a public launch."
             )
+        if self.public_read and self.public_read_rate_limit <= 0:
+            warnings.append(
+                "CORUSCANT_PUBLIC_READ is on but CORUSCANT_PUBLIC_READ_RATE_LIMIT <= 0: "
+                "the open public surface has no anti-abuse limit. Set a positive per-minute "
+                "limit, or place a limiter upstream and lock the surface behind it."
+            )
         return warnings
+
+    def client_ip_notes(self) -> list[str]:
+        """Advisory (non-fatal) notes on how the rate-limit client IP is derived, so the
+        active trusted-proxy posture is visible in the boot log. Distinct from
+        ``config_warnings`` — these never block a boot; the operator's topology decides
+        which mode is correct."""
+        if self.trust_forwarded_for:
+            return [
+                "trust_forwarded_for is ON: the rate-limit client IP is taken from "
+                "X-Forwarded-For. Ensure ONLY a trusted proxy can set it, or callers can "
+                "spoof it to bypass the anonymous limits."
+            ]
+        return [
+            "trust_forwarded_for is OFF: the rate-limit client IP is the socket peer. "
+            "Behind a reverse proxy every request would share the proxy's IP (one bucket) "
+            "— set CORUSCANT_TRUST_FORWARDED_FOR=true so a trusted proxy's X-Forwarded-For "
+            "is honoured."
+        ]
 
     def ensure_launch_safe(self) -> None:
         """Fail closed when serving with an unsafe production config; no-op otherwise.

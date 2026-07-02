@@ -541,6 +541,21 @@ export interface ApiKey {
   name: string;
   display: string;
   created_at: string;
+  // Elevated scopes the key carries (empty = least privilege: no admin/enterprise
+  // access). Enforced server-side on the sensitive surfaces.
+  scopes: string[];
+  // ISO expiry, or null when the key never expires.
+  expires_at: string | null;
+}
+
+// The caller's entitlement decision (backend /entitlements). The single source of
+// truth the enterprise gate consumes so the UI never re-derives eligibility itself.
+export interface Entitlements {
+  email: string;
+  role: string;
+  plan: string;
+  entitlements: string[];
+  enterprise: boolean;
 }
 
 export interface SavedSearch {
@@ -908,9 +923,16 @@ export const api = {
     request<{ ok: boolean }>(`/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" }),
   // plan & usage
   quota: () => get<QuotaStatus>("/quota"),
+  // entitlements — the single source of truth for the enterprise gate
+  entitlements: () => get<Entitlements>("/entitlements"),
   // api keys
   apiKeys: () => get<ApiKey[]>("/api-keys"),
-  createApiKey: (name: string) => post<{ key: ApiKey; secret: string }>("/api-keys", { name }),
+  createApiKey: (name: string, opts?: { scopes?: string[]; expires_in_days?: number }) =>
+    post<{ key: ApiKey; secret: string }>("/api-keys", {
+      name,
+      scopes: opts?.scopes ?? [],
+      expires_in_days: opts?.expires_in_days ?? null,
+    }),
   revokeApiKey: (id: string) =>
     request<{ ok: boolean }>(`/api-keys/${encodeURIComponent(id)}`, { method: "DELETE" }),
   // auth

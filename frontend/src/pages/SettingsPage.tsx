@@ -100,7 +100,8 @@ export function SettingsPage() {
       <div className="card stack gap">
         <h2>API keys</h2>
         <p className="faint" style={{ fontSize: 13 }}>
-          Use a key as <span className="mono">X-API-Key</span> to call the API programmatically.
+          Use a key as <span className="mono">X-API-Key</span> to call the API programmatically. New
+          keys are least-privilege — read + your own data, never admin or enterprise access.
         </p>
         {secret ? (
           <div className="answer" style={{ borderLeftColor: "var(--good)" }}>
@@ -122,6 +123,18 @@ export function SettingsPage() {
                 <div className="grow">
                   <div style={{ fontWeight: 560 }}>{k.name}</div>
                   <div className="mono faint" style={{ fontSize: 12 }}>{k.display}</div>
+                  <div className="wrap" style={{ gap: 6, marginTop: 4 }}>
+                    {k.scopes.length > 0 ? (
+                      k.scopes.map((s) => (
+                        <span className="stub-badge" key={s}>{s}</span>
+                      ))
+                    ) : (
+                      <span className="stub-badge">read-only</span>
+                    )}
+                    {k.expires_at ? (
+                      <span className="stub-badge">expires {k.expires_at.slice(0, 10)}</span>
+                    ) : null}
+                  </div>
                 </div>
                 <button className="btn ghost" style={{ padding: "5px 10px" }} onClick={() => void revoke(k.id)}>
                   Revoke

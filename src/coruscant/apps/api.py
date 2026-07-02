@@ -3,17 +3,16 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import logging
 import secrets
-import threading
-import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from coruscant.apps import composition
+from coruscant.apps.ratelimit import RateLimiter, build_rate_limiter
 from pydantic import BaseModel, Field
 
 from coruscant.apps.runtime import (
@@ -47,7 +46,15 @@ from coruscant.commercial.models import (
     UsageSummary,
 )
 from coruscant.commercial.store import SqliteOrgStore, SqliteUsageStore
-from coruscant.enterprise.api_keys import ApiKey, ApiKeyCreated, SqliteApiKeyStore
+from coruscant.enterprise import entitlements
+from coruscant.enterprise.api_keys import (
+    KNOWN_SCOPES,
+    SCOPE_ADMIN,
+    SCOPE_ENTERPRISE,
+    ApiKey,
+    ApiKeyCreated,
+    SqliteApiKeyStore,
+)
 from coruscant.enterprise.audit import AuditEntry, SqliteAuditStore
 from coruscant.infrastructure.dead_letter import DeadLetterEntry, SqliteDeadLetterStore
 from coruscant.infrastructure.saved_searches import SavedSearch, SqliteSavedSearchStore
@@ -70,7 +77,12 @@ from coruscant.auth.service import AuthError, AuthService
 from coruscant.auth.store import StoredUser
 from coruscant.common.config import get_settings
 from coruscant.exposure.domain_config import load_companies
-from coruscant.common.types import SCHEMA_VERSION, NormalizedDocument, Provenance
+from coruscant.common.types import (
+    SCHEMA_VERSION,
+    NormalizedDocument,
+    Provenance,
+    RetrievalEvidence,
+)
 from coruscant.infrastructure.intelligence_store import SqliteIntelligenceStore
 from coruscant.exposure.sources import default_registry
 from coruscant.intelligence.analyst import AnalysisReport, ReferenceAnalyst
@@ -80,6 +92,8 @@ from coruscant.intelligence.signals import ReferenceSignalEngine, Signal
 from coruscant.intelligence.models import ChangeSet
 from coruscant.intelligence.models import DocumentSummary as AISummary
 from coruscant.intelligence.models import ExtractedEvent
+from coruscant.knowledge_graph import substrate
+from coruscant.knowledge_graph.substrate import AccessTier
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 from coruscant.knowledge_graph.store import KnowledgeGraphStore
 from coruscant import llm
@@ -153,6 +167,7 @@ from coruscant.pricing import (
     sector_benchmarks,
     summarize,
 )
+from coruscant.search.contracts import RetrievalEngine
 from coruscant.search.hybrid import HybridRetrievalEngine
 from coruscant.search.reference import TemplateReasoningLayer
 
@@ -360,6 +375,11 @@ class MemberAdd(BaseModel):
 
 class ApiKeyCreate(BaseModel):
     name: str
+    # Elevated scopes to grant (default none: the key inherits NO admin/enterprise
+    # access). A caller can only grant a scope it is itself authorized for.
+    scopes: list[str] = Field(default_factory=list)
+    # Optional expiry in days from now; None => the key never expires.
+    expires_in_days: int | None = Field(default=None, ge=1, le=3650)
 
 
 class SavedSearchCreate(BaseModel):
@@ -377,6 +397,27 @@ class QuotaStatus(BaseModel):
     max_watchlists: int
     watchlists_used: int
     enforced: bool
+
+
+class EntitlementsOut(BaseModel):
+    """The caller's entitlement decision — the single backend source of truth the
+    frontend gate consumes so it never re-derives eligibility from role/plan itself."""
+
+    email: str
+    role: str
+    plan: str
+    entitlements: list[str] = Field(default_factory=list)
+    enterprise: bool = False
+
+
+class EnterpriseSummary(BaseModel):
+    """Enterprise-account status behind the ``enterprise`` entitlement gate."""
+
+    plan: str
+    plan_label: str
+    entitlements: list[str] = Field(default_factory=list)
+    organizations: int = 0
+    seats: int = 0
 
 
 class OrgCreate(BaseModel):
@@ -462,46 +503,84 @@ def _to_summary(document: NormalizedDocument) -> DocumentSummary:
     )
 
 
-class _FixedWindowRateLimiter:
-    """Per-key fixed-window limiter for the anonymous public surface (Phase 6).
-
-    In-process and dependency-free — right-sized for a single-instance launch. A
-    horizontally-scaled deployment would move this to a shared store (Redis); until
-    then each instance limits independently (documented as a known follow-up).
-    ``limit_per_minute <= 0`` disables limiting.
-    """
-
-    def __init__(self, limit_per_minute: int) -> None:
-        self.limit = limit_per_minute
-        self._lock = threading.Lock()
-        self._buckets: dict[str, tuple[int, int]] = {}  # key -> (window_minute, count)
-
-    def check(self, key: str) -> None:
-        if self.limit <= 0:
-            return
-        now_minute = int(time.time() // 60)
-        with self._lock:
-            window, count = self._buckets.get(key, (now_minute, 0))
-            if window != now_minute:  # new window: reset
-                window, count = now_minute, 0
-            count += 1
-            self._buckets[key] = (window, count)
-            over = count > self.limit
-        if over:
-            raise HTTPException(
-                status_code=429,
-                detail="public rate limit reached; sign in for higher limits",
-            )
+# ---- Content-visibility guard (Phase 7, Scope A) ----------------------------------
+#
+# The public read surface must return only evidence-safe, publicly-visible records.
+# Reuse the graph substrate's access-tier policy for BOTH graph edges and documents:
+# a document's tier rides on ``metadata["access_tier"]`` (same convention as an
+# edge's ``properties["access_tier"]``), defaults to PUBLIC, and fails closed on an
+# unknown label. Existing corpora carry no tier — i.e. they are PUBLIC — so this is a
+# forward-safety gate: behaviour is unchanged until private/restricted data lands.
 
 
-def _client_ip(request: Request) -> str:
-    """Best-effort client identity for rate limiting. Honours the first hop of
-    ``X-Forwarded-For`` (the app sits behind nginx in the compose topology); falls
-    back to the socket peer. Spoofable if the proxy is bypassed — acceptable for a
-    coarse anti-abuse limit, not for authz."""
-    forwarded = request.headers.get("X-Forwarded-For", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+def _viewer_clearance(user: StoredUser | None) -> AccessTier:
+    """Access-tier clearance granted on the PUBLIC READ surface.
+
+    The public read routes return only PUBLIC, evidence-safe records — to EVERY caller,
+    anonymous or authenticated (Scope A: "public read routes must only return explicitly
+    public records"). This deliberately matches the ownership/screening panels, which
+    already pin the public tier for everyone, so a signed-in caller can never read a
+    sensitive edge (e.g. beneficial ownership) through the generic ``/entities`` /
+    ``/graph/company`` reads that the dedicated panels withhold.
+
+    Kept as a function of ``user`` — not a bare constant — because this is the single
+    place a future authenticated-elevation policy (privileged, non-public routes) would
+    branch. Today every viewer's clearance is PUBLIC."""
+    return AccessTier.PUBLIC
+
+
+def _document_visible(document: NormalizedDocument, clearance: AccessTier | str) -> bool:
+    """Whether a caller with ``clearance`` may see this document. The tier is read from
+    ``metadata`` exactly as :func:`substrate.can_see` reads an edge's ``properties``."""
+    return substrate.can_see(document.metadata, clearance)
+
+
+class _ClearanceFilteredEngine(RetrievalEngine):
+    """Read-through retrieval view that drops documents above the caller's clearance.
+
+    Wraps the shared engine on the public read surface so retrieval, evidence, and the
+    templated answer never surface a document the caller may not see. Only the read
+    methods the reasoning layer + ``/retrieve`` use are proxied; everything else is the
+    inner engine's responsibility."""
+
+    def __init__(self, inner: Any, clearance: AccessTier) -> None:
+        self.inner = inner
+        self.clearance = clearance
+
+    def retrieve(self, query: str, *, top_k: int = 10) -> list[NormalizedDocument]:
+        return [
+            d
+            for d in self.inner.retrieve(query, top_k=top_k)
+            if _document_visible(d, self.clearance)
+        ]
+
+    def retrieve_with_evidence(
+        self, query: str, *, top_k: int = 10
+    ) -> list[tuple[NormalizedDocument, list[RetrievalEvidence]]]:
+        matches = self.inner.retrieve_with_evidence(query, top_k=top_k)
+        return [(d, ev) for d, ev in matches if _document_visible(d, self.clearance)]
+
+
+def _client_ip(request: Request, *, trust_forwarded_for: bool) -> str:
+    """Best-effort client identity for rate limiting.
+
+    When ``trust_forwarded_for`` is set (a trusted reverse proxy is in front — the
+    compose topology puts nginx there), derive the client from proxy-set headers;
+    otherwise use the socket peer. NEVER the LEFTMOST ``X-Forwarded-For`` hop: the
+    bundled nginx uses ``$proxy_add_x_forwarded_for``, which APPENDS the real peer to
+    any client-supplied header, so the leftmost value is fully attacker-controlled and
+    trusting it lets a caller rotate it to dodge the limit. Prefer ``X-Real-IP`` (nginx
+    sets it to ``$remote_addr`` — a single, unspoofable-behind-the-proxy value); fall
+    back to the RIGHTMOST forwarded hop (the one the trusted proxy appended). Coarse
+    anti-abuse identity, never authz."""
+    if trust_forwarded_for:
+        real_ip = request.headers.get("X-Real-IP", "").strip()
+        if real_ip:
+            return real_ip
+        forwarded = request.headers.get("X-Forwarded-For", "")
+        hops = [hop.strip() for hop in forwarded.split(",") if hop.strip()]
+        if hops:
+            return hops[-1]  # rightmost = the hop OUR proxy appended, not client-supplied
     return request.client.host if request.client else "unknown"
 
 
@@ -578,6 +657,8 @@ def create_app(
             # production (CORUSCANT_PRODUCTION=true) rather than serve degraded.
             for warning in settings.config_warnings():
                 logger.warning("config: %s", warning)
+            for note in settings.client_ip_notes():
+                logger.info("config: %s", note)
             settings.ensure_launch_safe()
             state.engine = load_engine(settings)
             state.graph = load_graph_store(settings)
@@ -614,24 +695,44 @@ def create_app(
     }
     pe = workspace_routers[composition.PORTFOLIO_EXPOSURE.slug]
 
-    # Anonymous public surface anti-abuse (Phase 6): fixed-window per client IP.
-    # Signed-in callers bypass it (they have per-plan quotas instead).
-    public_limiter = _FixedWindowRateLimiter(settings.public_read_rate_limit)
+    # Anonymous public surface anti-abuse (Phase 6): per client IP. Signed-in callers
+    # bypass it (they have per-plan quotas instead). The limiter is built through the
+    # ratelimit seam (Phase 7): in-process by default, a shared/distributed backend for
+    # scaled deployments (settings.rate_limit_backend).
+    public_limiter: RateLimiter = build_rate_limiter(
+        settings.public_read_rate_limit, backend=settings.rate_limit_backend
+    )
 
-    def _resolve_user(request: Request) -> StoredUser | None:
-        """Resolve the caller from a Bearer token or an X-API-Key; None if neither
-        identifies a user. Never raises — the callers decide whether that's fatal."""
+    def _rate_limit(limiter: RateLimiter, request: Request, detail: str) -> None:
+        if not limiter.allow(_client_ip(request, trust_forwarded_for=settings.trust_forwarded_for)):
+            raise HTTPException(status_code=429, detail=detail)
+
+    def _principal(request: Request) -> tuple[StoredUser | None, frozenset[str] | None]:
+        """Resolve the caller. Returns ``(user, scopes)`` where ``scopes`` is:
+
+        * ``None`` for a session (Bearer) token — full owner authority, no restriction;
+        * the API key's elevated scopes (possibly empty) for X-API-Key auth.
+
+        A Bearer token wins over an X-API-Key. Never raises — callers decide fatality."""
         header = request.headers.get("Authorization", "")
         token = header[7:].strip() if header[:7].lower() == "bearer " else ""
-        user = state.auth.user_from_token(token) if state.auth and token else None
-        if user is None:
-            # Programmatic / third-party access via an API key (X-API-Key).
-            api_key = request.headers.get("X-API-Key", "")
-            if api_key and state.api_keys is not None and state.auth is not None:
-                owner = state.api_keys.resolve(api_key)
-                if owner:
-                    user = state.auth.store.get(owner)
-        return user
+        if state.auth and token:
+            user = state.auth.user_from_token(token)
+            if user is not None:
+                return user, None  # session token -> full owner authority
+        # Programmatic / third-party access via an API key (X-API-Key), expiry-aware.
+        api_key = request.headers.get("X-API-Key", "")
+        if api_key and state.api_keys is not None and state.auth is not None:
+            resolved = state.api_keys.resolve_principal(api_key)
+            if resolved is not None:
+                user = state.auth.store.get(resolved.user_email)
+                if user is not None:
+                    return user, resolved.scopes
+        return None, None
+
+    def _resolve_user(request: Request) -> StoredUser | None:
+        """The caller's identity (Bearer or X-API-Key), or None. Never raises."""
+        return _principal(request)[0]
 
     def require_user(request: Request) -> StoredUser | None:
         if not enforce_auth:
@@ -656,21 +757,28 @@ def create_app(
             return user
         if not settings.public_read:
             raise HTTPException(status_code=401, detail="authentication required")
-        public_limiter.check(_client_ip(request))
+        _rate_limit(public_limiter, request, "public rate limit reached; sign in for higher limits")
         return None
 
     protected = [Depends(require_user)]
     public = [Depends(public_read)]
+
+    def _visible_documents(clearance: AccessTier) -> list[NormalizedDocument]:
+        """The corpus a caller with ``clearance`` may read — private/restricted
+        documents are dropped (Scope A). Anonymous callers get PUBLIC-only."""
+        return [d for d in _all_documents(state.engine) if _document_visible(d, clearance)]
 
     # Unauthenticated auth endpoints (login/register/reset) run PBKDF2 at 240k
     # iterations, so an unthrottled burst is both a brute-force vector and a CPU DoS.
     # Throttle per client IP on a separate, stricter budget than the read surface.
     # In-process / single-instance (same follow-up as the public limiter); coarse
     # anti-abuse, not authz.
-    auth_limiter = _FixedWindowRateLimiter(settings.auth_rate_limit)
+    auth_limiter: RateLimiter = build_rate_limiter(
+        settings.auth_rate_limit, backend=settings.rate_limit_backend
+    )
 
     def anon_rate_limit(request: Request) -> None:
-        auth_limiter.check(_client_ip(request))
+        _rate_limit(auth_limiter, request, "too many attempts; slow down and retry shortly")
 
     auth_throttle = [Depends(anon_rate_limit)]
 
@@ -683,15 +791,55 @@ def create_app(
         user = _resolve_user(request)
         return user.email if user is not None else "anonymous@local"
 
+    def _anon_admin() -> StoredUser:
+        # Synthetic principal for the auth-disabled (test/offline) path.
+        return StoredUser(email="anonymous@local", password_hash="", created_at="", role="admin")
+
     def require_admin(request: Request) -> StoredUser:
-        user = require_user(request)
+        user, scopes = _principal(request)
         if not enforce_auth:
-            return user or StoredUser(
-                email="anonymous@local", password_hash="", created_at="", role="admin"
-            )
-        if user is None or user.role != "admin":
+            return user or _anon_admin()
+        if user is None:  # anonymous — 401 (distinct from an authenticated non-admin 403)
+            raise HTTPException(status_code=401, detail="authentication required")
+        if user.role != "admin":
             raise HTTPException(status_code=403, detail="admin role required")
+        # An API key reaches admin only if it was explicitly granted the admin scope —
+        # an admin's default key can NOT (Scope C). A session (scopes is None) is
+        # unrestricted, preserving the existing browser/admin-console behaviour.
+        if scopes is not None and SCOPE_ADMIN not in scopes:
+            raise HTTPException(
+                status_code=403, detail="this API key is not authorized for admin access"
+            )
         return user
+
+    def require_entitlement(name: str) -> Any:
+        """Dependency factory gating an enterprise-only route on a real entitlement
+        (Scope B). ``require_user`` is a sub-dependency so the route is correctly seen
+        as auth-gated by the route-table guard. An API-key caller must additionally
+        carry the matching scope."""
+
+        def _require(
+            request: Request, user: StoredUser | None = Depends(require_user)
+        ) -> StoredUser:
+            if not enforce_auth:
+                return user or _anon_admin()
+            if user is None:  # pragma: no cover - require_user already raised
+                raise HTTPException(status_code=401, detail="authentication required")
+            plan = _effective_plan(user.email)
+            if not entitlements.has_entitlement(name, role=user.role, plan=plan.name):
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"the {name} plan is required — upgrade to access this resource",
+                )
+            _, scopes = _principal(request)
+            if scopes is not None and name not in scopes:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"this API key is not authorized for {name} access",
+                )
+            return user
+
+        return _require
 
     def _audit(email: str, action: str, detail: str = "") -> None:
         if state.audit is not None:
@@ -898,10 +1046,15 @@ def create_app(
             for definition in default_registry().definitions()
         ]
 
-    @plat.get("/documents", response_model=list[DocumentSummary], dependencies=public)
-    def documents(company: str | None = None, source_type: str | None = None) -> list[DocumentSummary]:
+    @plat.get("/documents", response_model=list[DocumentSummary])
+    def documents(
+        company: str | None = None,
+        source_type: str | None = None,
+        user: StoredUser | None = Depends(public_read),
+    ) -> list[DocumentSummary]:
+        clearance = _viewer_clearance(user)
         results: list[DocumentSummary] = []
-        for document in _all_documents(state.engine):
+        for document in _visible_documents(clearance):
             slug = document.metadata.get("company_slug")
             if company is not None and slug != company:
                 continue
@@ -910,9 +1063,14 @@ def create_app(
             results.append(_to_summary(document))
         return results
 
-    @plat.get("/documents/{canonical_id}", response_model=DocumentDetail, dependencies=public)
-    def document_detail(canonical_id: str) -> DocumentDetail:
-        for document in _all_documents(state.engine):
+    @plat.get("/documents/{canonical_id}", response_model=DocumentDetail)
+    def document_detail(
+        canonical_id: str, user: StoredUser | None = Depends(public_read)
+    ) -> DocumentDetail:
+        clearance = _viewer_clearance(user)
+        # Iterate the visible corpus: a document the caller may not see is indistinguishable
+        # from a missing one (404), so we never leak the existence of private records.
+        for document in _visible_documents(clearance):
             if document.canonical_id == canonical_id:
                 return DocumentDetail(
                     **_to_summary(document).model_dump(),
@@ -935,8 +1093,12 @@ def create_app(
         if user is not None:
             _enforce_api_quota(user.email)
             _record_usage(user.email, "retrieve")
-        reasoning = TemplateReasoningLayer(state.engine)
-        matches = state.engine.retrieve_with_evidence(request.query, top_k=request.top_k)
+        # Retrieve, evidence, and the templated answer all read through a
+        # clearance-filtered view so a private document never surfaces on the public
+        # surface (Scope A). Anonymous → PUBLIC-only.
+        engine = _ClearanceFilteredEngine(state.engine, _viewer_clearance(user))
+        reasoning = TemplateReasoningLayer(engine)
+        matches = engine.retrieve_with_evidence(request.query, top_k=request.top_k)
         results = [
             RetrieveResult(
                 title=document.title,
@@ -951,10 +1113,10 @@ def create_app(
             query=request.query, answer=reasoning.answer(request.query), results=results
         )
 
-    @plat.get("/answer", response_model=AnswerResponse, dependencies=public)
-    def answer(q: str) -> AnswerResponse:
-        reasoning = TemplateReasoningLayer(state.engine)
-        return AnswerResponse(query=q, answer=reasoning.answer(q))
+    @plat.get("/answer", response_model=AnswerResponse)
+    def answer(q: str, user: StoredUser | None = Depends(public_read)) -> AnswerResponse:
+        engine = _ClearanceFilteredEngine(state.engine, _viewer_clearance(user))
+        return AnswerResponse(query=q, answer=TemplateReasoningLayer(engine).answer(q))
 
     # ---- [PLATFORM] Saved searches & document comparison (analyst workflow) -----------
 
@@ -983,10 +1145,12 @@ def create_app(
             raise HTTPException(status_code=404, detail="saved search not found")
         return {"ok": True}
 
-    @plat.get("/compare", response_model=ChangeSet, dependencies=public)
-    def compare(a: str, b: str) -> ChangeSet:
+    @plat.get("/compare", response_model=ChangeSet)
+    def compare(a: str, b: str, user: StoredUser | None = Depends(public_read)) -> ChangeSet:
         """Side-by-side comparison of two documents: what is in `a` but not `b`."""
-        by_id = {d.canonical_id: d for d in _all_documents(state.engine)}
+        # Only compare within the caller's visible corpus — a private document is a 404
+        # here too, never diffed into the response.
+        by_id = {d.canonical_id: d for d in _visible_documents(_viewer_clearance(user))}
         doc_a, doc_b = by_id.get(a), by_id.get(b)
         if doc_a is None or doc_b is None:
             raise HTTPException(status_code=404, detail="document not found")
@@ -997,11 +1161,17 @@ def create_app(
             source_type=str(doc_a.metadata.get("source_name") or doc_a.document_type),
         )
 
-    @plat.get("/graph/company/{slug}", response_model=GraphResponse, dependencies=public)
-    def graph_company(slug: str) -> GraphResponse:
+    @plat.get("/graph/company/{slug}", response_model=GraphResponse)
+    def graph_company(
+        slug: str, user: StoredUser | None = Depends(public_read)
+    ) -> GraphResponse:
+        clearance = _viewer_clearance(user)
         node = state.graph.get_node("Company", slug)
         if node is None:
             return GraphResponse(company_slug=slug, found=False)
+        # Access-tier gate on the generic neighbourhood read: a sensitive edge is
+        # withheld from callers below its clearance (Scope A). Existing co-mention /
+        # sector edges are unlabelled PUBLIC, so this changes nothing today.
         neighbors = [
             GraphNeighbor(
                 relation=edge.relation,
@@ -1010,6 +1180,7 @@ def create_app(
                 title=str(target.properties.get("title")) if target is not None else None,
             )
             for edge, target in state.graph.neighbors("Company", slug)
+            if substrate.can_see(edge.properties, clearance)
         ]
         return GraphResponse(company_slug=slug, found=True, neighbors=neighbors)
 
@@ -1022,11 +1193,15 @@ def create_app(
             return []
         return list_entities(graph, kind)
 
-    @plat.get("/entities/{kind}/{key}", response_model=EntityProfile, dependencies=public)
-    def entity(kind: str, key: str) -> EntityProfile:
+    @plat.get("/entities/{kind}/{key}", response_model=EntityProfile)
+    def entity(
+        kind: str, key: str, user: StoredUser | None = Depends(public_read)
+    ) -> EntityProfile:
         graph = state.graph
+        # Pass the caller's clearance so a Person's PEP/sanctions or a company's
+        # beneficial-ownership edges are not leaked through the generic profile (Scope A).
         profile = (
-            entity_profile(graph, kind, key)
+            entity_profile(graph, kind, key, clearance=_viewer_clearance(user))
             if isinstance(graph, KnowledgeGraphStore)
             else None
         )
@@ -1611,8 +1786,45 @@ def create_app(
         return state.api_keys
 
     @plat.post("/api-keys", response_model=ApiKeyCreated, dependencies=protected)
-    def create_api_key(body: ApiKeyCreate, email: str = Depends(current_email)) -> ApiKeyCreated:
-        created = _api_keys().create(email, body.name, created_at=datetime.now(tz=timezone.utc).isoformat())
+    def create_api_key(
+        body: ApiKeyCreate, request: Request, email: str = Depends(current_email)
+    ) -> ApiKeyCreated:
+        unknown = set(body.scopes) - KNOWN_SCOPES
+        if unknown:
+            raise HTTPException(status_code=400, detail=f"unknown api key scope(s): {sorted(unknown)}")
+        # A key may never exceed the AUTHORITY OF THE CREDENTIAL MINTING IT — otherwise a
+        # scopeless (default) key owned by an admin could bootstrap an admin-scoped key and
+        # self-escalate. So an elevated scope requires BOTH the owner's role/entitlement AND,
+        # when the caller is itself an API key, that key already carrying the scope. A session
+        # (``caller_scopes is None``) has full owner authority (Scope C).
+        user, caller_scopes = _principal(request)
+        role = user.role if user is not None else "analyst"
+        plan = _effective_plan(email)
+
+        def _can_grant(scope: str, owner_ok: bool, denial: str) -> None:
+            if scope not in body.scopes:
+                return
+            if not owner_ok:
+                raise HTTPException(status_code=403, detail=denial)
+            if caller_scopes is not None and scope not in caller_scopes:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"this API key cannot grant the {scope} scope it does not hold",
+                )
+
+        _can_grant(SCOPE_ADMIN, role == "admin", "only an admin can grant the admin scope")
+        _can_grant(
+            SCOPE_ENTERPRISE,
+            entitlements.has_entitlement(entitlements.ENTERPRISE, role=role, plan=plan.name),
+            "enterprise entitlement is required to grant the enterprise scope",
+        )
+        now = datetime.now(tz=timezone.utc)
+        expires_at = (
+            (now + timedelta(days=body.expires_in_days)).isoformat() if body.expires_in_days else None
+        )
+        created = _api_keys().create(
+            email, body.name, created_at=now.isoformat(), scopes=body.scopes, expires_at=expires_at
+        )
         _audit(email, "api_key.create", body.name)
         return created
 
@@ -1712,6 +1924,43 @@ def create_app(
             enforced=_quota_enforced(),
         )
 
+    @plat.get("/entitlements", response_model=EntitlementsOut, dependencies=protected)
+    def caller_entitlements(
+        email: str = Depends(current_email), user: StoredUser | None = Depends(require_user)
+    ) -> EntitlementsOut:
+        """The caller's entitlement set — the single source of truth for the frontend
+        enterprise gate (Scope B). Available to any authenticated caller for their own
+        account; enforcement of enterprise-only resources happens at those routes."""
+        role = user.role if user is not None else "admin"  # auth-disabled -> synthetic admin
+        plan = _effective_plan(email)
+        granted = entitlements.entitlements_for(role=role, plan=plan.name)
+        return EntitlementsOut(
+            email=email,
+            role=role,
+            plan=plan.name,
+            entitlements=sorted(granted),
+            enterprise=entitlements.ENTERPRISE in granted,
+        )
+
+    @plat.get("/enterprise/summary", response_model=EnterpriseSummary)
+    def enterprise_summary(
+        user: StoredUser = Depends(require_entitlement(entitlements.ENTERPRISE)),
+        email: str = Depends(current_email),
+    ) -> EnterpriseSummary:
+        """Enterprise-account status. The first route behind the ``enterprise``
+        entitlement seam: anonymous → 401, an entitled account → 200, an un-entitled
+        authenticated account → 403 (Scope B)."""
+        plan = _effective_plan(email)
+        orgs = state.orgs.list_orgs(email) if state.orgs is not None else []
+        granted = entitlements.entitlements_for(role=user.role, plan=plan.name)
+        return EnterpriseSummary(
+            plan=plan.name,
+            plan_label=plan.label,
+            entitlements=sorted(granted),
+            organizations=len(orgs),
+            seats=sum(len(o.members) for o in orgs),
+        )
+
     @plat.get("/admin/audit", response_model=list[AuditEntry])
     def admin_audit(_: StoredUser = Depends(require_admin), limit: int = 200) -> list[AuditEntry]:
         return state.audit.list_entries(limit=limit) if state.audit else []
@@ -1722,8 +1971,18 @@ def create_app(
 
     # ---- [SHARED] Intelligence (generic doc-intelligence + product analysis) ------------------------------------------------------
 
-    @plat.get("/documents/{canonical_id}/summary", response_model=AISummary, dependencies=public)
-    def document_summary(canonical_id: str) -> AISummary:
+    @plat.get("/documents/{canonical_id}/summary", response_model=AISummary)
+    def document_summary(
+        canonical_id: str, user: StoredUser | None = Depends(public_read)
+    ) -> AISummary:
+        # Withhold summaries of documents the caller may not see — else the summary
+        # leaks a private document's content (Scope A). A summary with no backing
+        # document in the corpus is still served.
+        backing = next(
+            (d for d in _all_documents(state.engine) if d.canonical_id == canonical_id), None
+        )
+        if backing is not None and not _document_visible(backing, _viewer_clearance(user)):
+            raise HTTPException(status_code=404, detail="summary not available")
         summary = state.intelligence.get_summary(canonical_id) if state.intelligence else None
         if summary is None:
             raise HTTPException(status_code=404, detail="summary not available")
@@ -1804,9 +2063,9 @@ def create_app(
             country_exposures=exposures,
         )
 
-    @pe.get("/dashboard", response_model=DashboardResponse, dependencies=public)
-    def dashboard() -> DashboardResponse:
-        documents = _all_documents(state.engine)
+    @pe.get("/dashboard", response_model=DashboardResponse)
+    def dashboard(user: StoredUser | None = Depends(public_read)) -> DashboardResponse:
+        documents = _visible_documents(_viewer_clearance(user))
         latest = sorted(documents, key=lambda d: d.published_at or "", reverse=True)[:6]
         events: list[ExtractedEvent] = []
         change_sets: list[ChangeSet] = []

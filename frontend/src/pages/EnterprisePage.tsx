@@ -9,10 +9,11 @@ import {
   type Icon,
 } from "../icons";
 
-// The enterprise workspace overview. Several org-level capabilities already exist
-// in the platform (collaboration, API keys, admin/policy, data ops) and are wired
-// live here; the rest is scaffolded so the shell and routing are in place before
-// the backend internals land. See docs/PLATFORM.md.
+// The enterprise workspace overview. Several org-level capabilities already exist in
+// the platform (collaboration, scoped API keys, admin/policy, data ops) and are wired
+// live here for ENTITLED accounts; the rest is on the roadmap. An un-entitled account
+// sees this overview as an honest preview + upsell — never a live surface it can't use
+// (the entitlement is decided by the backend; see useAuth().enterprise). docs/PLATFORM.md.
 
 interface Capability {
   to: string;
@@ -62,10 +63,10 @@ const PLANNED: { Icon: Icon; title: string; body: string }[] = [
 ];
 
 export function EnterprisePage() {
-  const { email, role } = useAuth();
+  const { email, role, enterprise } = useAuth();
   // Policy & audit opens the admin console, which is admin-only (the backend 403s a
-  // non-admin). The enterprise pilot admits any authenticated account, so only show it
-  // as "available now" to admins — everyone else shouldn't be sold a card that dead-ends.
+  // non-admin). Only surface it as "available now" to admins — everyone else shouldn't
+  // be sold a card that dead-ends.
   const live = LIVE.filter((c) => c.to !== "/enterprise/policy" || role === "admin");
 
   return (
@@ -73,27 +74,56 @@ export function EnterprisePage() {
       <div className="page-head">
         <h1>Enterprise workspace</h1>
         <p className="sub">
-          Org-level intelligence for your whole team — shared workspaces, private data, policy and
-          audit controls, and programmatic access. Signed in as {email ?? "your account"}.
+          Org-level intelligence for your whole team — shared workspaces, policy and audit
+          controls, and programmatic access with scoped API keys. Signed in as {email ?? "your account"}.
         </p>
       </div>
 
+      {!enterprise ? (
+        <div
+          className="card stack gap-sm"
+          style={{ borderLeft: "3px solid var(--evidence)" }}
+        >
+          <div className="wrap" style={{ alignItems: "center" }}>
+            <span className="pill evidence">Enterprise plan required</span>
+          </div>
+          <p className="faint" style={{ fontSize: 13 }}>
+            These org-level features unlock on an enterprise plan (or for an admin account). Your
+            account isn't entitled yet, so the capabilities below are a preview — contact your
+            administrator or upgrade your organization's plan to enable them.
+          </p>
+        </div>
+      ) : null}
+
       <section className="stack gap">
         <div className="kicker">
-          Available now
-          <span className="pill accent">live</span>
+          {enterprise ? "Available now" : "Included with Enterprise"}
+          {enterprise ? <span className="pill accent">live</span> : null}
         </div>
         <div className="grid cols-3">
-          {live.map((c) => (
-            <Link className="card hover ws-card" key={c.to} to={c.to}>
-              <div className="ico-box">
-                <c.Icon />
+          {live.map((c) =>
+            enterprise ? (
+              <Link className="card hover ws-card" key={c.to} to={c.to}>
+                <div className="ico-box">
+                  <c.Icon />
+                </div>
+                <h2>{c.title}</h2>
+                <p className="blurb">{c.body}</p>
+                <div className="ws-cta">Open →</div>
+              </Link>
+            ) : (
+              <div className="card ws-card ws-planned" key={c.to}>
+                <div className="ico-box">
+                  <c.Icon />
+                </div>
+                <h2>{c.title}</h2>
+                <p className="blurb">{c.body}</p>
+                <div className="ws-cta">
+                  <span className="badge">Enterprise</span>
+                </div>
               </div>
-              <h2>{c.title}</h2>
-              <p className="blurb">{c.body}</p>
-              <div className="ws-cta">Open →</div>
-            </Link>
-          ))}
+            ),
+          )}
         </div>
       </section>
 
