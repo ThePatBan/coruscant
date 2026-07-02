@@ -28,25 +28,6 @@ class Settings(BaseSettings):
     # lightweight test double and golden-parity comparator. Ingestion always
     # materializes the JSON snapshot regardless of backend.
     graph_backend: str = "kuzu"
-    edgar_user_agent: str = "Coruscant/0.1.0 contact@coruscant.local"
-    # Sources that use their live (network) connector instead of the offline
-    # reference connector. Empty by default so dev/test stays fully offline. In
-    # production set e.g. CORUSCANT_LIVE_SOURCES=["sec_edgar"].
-    live_sources: list[str] = Field(default_factory=list)
-    # SEC fair-access cap (requests/second). SEC permits ~10/s with a declared
-    # User-Agent; default keeps headroom. Applies to every live EDGAR request.
-    sec_rate_limit_per_second: float = 8.0
-    # Live equity quotes (Yahoo Finance, free/unofficial). OFF by default so the
-    # offline/test path never hits the network; set true to light up the World
-    # tab's "since yesterday" prices.
-    enable_live_prices: bool = False
-    # Live country macro (World Bank GDP/inflation + Yahoo benchmark index). OFF by
-    # default (same offline-first reason). Independent of prices — World Bank is
-    # slower/flakier, so it is gated separately.
-    enable_live_macro: bool = False
-    # Live business-news headlines for the World tab (free GDELT DOC API, no key).
-    # OFF by default; GDELT rate-limits hard, so the service gates + caches.
-    enable_live_news: bool = False
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
     # Empty by default: build_auth_service falls back to a per-process ephemeral
     # secret (never a committed constant). Set CORUSCANT_SECRET_KEY for stable,

@@ -44,6 +44,7 @@ from coruscant.exposure.domain_config import (
 )
 from coruscant.connectors.sec_edgar import RateLimiter
 from coruscant.exposure.extraction import extract_relationships
+from coruscant.exposure.settings import WorkspaceSettings, get_workspace_settings
 from coruscant.exposure.sources import default_registry
 from coruscant.infrastructure.repositories import (
     FileSystemNormalizedDocumentRepository,
@@ -103,23 +104,23 @@ def build_portfolio_store(settings: Settings | None = None) -> SqlitePortfolioSt
     return SqlitePortfolioStore(settings.database_url)
 
 
-def build_price_service(settings: Settings | None = None) -> PriceService:
-    settings = settings or get_settings()
-    return PriceService(enabled=settings.enable_live_prices)
+def build_price_service(ws: WorkspaceSettings | None = None) -> PriceService:
+    ws = ws or get_workspace_settings()
+    return PriceService(enabled=ws.enable_live_prices)
 
 
-def build_macro_service(settings: Settings | None = None) -> MacroService:
-    settings = settings or get_settings()
-    return MacroService(enabled=settings.enable_live_macro)
+def build_macro_service(ws: WorkspaceSettings | None = None) -> MacroService:
+    ws = ws or get_workspace_settings()
+    return MacroService(enabled=ws.enable_live_macro)
 
 
-def build_news_service(settings: Settings | None = None) -> NewsService:
-    settings = settings or get_settings()
-    return NewsService(enabled=settings.enable_live_news)
+def build_news_service(ws: WorkspaceSettings | None = None) -> NewsService:
+    ws = ws or get_workspace_settings()
+    return NewsService(enabled=ws.enable_live_news)
 
 
 def _build_screening_provider(
-    settings: Settings, *, dataset_path: Path | None, provider_name: str | None
+    ws: WorkspaceSettings, *, dataset_path: Path | None, provider_name: str | None
 ) -> "tuple[ScreeningProvider, str]":
     """Construct the configured screening provider. ``yente`` needs a running
     sidecar (no file); ``deterministic`` needs an OpenSanctions export file."""
@@ -130,20 +131,20 @@ def _build_screening_provider(
         load_opensanctions,
     )
 
-    choice = (provider_name or settings.screening_provider).lower()
+    choice = (provider_name or ws.screening_provider).lower()
     if choice == "yente":
         provider = YenteScreeningProvider(
-            settings.yente_url, dataset=settings.yente_dataset,
-            cutoff=settings.yente_cutoff, limit=settings.yente_limit,
+            ws.yente_url, dataset=ws.yente_dataset,
+            cutoff=ws.yente_cutoff, limit=ws.yente_limit,
         )
         if not provider.connected():
             raise ConnectionError(
-                f"yente is not reachable at {settings.yente_url}. Start the sidecar "
+                f"yente is not reachable at {ws.yente_url}. Start the sidecar "
                 "(docker-compose.screening.yml) or set CORUSCANT_YENTE_URL."
             )
-        return provider, f"yente:{settings.yente_dataset}"
+        return provider, f"yente:{ws.yente_dataset}"
 
-    path = dataset_path or settings.screening_dataset_path
+    path = dataset_path or ws.screening_dataset_path
     if path is None or not Path(path).exists():
         raise FileNotFoundError(
             "No OpenSanctions dataset configured. Set CORUSCANT_SCREENING_DATASET_PATH "
@@ -168,9 +169,10 @@ def run_screening(
     from coruscant.screening.pipeline import screen_people
 
     settings = settings or get_settings()
+    ws = get_workspace_settings()
     moment = now or datetime.now(tz=timezone.utc)
     provider, dataset_label = _build_screening_provider(
-        settings, dataset_path=dataset_path, provider_name=provider_name
+        ws, dataset_path=dataset_path, provider_name=provider_name
     )
 
     store = _load_graph(settings.graph_snapshot_path)
@@ -184,16 +186,16 @@ def run_screening(
 
 
 def _build_lei_provider(
-    settings: Settings, *, gleif_path: Path | None, provider_name: str | None
+    ws: WorkspaceSettings, *, gleif_path: Path | None, provider_name: str | None
 ) -> "LeiProvider":
     """Construct the configured LEI provider. ``gleif-api`` needs network (CC0,
     no key); ``gleif-local`` needs a GLEIF export file."""
 
     from coruscant.anchoring.provider import GleifApiProvider, LocalGleifProvider, load_gleif
 
-    choice = (provider_name or settings.anchor_provider).lower()
+    choice = (provider_name or ws.anchor_provider).lower()
     if choice == "gleif-local":
-        path = gleif_path or settings.gleif_dataset_path
+        path = gleif_path or ws.gleif_dataset_path
         if path is None or not Path(path).exists():
             raise FileNotFoundError(
                 "No GLEIF dataset configured. Set CORUSCANT_GLEIF_DATASET_PATH or pass "
@@ -224,8 +226,9 @@ def run_anchor(
     from coruscant.knowledge_graph.persistence import load_graph as _load_graph
 
     settings = settings or get_settings()
+    ws = get_workspace_settings()
     moment = now or datetime.now(tz=timezone.utc)
-    provider = _build_lei_provider(settings, gleif_path=gleif_path, provider_name=provider_name)
+    provider = _build_lei_provider(ws, gleif_path=gleif_path, provider_name=provider_name)
 
     store = _load_graph(settings.graph_snapshot_path)
     resolver = load_resolver(settings.resolver_snapshot_path)
@@ -252,6 +255,7 @@ def run_portfolio(
     from coruscant.portfolio.thirteenf import FundFiling, fetch_latest_13f, parse_13f_info_table
 
     settings = settings or get_settings()
+    ws = get_workspace_settings()
     moment = now or datetime.now(tz=timezone.utc)
 
     filing: FundFiling | None
@@ -260,7 +264,7 @@ def run_portfolio(
         filing = FundFiling(cik=(cik or "local"), name=(name or "Fund"),
                             period=None, source_url=str(file_path), holdings=holdings)
     elif cik is not None:
-        filing = fetch_latest_13f(cik, user_agent=settings.edgar_user_agent)
+        filing = fetch_latest_13f(cik, user_agent=ws.edgar_user_agent)
         if filing is None:
             raise FileNotFoundError(f"No 13F-HR found on EDGAR for CIK {cik}.")
         if name:
@@ -275,7 +279,7 @@ def run_portfolio(
 
 
 def _build_coverage_provider(
-    settings: Settings,
+    ws: WorkspaceSettings,
     *,
     market: str,
     file_path: Path | None,
@@ -306,9 +310,9 @@ def _build_coverage_provider(
             return IndiaCoverageProvider.from_files(
                 nse=files.get("nse"), bse=files.get("bse"),
                 nifty=files.get("nifty"), sensex=files.get("sensex"),
-                user_agent=settings.edgar_user_agent,
+                user_agent=ws.edgar_user_agent,
             )
-        provider_in = IndiaCoverageProvider(user_agent=settings.edgar_user_agent)
+        provider_in = IndiaCoverageProvider(user_agent=ws.edgar_user_agent)
         if not provider_in.connected():
             raise ConnectionError(
                 "NSE is not reachable for coverage (it blocks scripts). Pass --nse/--bse "
@@ -319,9 +323,9 @@ def _build_coverage_provider(
         if any(files.values()):
             return UkLseCoverageProvider.from_files(
                 lse=files.get("lse"), ftse100=files.get("ftse100"), ftse250=files.get("ftse250"),
-                user_agent=settings.edgar_user_agent,
+                user_agent=ws.edgar_user_agent,
             )
-        provider_gb = UkLseCoverageProvider(user_agent=settings.edgar_user_agent)
+        provider_gb = UkLseCoverageProvider(user_agent=ws.edgar_user_agent)
         if not provider_gb.connected():
             raise ConnectionError(
                 "The LSE list is not reachable for coverage (JS-heavy site). Pass --lse "
@@ -335,15 +339,15 @@ def _build_coverage_provider(
     # One shared limiter keeps the aggregate SEC request rate under the fair-access
     # cap (the US feed is a single request, but the seam stays consistent).
     rate_limiter = (
-        RateLimiter(1.0 / settings.sec_rate_limit_per_second)
-        if settings.sec_rate_limit_per_second > 0 else None
+        RateLimiter(1.0 / ws.sec_rate_limit_per_second)
+        if ws.sec_rate_limit_per_second > 0 else None
     )
     if file_path is not None:
         return UsEdgarCoverageProvider.from_file(
-            Path(file_path), user_agent=settings.edgar_user_agent, rate_limiter=rate_limiter
+            Path(file_path), user_agent=ws.edgar_user_agent, rate_limiter=rate_limiter
         )
     provider = UsEdgarCoverageProvider(
-        user_agent=settings.edgar_user_agent, rate_limiter=rate_limiter
+        user_agent=ws.edgar_user_agent, rate_limiter=rate_limiter
     )
     if not provider.connected():
         raise ConnectionError(
@@ -372,9 +376,10 @@ def run_coverage(
     from coruscant.knowledge_graph.persistence import load_graph as _load_graph
 
     settings = settings or get_settings()
+    ws = get_workspace_settings()
     moment = now or datetime.now(tz=timezone.utc)
     provider = _build_coverage_provider(
-        settings, market=market, file_path=file_path, sources=sources
+        ws, market=market, file_path=file_path, sources=sources
     )
 
     store = _load_graph(settings.graph_snapshot_path)
@@ -416,7 +421,7 @@ def _anchored_leis(store: KnowledgeGraphStore) -> list[str]:
 
 
 def _build_ownership_provider(
-    settings: Settings,
+    ws: WorkspaceSettings,
     *,
     file_path: Path | None,
     provider_name: str | None,
@@ -444,13 +449,13 @@ def _build_ownership_provider(
         if file_path is not None and Path(file_path).exists():
             return CompaniesHousePscProvider.from_file(Path(file_path))
         numbers = _covered_gb_company_numbers(store) if store is not None else []
-        if settings.companies_house_api_key and numbers:
+        if ws.companies_house_api_key and numbers:
             return CompaniesHousePscProvider(
-                api_key=settings.companies_house_api_key,
+                api_key=ws.companies_house_api_key,
                 company_numbers=numbers,
-                base_url=settings.companies_house_api_url,
+                base_url=ws.companies_house_api_url,
             )
-        if settings.companies_house_api_key and not numbers:
+        if ws.companies_house_api_key and not numbers:
             raise FileNotFoundError(
                 "Companies House PSC is wired (API key set) but no GB-covered company "
                 "numbers were found to fetch. Run `coruscant coverage --market gb` first, "
@@ -490,6 +495,7 @@ def run_ownership(
     *,
     file_path: Path | None = None,
     provider_name: str | None = None,
+    workspace_settings: WorkspaceSettings | None = None,
     now: datetime | None = None,
 ) -> "OwnershipSummary":
     """Ingest sourced ownership statements into the graph as the three distinct edge
@@ -505,11 +511,12 @@ def run_ownership(
     from coruscant.ownership.pipeline import ingest_ownership
 
     settings = settings or get_settings()
+    ws = workspace_settings or get_workspace_settings()
     moment = now or datetime.now(tz=timezone.utc)
 
     store = _load_graph(settings.graph_snapshot_path)
     provider = _build_ownership_provider(
-        settings, file_path=file_path, provider_name=provider_name, store=store
+        ws, file_path=file_path, provider_name=provider_name, store=store
     )
     summary = ingest_ownership(store, provider, observed_at=moment.date())
     save_graph(store, settings.graph_snapshot_path)
@@ -558,19 +565,19 @@ def due_source_types(settings: Settings | None = None, now: datetime | None = No
 
 
 def build_registry(
-    settings: Settings | None = None, *, rate_limiter: RateLimiter | None = None
+    ws: WorkspaceSettings | None = None, *, rate_limiter: RateLimiter | None = None
 ) -> SourceRegistry:
-    """Registry with live connectors swapped in for ``settings.live_sources``."""
+    """Registry with live connectors swapped in for ``ws.live_sources``."""
 
-    settings = settings or get_settings()
+    ws = ws or get_workspace_settings()
     return default_registry(
-        settings.live_sources,
-        edgar_user_agent=settings.edgar_user_agent,
+        ws.live_sources,
+        edgar_user_agent=ws.edgar_user_agent,
         rate_limiter=rate_limiter,
     )
 
 
-def build_source_resolver(settings: Settings | None = None) -> SourceResolver:
+def build_source_resolver(ws: WorkspaceSettings | None = None) -> SourceResolver:
     """Choose how disclosures are located per source.
 
     Offline (default): synthetic reference targets. When ``sec_edgar`` is live,
@@ -580,8 +587,8 @@ def build_source_resolver(settings: Settings | None = None) -> SourceResolver:
     — an observable zero, not an error. Every other source stays on reference.
     """
 
-    settings = settings or get_settings()
-    live = set(settings.live_sources)
+    ws = ws or get_workspace_settings()
+    live = set(ws.live_sources)
     if "sec_edgar" not in live:
         return reference_targets
 
@@ -618,12 +625,13 @@ def run_ingestion(
     """
 
     settings = settings or get_settings()
+    ws = get_workspace_settings()
     moment = now or datetime.now(tz=timezone.utc)
     # One shared limiter for the whole run keeps the aggregate SEC request rate
     # under the fair-access cap. Only constructed when something runs live.
     rate_limiter = (
-        RateLimiter(1.0 / settings.sec_rate_limit_per_second)
-        if settings.live_sources and settings.sec_rate_limit_per_second > 0
+        RateLimiter(1.0 / ws.sec_rate_limit_per_second)
+        if ws.live_sources and ws.sec_rate_limit_per_second > 0
         else None
     )
 
@@ -649,11 +657,11 @@ def run_ingestion(
         catalog=build_catalog(settings),
         graph_store=graph_store,
         engine=HybridRetrievalEngine(),
-        registry=build_registry(settings, rate_limiter=rate_limiter),
+        registry=build_registry(ws, rate_limiter=rate_limiter),
         intelligence_store=build_intelligence_store(settings),
         entities=load_entities(settings.config_dir),
         dead_letter_store=build_dead_letter_store(settings),
-        resolver=build_source_resolver(settings),
+        resolver=build_source_resolver(ws),
         max_attempts=settings.ingest_max_attempts,
     )
     report = orchestrator.run(companies, sources)

@@ -49,6 +49,7 @@ from coruscant.ingestion.orchestrator import (
     reference_targets,
 )
 from coruscant.ingestion.registry import SourceDefinition, SourceRegistry
+from coruscant.exposure.settings import WorkspaceSettings
 from coruscant.exposure.sources import default_registry
 from coruscant.knowledge_graph.memory import InMemoryKnowledgeGraphStore
 from coruscant.knowledge_graph.persistence import load_graph
@@ -80,10 +81,10 @@ def test_live_sources_switch_selects_http_connector() -> None:
 
 
 def test_build_source_resolver_offline_vs_live() -> None:
-    offline = Settings(config_dir=Path("config"))
+    offline = WorkspaceSettings()
     assert build_source_resolver(offline) is reference_targets
 
-    live = Settings(config_dir=Path("config"), live_sources=["sec_edgar"])
+    live = WorkspaceSettings(live_sources=["sec_edgar"])
     resolver = build_source_resolver(live)
     company = CompanyConfig(
         slug="apple", name="Apple", sec_filings=["https://sec.gov/a.htm", "https://sec.gov/b.htm"]
@@ -236,7 +237,7 @@ def test_live_http_fetch_failure_dead_letters_through_orchestrator(tmp_path: Pat
         raise URLError("connection refused")
 
     monkeypatch.setattr("coruscant.connectors.sec_edgar.urlopen", fake_urlopen)
-    registry = build_registry(Settings(live_sources=["sec_edgar"], config_dir=Path("config")))
+    registry = build_registry(WorkspaceSettings(live_sources=["sec_edgar"]))
     company = CompanyConfig(slug="apple", name="Apple", sec_filings=["https://sec.gov/a.htm"])
 
     def resolver(c, source_type, definition):  # type: ignore[no-untyped-def]
@@ -280,7 +281,7 @@ def test_live_path_ingests_real_urls_and_is_deterministic(tmp_path: Path, monkey
     company = CompanyConfig(
         slug="apple", name="Apple", cik="320193", sec_filings=[url_prior, url_current]
     )
-    settings = Settings(live_sources=["sec_edgar"], config_dir=Path("config"))
+    settings = WorkspaceSettings(live_sources=["sec_edgar"])
     registry = build_registry(settings)
     db = f"sqlite:///{tmp_path / 'c.db'}"
     catalog = SqliteDocumentCatalog(db)
