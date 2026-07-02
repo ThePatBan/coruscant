@@ -5,6 +5,7 @@ import { useAsync } from "../hooks";
 
 export function SettingsPage() {
   const me = useAsync<CurrentUser>(() => api.me(), []);
+  const plan = useAsync(() => api.quota(), []);
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [name, setName] = useState("My integration");
   const [secret, setSecret] = useState<string | null>(null);
@@ -70,6 +71,30 @@ export function SettingsPage() {
         <a className="mono faint" href="/api/docs" target="_blank" rel="noreferrer" style={{ fontSize: 12.5 }}>
           Public API docs (OpenAPI) ↗
         </a>
+      </div>
+
+      <div className="card stack gap-sm">
+        <h2>Plan &amp; usage</h2>
+        {plan.data ? (
+          <>
+            <div className="wrap">
+              <span className="pill accent">{plan.data.plan_label} plan</span>
+              <span className="pill">
+                {plan.data.api_calls_today} / {plan.data.max_api_calls_per_day} API calls today
+              </span>
+              <span className="pill">
+                {plan.data.watchlists_used} / {plan.data.max_watchlists} watchlists
+              </span>
+            </div>
+            <p className="faint" style={{ fontSize: 12.5 }}>
+              {plan.data.enforced
+                ? `${plan.data.api_calls_remaining} calls remaining today on the ${plan.data.plan_label} plan.`
+                : "Limits are shown for reference; quota enforcement is off on this deployment."}
+            </p>
+          </>
+        ) : (
+          <Loading label="Loading plan" />
+        )}
       </div>
 
       <div className="card stack gap">

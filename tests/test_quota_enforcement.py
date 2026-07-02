@@ -13,6 +13,8 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from coruscant.apps.api import create_app
+from coruscant.auth.service import AuthService
+from coruscant.auth.store import SqliteUserStore
 from coruscant.commercial.store import SqliteOrgStore, SqliteUsageStore
 from coruscant.search.hybrid import HybridRetrievalEngine
 from coruscant.watchlists.store import SqliteWatchlistStore
@@ -50,22 +52,46 @@ def _client(
 # ---- API call quota --------------------------------------------------------
 
 
-def test_retrieve_blocked_when_free_quota_exhausted(tmp_path: Path) -> None:
-    client, _org, usage = _client(tmp_path)
-    client.post("/organizations", json={"name": "Acme", "plan": "free"})  # caller is a member
-    _seed_usage(usage, ANON, "retrieve", 100)  # free plan = 100/day, now spent
+def test_retrieve_meters_authenticated_but_never_the_anonymous_scope(tmp_path: Path) -> None:
+    # The public /retrieve is quota-metered ONLY for authenticated callers; an
+    # authenticated caller over their plan's daily cap is blocked, while an anonymous
+    # visitor is never metered against the shared bucket (they are per-IP rate-limited
+    # instead), so one abuser cannot quota-lock open discovery for everyone.
+    db = f"sqlite:///{tmp_path / 'app.db'}"
+    usage = SqliteUsageStore(db)
+    auth = AuthService(SqliteUserStore(db), secret="s", token_ttl_seconds=3600)
+    client = TestClient(
+        create_app(
+            HybridRetrievalEngine(),
+            org_store=SqliteOrgStore(db),
+            usage_store=usage,
+            auth_service=auth,
+            require_auth=True,
+        )
+    )
+    token = client.post(
+        "/auth/register", json={"email": "u@e.com", "password": "password123"}
+    ).json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    client.post("/organizations", json={"name": "Acme", "plan": "free"}, headers=headers)  # 100/day
+    _seed_usage(usage, "u@e.com", "retrieve", 100)  # that user's free quota is now spent
 
-    resp = client.post("/retrieve", json={"query": "Apple", "top_k": 2})
-    assert resp.status_code == 429
-    assert "quota" in resp.json()["detail"].lower()
+    blocked = client.post("/retrieve", json={"query": "Apple", "top_k": 2}, headers=headers)
+    assert blocked.status_code == 429
+    assert "quota" in blocked.json()["detail"].lower()
+
+    # No token → anonymous public read → not metered, discovery stays open.
+    assert client.post("/retrieve", json={"query": "Apple", "top_k": 2}).status_code == 200
 
 
 def test_higher_plan_lifts_the_limit(tmp_path: Path) -> None:
+    # /analyst is the metered authenticated route used here (retrieve no longer meters
+    # the anonymous scope); on a pro plan the same 100 prior calls do not block.
     client, _org, usage = _client(tmp_path)
     client.post("/organizations", json={"name": "Acme", "plan": "pro"})  # 10k/day
-    _seed_usage(usage, ANON, "retrieve", 100)  # would block on free, fine on pro
+    _seed_usage(usage, ANON, "analyst", 100)  # would block on free, fine on pro
 
-    assert client.post("/retrieve", json={"query": "Apple", "top_k": 2}).status_code == 200
+    assert client.post("/analyst/apple", json={"question": "why?"}).status_code == 200
 
 
 def test_analyst_endpoint_is_also_metered(tmp_path: Path) -> None:

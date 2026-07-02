@@ -55,13 +55,18 @@ const LIVE: Capability[] = [
 ];
 
 const PLANNED: { Icon: Icon; title: string; body: string }[] = [
+  { Icon: IconGear, title: "Plans & billing", body: "Self-serve org plan management, seat-based billing, and invoices." },
   { Icon: IconShield, title: "SSO & SCIM", body: "Org-managed identity, directory sync, and role provisioning." },
   { Icon: IconGear, title: "Audit log export", body: "Streaming and scheduled export of the full activity trail." },
   { Icon: IconSignals, title: "Private connectors", body: "Bring your own filings, CRM, and internal documents into the graph." },
 ];
 
 export function EnterprisePage() {
-  const { email } = useAuth();
+  const { email, role } = useAuth();
+  // Policy & audit opens the admin console, which is admin-only (the backend 403s a
+  // non-admin). The enterprise pilot admits any authenticated account, so only show it
+  // as "available now" to admins — everyone else shouldn't be sold a card that dead-ends.
+  const live = LIVE.filter((c) => c.to !== "/enterprise/policy" || role === "admin");
 
   return (
     <div className="stack gap-lg">
@@ -79,7 +84,7 @@ export function EnterprisePage() {
           <span className="pill accent">live</span>
         </div>
         <div className="grid cols-3">
-          {LIVE.map((c) => (
+          {live.map((c) => (
             <Link className="card hover ws-card" key={c.to} to={c.to}>
               <div className="ico-box">
                 <c.Icon />

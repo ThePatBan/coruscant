@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
+import { useAuth } from "../auth";
 import { docTypeLabel, Empty, ErrorView, PanelHead, RelationGroups, Skeleton } from "../components";
 import { GraphIncompleteNote, RelationMap, useRelGraph } from "../graph";
 import { useAsync } from "../hooks";
@@ -90,7 +91,7 @@ function OwnershipPanel({ slug }: { slug: string }) {
                       </span>{" "}
                       {mag ? <span className="pill">{mag}</span> : null}{" "}
                       {o.interest ? <span className="muted small">{o.interest}</span> : null}{" "}
-                      <span className={`chip ${o.holder_resolved ? "" : ""}`}>
+                      <span className={`chip ${o.holder_resolved ? "active" : ""}`}>
                         {o.holder_resolved ? "resolved" : "unresolved"}
                       </span>
                       {o.source_url ? (
@@ -192,6 +193,7 @@ function OwnershipPanel({ slug }: { slug: string }) {
 
 export function CompanyDetailPage() {
   const { slug = "" } = useParams();
+  const { email } = useAuth();
   const g = useRelGraph();
   const detail = useAsync(async () => {
     const [documents, timeline, changes] = await Promise.all([
@@ -289,8 +291,16 @@ export function CompanyDetailPage() {
 
       {!error ? (
         <>
-          <AnalystPanel key={slug} slug={slug} name={company?.name ?? slug} />
-          <SignalsPanel slug={slug} />
+          {/* The analyst & signals panels call authenticated endpoints (POST /analyst,
+              GET /signals). On the public profile an anonymous visitor would only see a
+              stuck "Loading signals" spinner and an Analyze button that 401s, so gate
+              them on a session — the rest of the profile is fully public. */}
+          {email ? (
+            <>
+              <AnalystPanel key={slug} slug={slug} name={company?.name ?? slug} />
+              <SignalsPanel slug={slug} />
+            </>
+          ) : null}
 
           {/* Relationship neighbourhood + control proxies */}
           <section className="stack gap">

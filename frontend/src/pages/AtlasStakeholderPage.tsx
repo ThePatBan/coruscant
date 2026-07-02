@@ -41,6 +41,7 @@ const LANE_DEFS: { key: string; label: string; travel: boolean }[] = [
 type Sel = { kind: "person"; rel: Relationship } | { kind: "rel"; rel: Relationship } | null;
 
 export function AtlasStakeholderPage() {
+  const { email } = useAuth();
   const [path, setPath] = useState<{ key: string; name: string }[]>([{ key: START, name: START.toUpperCase() }]);
   const [sel, setSel] = useState<Sel>(null);
   const focal = path[path.length - 1];
@@ -89,10 +90,16 @@ export function AtlasStakeholderPage() {
 
   return (
     <div className="atl spatial-page">
-      {/* breadcrumb */}
+      {/* breadcrumb — /world is a signed-in (Personal) surface, so omit it for the
+          anonymous public visitor funnelled here, who would otherwise hit the login
+          wall. They start at the public "What changed" crumb. */}
       <div className="atl-crumb">
-        <Link to="/world" className="atl-crumb-link">World</Link>
-        <span className="atl-crumb-sep">›</span>
+        {email ? (
+          <>
+            <Link to="/world" className="atl-crumb-link">World</Link>
+            <span className="atl-crumb-sep">›</span>
+          </>
+        ) : null}
         <Link to="/changes" className="atl-crumb-link">What changed</Link>
         {path.map((p, i) => (
           <span key={p.key + i} style={{ display: "inline-flex", alignItems: "center" }}>

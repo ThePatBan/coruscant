@@ -75,8 +75,9 @@ def test_org_billing_reflects_plan_and_usage(client: TestClient) -> None:
     assert org["plan"] == "pro"
     assert "anonymous@local" in org["members"]  # creator is a member
 
-    # Generate usage (retrieve records a usage event even with an empty corpus).
-    client.post("/retrieve", json={"query": "Apple", "top_k": 2})
+    # Generate a metered usage event. /analyst is an authenticated, metered route (the
+    # public /retrieve deliberately does NOT meter the shared anonymous scope).
+    client.post("/analyst/apple", json={"question": "why worry?"})
     assert client.get("/usage").json()["total"] >= 1
 
     billing = client.get(f"/organizations/{org['id']}/billing").json()

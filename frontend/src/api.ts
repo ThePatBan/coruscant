@@ -562,6 +562,19 @@ export interface CurrentUser {
   role: string;
 }
 
+// The caller's current plan and today's usage against it (backend /quota). Always
+// available so the client can show limits even where enforcement is off.
+export interface QuotaStatus {
+  plan: string;
+  plan_label: string;
+  max_api_calls_per_day: number;
+  api_calls_today: number;
+  api_calls_remaining: number;
+  max_watchlists: number;
+  watchlists_used: number;
+  enforced: boolean;
+}
+
 // ---- transport -------------------------------------------------------------
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -893,6 +906,8 @@ export const api = {
     request<{ ok: boolean }>(`/workspaces/${encodeURIComponent(id)}/items/${encodeURIComponent(itemId)}`, { method: "DELETE" }),
   deleteWorkspace: (id: string) =>
     request<{ ok: boolean }>(`/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  // plan & usage
+  quota: () => get<QuotaStatus>("/quota"),
   // api keys
   apiKeys: () => get<ApiKey[]>("/api-keys"),
   createApiKey: (name: string) => post<{ key: ApiKey; secret: string }>("/api-keys", { name }),

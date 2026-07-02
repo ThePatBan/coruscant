@@ -1,15 +1,17 @@
 # Frontend
 
-The Coruscant SPA — **React + Vite + TypeScript**. Two tabs:
+The Coruscant SPA — **React + Vite + TypeScript**. Three workspaces sharing one shell
+(see [../PRODUCT.md](../PRODUCT.md) and `src/workspaces.ts`):
 
-- **`/world`** — Home/World: portfolio summary + live prices, the react-globe.gl
-  markets globe, the news rail, and portfolio composition (MSCI tiers, GICS tree,
-  sector-vs-index benchmark, commodity exposure) + per-country macro/debt.
-- **`/atlas`** — the 3D company graph (react-force-graph-3d).
+- **Public** — free, discovery-first: search, company profiles, the relationship graph
+  (`/atlas`, the labelled stakeholder map), evidence, and what-changed. No account needed.
+- **Personal** — the monitoring product: live signals (`/world`), country & risk-
+  concentration reads, portfolio exposure, watchlists, and alerts.
+- **Enterprise** — org-level: shared workspaces, API access, and policy/audit.
 
-Key files: `src/App.tsx`, `src/pages/WorldPage.tsx`, `src/MarketsGlobe.tsx`,
-`src/Atlas3D.tsx`, `src/api.ts` (typed API client), `src/index.css` (the design
-system — see [../DESIGN.md](../DESIGN.md)).
+Key files: `src/App.tsx` (shell + routing), `src/workspaces.ts` (the three-workspace
+model + anonymous access gate), `src/api.ts` (typed API client), `src/index.css` (the
+design system — see [../DESIGN.md](../DESIGN.md)).
 
 ## Run
 
