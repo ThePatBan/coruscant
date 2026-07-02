@@ -5403,3 +5403,131 @@ button.changes-row.active {
     border-top: 1px solid var(--border);
   }
 }
+
+/* ===== Workspace chooser & shell identity (three-product model) =========
+   Composes with the existing card / landing / nav primitives; only adds what
+   those don't already cover. Everything reads from the design tokens so it
+   re-themes with [data-theme="light"]. */
+
+/* Product / discovery cards — equal-height columns with the CTA pinned to the
+   bottom, so a grid of them lines up regardless of copy length. */
+.ws-card {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  height: 100%;
+}
+.ws-card h2 {
+  font-size: 19px;
+  margin: 0;
+}
+.ws-card .blurb {
+  color: var(--text-muted);
+  font-size: 13.5px;
+  line-height: 1.55;
+  margin: 0;
+}
+.ws-card .ico-box {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  color: var(--accent);
+}
+.ws-card .kicker {
+  justify-content: space-between;
+}
+.ws-bullets {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.ws-bullets li {
+  position: relative;
+  padding-left: 17px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.ws-bullets li::before {
+  content: "";
+  position: absolute;
+  left: 1px;
+  top: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+.ws-cta {
+  margin-top: auto;
+  padding-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 13.5px;
+}
+.ws-cta.ws-current {
+  color: var(--good);
+}
+/* Roadmap (not-yet-live) cards read one step quieter. */
+.ws-planned {
+  opacity: 0.72;
+}
+.ws-planned .ico-box {
+  background: var(--bg-elev-2);
+  border-color: var(--border-strong);
+  color: var(--text-faint);
+}
+
+/* Signed-in / signed-out "continue" banner — a full-width card that reads as a
+   row on wide screens and stacks on narrow ones. */
+.ws-continue {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.ws-continue .muted {
+  font-size: 13.5px;
+}
+
+/* Sidebar "switch workspace" affordance — mirrors a nav link's rhythm. */
+.sidebar .foot {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+.ws-switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 530;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  width: 100%;
+}
+.ws-switch:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.ws-switch svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+.app.nav-collapsed .ws-foot-note {
+  display: none;
+}

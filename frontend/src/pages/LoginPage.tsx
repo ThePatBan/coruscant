@@ -1,19 +1,25 @@
 import { type FormEvent, useState } from "react";
-import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { ApiError } from "../api";
 import { useAuth } from "../auth";
+import { isWorkspaceKind, postLoginPath, workspaceStore } from "../workspaces";
 
 export function LoginPage() {
   const { email: current, login, register } = useAuth();
   const navigate = useNavigate();
-  const from = (useLocation().state as { from?: string } | null)?.from ?? "/world";
+  const from = (useLocation().state as { from?: string } | null)?.from ?? null;
+  const [params] = useSearchParams();
+  const requested = params.get("ws");
+  // Where a successful sign-in lands: an explicit deep link first, else the requested
+  // (?ws=) or last-used workspace, defaulting to the Personal monitoring product.
+  const target = postLoginPath({ requested, from, remembered: workspaceStore.get() });
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("demo@coruscant.local");
   const [password, setPassword] = useState("coruscant-demo");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  if (current) return <Navigate to={from} replace />;
+  if (current) return <Navigate to={target} replace />;
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -22,7 +28,9 @@ export function LoginPage() {
     try {
       if (mode === "login") await login(email, password);
       else await register(email, password);
-      navigate(from);
+      // Remember the chosen product so the home gate returns here next time.
+      if (isWorkspaceKind(requested)) workspaceStore.set(requested);
+      navigate(target);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong");
     } finally {

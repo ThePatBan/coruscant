@@ -1,24 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { NavLink, Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
+import { Link, NavLink, Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { api, NOTIFICATIONS_EVENT } from "./api";
 import { useAuth } from "./auth";
 import { useAsync } from "./hooks";
 import {
-  type Icon,
   IconBell,
   IconCard,
-  IconChanged,
   IconChevrons,
-  IconCompany,
-  IconCountry,
-  IconDashboard,
-  IconFind,
   IconGear,
   IconLogout,
-  IconRisk,
   IconShield,
-  IconSignals,
 } from "./icons";
+import { resolveHomeWorkspace, WORKSPACES, workspaceForPath, workspaceStore } from "./workspaces";
 import { AdminPage } from "./pages/AdminPage";
 import { AlertsPage } from "./pages/AlertsPage";
 import { AtlasStakeholderPage } from "./pages/AtlasStakeholderPage";
@@ -29,6 +22,7 @@ import { CompanyDetailPage } from "./pages/CompanyDetailPage";
 import { ComparePage } from "./pages/ComparePage";
 import { CountryPage } from "./pages/CountryPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { EnterprisePage } from "./pages/EnterprisePage";
 import { RiskPage } from "./pages/RiskPage";
 import { DocumentsPage } from "./pages/DocumentsPage";
 import { DocumentDetailPage } from "./pages/DocumentDetailPage";
@@ -38,6 +32,7 @@ import { LiveSignalsPage } from "./pages/LiveSignalsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MonitoringPage } from "./pages/MonitoringPage";
 import { PortfolioPage } from "./pages/PortfolioPage";
+import { PublicHomePage } from "./pages/PublicHomePage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { SourcesPage } from "./pages/SourcesPage";
 import { WatchlistsPage } from "./pages/WatchlistsPage";
@@ -46,28 +41,20 @@ import { WorkspacesPage } from "./pages/WorkspacesPage";
 // LiveSignalsPage at /world. File kept for reference; delete once signed off.
 
 // Platform vs workspace (see docs/PLATFORM.md): the app SHELL — auth, health pills,
-// notifications, the user menu, /settings, /admin — is a PLATFORM surface, reusable by
-// any workspace. The primary nav below is the Portfolio-Exposure WORKSPACE spine
-// (World → Country → Company, plus the analytical reads). Legacy surfaces are archived
-// from the nav below.
-const NAV: { to: string; label: string; Icon: Icon }[] = [
-  { to: "/dashboard", label: "Dashboard", Icon: IconDashboard },
-  { to: "/changes", label: "What changed", Icon: IconChanged },
-  { to: "/world", label: "Live signals", Icon: IconSignals },
-  { to: "/risk", label: "Risk concentration", Icon: IconRisk },
-  { to: "/country", label: "Country", Icon: IconCountry },
-  { to: "/atlas", label: "Company graph", Icon: IconCompany },
-  { to: "/search", label: "Find", Icon: IconFind },
-];
+// notifications, the user menu, /settings, /admin — is a PLATFORM surface shared by
+// every workspace. The primary nav per workspace (Public / Personal / Enterprise) is
+// defined once in workspaces.ts and rendered by the shared shell below, so the three
+// products stay visually cohesive while feeling distinct.
 
-// TODO(retire): legacy surfaces superseded by the design-pack product. They stay
-// ROUTED (reachable by URL; Settings/Admin also reach via the profile menu, Alerts
-// via the bell) but are pulled from the primary nav pending final review. Archive
-// or delete these pages + routes once the new product is signed off:
-//   /companies /graph /portfolio /watchlists /workspaces /documents /compare
-//   /sources /monitoring   (+ their components under src/pages/)
-
+// Breadcrumbs drive the browser tab title. Most specific patterns first.
 const CRUMBS: Array<[RegExp, string]> = [
+  [/^\/enterprise\/collaboration/, "Collaboration"],
+  [/^\/enterprise\/sources/, "Data sources"],
+  [/^\/enterprise\/monitoring/, "Monitoring"],
+  [/^\/enterprise\/api/, "API & access"],
+  [/^\/enterprise\/policy/, "Policy & audit"],
+  [/^\/enterprise/, "Enterprise"],
+  [/^\/public/, "Discover"],
   [/^\/world/, "World markets"],
   [/^\/country/, "Country exposure"],
   [/^\/atlas/, "Company graph"],
@@ -90,6 +77,48 @@ const CRUMBS: Array<[RegExp, string]> = [
   [/^\/admin/, "Admin console"],
   [/^\/settings/, "Settings"],
 ];
+
+type Theme = "dark" | "light";
+
+/** Shared dark/light theme state, persisted and applied to <html>. */
+function useTheme(): [Theme, (t: Theme) => void] {
+  const [theme, setTheme] = useState<Theme>(() =>
+    (typeof localStorage !== "undefined" && localStorage.getItem("coruscant.theme")) === "light"
+      ? "light"
+      : "dark",
+  );
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      localStorage.setItem("coruscant.theme", theme);
+    } catch {
+      /* ignore */
+    }
+  }, [theme]);
+  return [theme, setTheme];
+}
+
+/** Collapsible-nav state, persisted across sessions. */
+function useNavCollapsed(): [boolean, () => void] {
+  const [collapsed, setCollapsed] = useState<boolean>(
+    () => (typeof localStorage !== "undefined" && localStorage.getItem("coruscant.navCollapsed")) === "1",
+  );
+  useEffect(() => {
+    try {
+      localStorage.setItem("coruscant.navCollapsed", collapsed ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [collapsed]);
+  return [collapsed, () => setCollapsed((c) => !c)];
+}
+
+function useDocumentTitle(pathname: string) {
+  const crumb = CRUMBS.find(([re]) => re.test(pathname))?.[1] ?? "";
+  useEffect(() => {
+    document.title = crumb ? `Coruscant · ${crumb}` : "Coruscant";
+  }, [crumb]);
+}
 
 function HealthPills() {
   const { data, error } = useAsync(() => api.health(), []);
@@ -137,7 +166,14 @@ function NotificationBell() {
   );
 }
 
-type Theme = "dark" | "light";
+function ThemeToggle({ theme, setTheme }: { theme: Theme; setTheme: (t: Theme) => void }) {
+  return (
+    <div className="segmented" role="group" aria-label="Appearance">
+      <button className={theme === "dark" ? "active" : ""} onClick={() => setTheme("dark")}>Dark</button>
+      <button className={theme === "light" ? "active" : ""} onClick={() => setTheme("light")}>Light</button>
+    </div>
+  );
+}
 
 function UserMenu({
   email,
@@ -193,13 +229,13 @@ function UserMenu({
 
           <div className="usermenu-sec">
             <div className="usermenu-sec-l">Appearance</div>
-            <div className="segmented">
-              <button className={theme === "dark" ? "active" : ""} onClick={() => setTheme("dark")}>Dark</button>
-              <button className={theme === "light" ? "active" : ""} onClick={() => setTheme("light")}>Light</button>
-            </div>
+            <ThemeToggle theme={theme} setTheme={setTheme} />
           </div>
 
           <div className="usermenu-links">
+            <NavLink to="/" className="usermenu-item" role="menuitem" onClick={() => setOpen(false)}>
+              <IconChevrons /> Switch workspace
+            </NavLink>
             <NavLink to="/settings" className="usermenu-item" role="menuitem" onClick={() => setOpen(false)}>
               <IconGear /> Settings
             </NavLink>
@@ -220,31 +256,27 @@ function UserMenu({
   );
 }
 
-function ProtectedLayout() {
+/**
+ * The signed-in shell for the Personal and Enterprise workspaces. Which nav spine
+ * and identity it shows is derived from the active route, so the two products share
+ * one implementation while feeling distinct. All hooks run before the auth guards
+ * so hook order stays stable across the loading → ready transition.
+ */
+function WorkspaceShell() {
   const { email, ready, logout } = useAuth();
   const location = useLocation();
-  const [theme, setTheme] = useState<Theme>(() =>
-    (typeof localStorage !== "undefined" && localStorage.getItem("coruscant.theme")) === "light" ? "light" : "dark",
-  );
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    try {
-      localStorage.setItem("coruscant.theme", theme);
-    } catch {
-      /* ignore */
-    }
-  }, [theme]);
+  const [theme, setTheme] = useTheme();
+  const [navCollapsed, toggleNav] = useNavCollapsed();
+  useDocumentTitle(location.pathname);
 
-  const [navCollapsed, setNavCollapsed] = useState<boolean>(
-    () => (typeof localStorage !== "undefined" && localStorage.getItem("coruscant.navCollapsed")) === "1",
-  );
+  const workspace = workspaceForPath(location.pathname);
+  const ws = WORKSPACES[workspace];
+  // Remember the active workspace so the home gate can bring the user back here —
+  // but only once actually signed in, so a pre-redirect anonymous render doesn't
+  // clobber the remembered choice.
   useEffect(() => {
-    try {
-      localStorage.setItem("coruscant.navCollapsed", navCollapsed ? "1" : "0");
-    } catch {
-      /* ignore */
-    }
-  }, [navCollapsed]);
+    if (email) workspaceStore.set(workspace);
+  }, [workspace, email]);
 
   if (!ready) {
     return (
@@ -254,36 +286,30 @@ function ProtectedLayout() {
     );
   }
   if (!email) {
-    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+    // Preserve the query string too, so a deep link like /search?q=… survives the
+    // sign-in round-trip (the Public search box hands off here).
+    return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
   }
 
-  // The active nav already names the page, so we don't repeat it in the bar —
-  // the crumb only drives the browser tab title.
-  const crumb = CRUMBS.find(([re]) => re.test(location.pathname))?.[1] ?? "";
-  useEffect(() => {
-    document.title = crumb ? `Coruscant · ${crumb}` : "Coruscant";
-  }, [crumb]);
-
   // Spatial surfaces opt out of the centered, padded content column so the
-  // canvas/globe/wide layouts fill the viewport (they carry their own padding via
-  // .spatial-page, or a full-bleed canvas for atlas/world).
+  // canvas/globe/wide layouts fill the viewport.
   const fullBleed = /^\/(atlas|world|dashboard|changes|risk|country)/.test(location.pathname);
 
   return (
     <div className={`app${navCollapsed ? " nav-collapsed" : ""}`}>
       <aside className="sidebar">
-        <NavLink to="/world" className="brand" title="Coruscant">
+        <NavLink to={ws.home} className="brand" title="Coruscant">
           <div className="logo" />
           <div className="brand-text">
             <div className="name">Coruscant</div>
-            <div className="tag">Intelligence</div>
+            <div className="tag">{ws.label}</div>
           </div>
         </NavLink>
 
         <nav className="nav">
-          <div className="label">Workspace</div>
-          {NAV.map((item) => (
-            <NavLink key={item.to} to={item.to} title={item.label}>
+          <div className="label">{ws.label} workspace</div>
+          {ws.nav.map((item) => (
+            <NavLink key={item.to} to={item.to} end={item.to === "/enterprise"} title={item.label}>
               <item.Icon />
               <span className="nav-label">{item.label}</span>
             </NavLink>
@@ -291,7 +317,10 @@ function ProtectedLayout() {
         </nav>
 
         <div className="foot">
-          Evidence-based intelligence. Every insight traces back to its source.
+          <Link to="/" className="ws-switch">
+            <IconChevrons /> <span className="nav-label">Switch workspace</span>
+          </Link>
+          <span className="ws-foot-note">Evidence-based intelligence. Every insight traces back to its source.</span>
         </div>
       </aside>
 
@@ -299,7 +328,7 @@ function ProtectedLayout() {
         <header className="topbar">
           <button
             className="nav-toggle"
-            onClick={() => setNavCollapsed((c) => !c)}
+            onClick={toggleNav}
             title={navCollapsed ? "Expand sidebar" : "Collapse sidebar"}
             aria-label={navCollapsed ? "Expand sidebar" : "Collapse sidebar"}
             aria-pressed={navCollapsed}
@@ -320,12 +349,99 @@ function ProtectedLayout() {
   );
 }
 
+/**
+ * The open shell for the free Public workspace. Same visual language as the signed-in
+ * shell, but no auth guard and a discovery-only nav — opening a gated surface funnels
+ * the visitor through sign-in.
+ */
+function PublicShell() {
+  const { email } = useAuth();
+  const location = useLocation();
+  const [theme, setTheme] = useTheme();
+  const [navCollapsed, toggleNav] = useNavCollapsed();
+  useDocumentTitle(location.pathname);
+
+  const ws = WORKSPACES.public;
+
+  return (
+    <div className={`app${navCollapsed ? " nav-collapsed" : ""}`}>
+      <aside className="sidebar">
+        <NavLink to="/public" className="brand" title="Coruscant">
+          <div className="logo" />
+          <div className="brand-text">
+            <div className="name">Coruscant</div>
+            <div className="tag">{ws.label}</div>
+          </div>
+        </NavLink>
+
+        <nav className="nav">
+          <div className="label">{ws.label} workspace</div>
+          {ws.nav.map((item) => (
+            <NavLink key={item.to} to={item.to} end={item.to === "/public"} title={item.label}>
+              <item.Icon />
+              <span className="nav-label">{item.label}</span>
+            </NavLink>
+          ))}
+        </nav>
+
+        <div className="foot">
+          <Link to="/" className="ws-switch">
+            <IconChevrons /> <span className="nav-label">Switch workspace</span>
+          </Link>
+          <span className="ws-foot-note">Free &amp; open. Sign in to unlock monitoring and portfolio.</span>
+        </div>
+      </aside>
+
+      <main className="main">
+        <header className="topbar">
+          <button
+            className="nav-toggle"
+            onClick={toggleNav}
+            title={navCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label={navCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-pressed={navCollapsed}
+          >
+            <IconChevrons />
+          </button>
+          <div className="stats">
+            <HealthPills />
+            <ThemeToggle theme={theme} setTheme={setTheme} />
+            {email ? (
+              <Link
+                className="btn ghost"
+                to={WORKSPACES[resolveHomeWorkspace({ authed: true, remembered: workspaceStore.get() })].home}
+              >
+                Open workspace →
+              </Link>
+            ) : (
+              <Link className="btn ghost" to="/login">
+                Sign in
+              </Link>
+            )}
+          </div>
+        </header>
+        <div className="content">
+          <Outlet />
+        </div>
+      </main>
+    </div>
+  );
+}
+
 export default function App() {
   return (
     <Routes>
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
-      <Route element={<ProtectedLayout />}>
+
+      {/* Public workspace — free, open, discovery-first. No auth guard. */}
+      <Route element={<PublicShell />}>
+        <Route path="/public" element={<PublicHomePage />} />
+      </Route>
+
+      {/* Personal + Enterprise workspaces — the signed-in shell. */}
+      <Route element={<WorkspaceShell />}>
+        {/* Personal (monitoring) spine */}
         <Route path="/world" element={<LiveSignalsPage />} />
         <Route path="/country" element={<CountryPage />} />
         {/* TODO(retire): the 3D force-graph AtlasPage is superseded by the
@@ -351,7 +467,17 @@ export default function App() {
         <Route path="/monitoring" element={<MonitoringPage />} />
         <Route path="/admin" element={<AdminPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+
+        {/* Enterprise workspace — org-level surfaces under a sticky /enterprise shell.
+            Deep features reuse the existing platform pages. */}
+        <Route path="/enterprise" element={<EnterprisePage />} />
+        <Route path="/enterprise/collaboration" element={<WorkspacesPage />} />
+        <Route path="/enterprise/sources" element={<SourcesPage />} />
+        <Route path="/enterprise/monitoring" element={<MonitoringPage />} />
+        <Route path="/enterprise/api" element={<SettingsPage />} />
+        <Route path="/enterprise/policy" element={<AdminPage />} />
       </Route>
+
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

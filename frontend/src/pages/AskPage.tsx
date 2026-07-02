@@ -1,5 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api, type RetrieveResponse, type SavedSearch } from "../api";
 import { docTypeLabel, Empty } from "../components";
 
@@ -11,7 +11,8 @@ const SAMPLES = [
 ];
 
 export function AskPage() {
-  const [query, setQuery] = useState("");
+  const [params] = useSearchParams();
+  const [query, setQuery] = useState(() => params.get("q") ?? "");
   const [submitted, setSubmitted] = useState("");
   const [result, setResult] = useState<RetrieveResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -28,6 +29,14 @@ export function AskPage() {
   useEffect(() => {
     void reloadSaved();
   }, [reloadSaved]);
+
+  // Honour a ?q= deep link — the Public workspace's search box hands off here.
+  useEffect(() => {
+    const q = params.get("q");
+    if (q && q.trim()) void run(q);
+    // Run once on mount for the initial query; user edits drive it thereafter.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function save() {
     const text = query.trim();
