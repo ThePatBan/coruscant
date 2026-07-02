@@ -71,6 +71,57 @@ class Settings(BaseSettings):
     # multi-tenant deployment (when an organization store is configured); single
     # -tenant/offline use is never throttled. Set false to disable enforcement.
     enforce_quotas: bool = True
+    # Phase 6 (public launch): expose a safe, read-only, evidence-backed public
+    # surface (entity search, profiles, relationships, timelines, evidence) to
+    # unauthenticated visitors — no forced demo sign-in. Curated allow-list only
+    # (see apps/api.py PUBLIC_READ); user-owned, write, admin, and costly LLM
+    # routes stay authenticated. Set false to fall back to fully-gated behaviour.
+    public_read: bool = True
+    # Anonymous requests/minute per client IP against the public surface. Signed-in
+    # callers are exempt (they have per-plan quotas instead). Fixed-window, in-proc.
+    public_read_rate_limit: int = 120
+    # Assert go-live safety at startup. When true, the app REFUSES to boot with an
+    # unsafe production config (wildcard CORS, missing secret) instead of silently
+    # degrading. Off by default so dev/test/offline use is never blocked.
+    production: bool = False
+
+    def config_warnings(self) -> list[str]:
+        """Go-live safety issues in the current settings (empty == launch-safe).
+
+        Surfaced (logged) on every boot; treated as fatal when ``production`` is on.
+        Keep this the single source of truth for "is this config safe to serve?"."""
+        warnings: list[str] = []
+        if "*" in self.cors_origins:
+            warnings.append(
+                "CORS is wildcard ('*'): set CORUSCANT_CORS_ORIGINS to your exact "
+                "web origin(s) before serving to real users."
+            )
+        if not self.secret_key.strip():
+            warnings.append(
+                "CORUSCANT_SECRET_KEY is unset: tokens use a per-process ephemeral "
+                "secret and are invalidated on every restart. Set a strong, stable secret."
+            )
+        if self.expose_reset_token:
+            warnings.append(
+                "CORUSCANT_EXPOSE_RESET_TOKEN is on: password-reset tokens are returned "
+                "in API responses — a dev/offline convenience, never for production."
+            )
+        if self.seed_demo_user:
+            warnings.append(
+                "CORUSCANT_SEED_DEMO_USER is on: a known demo account is auto-created — "
+                "disable it before a public launch."
+            )
+        return warnings
+
+    def ensure_launch_safe(self) -> None:
+        """Fail closed when serving with an unsafe production config; no-op otherwise.
+
+        ``config_warnings`` are advisory (logged) in dev/offline use, but fatal when
+        ``production`` is set — the app refuses to boot rather than silently serve
+        with wildcard CORS or ephemeral tokens."""
+        warnings = self.config_warnings()
+        if self.production and warnings:
+            raise RuntimeError("unsafe production config: " + "; ".join(warnings))
 
     @property
     def graph_snapshot_path(self) -> Path:

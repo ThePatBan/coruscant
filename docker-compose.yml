@@ -43,11 +43,14 @@ services:
       ingest:
         condition: service_completed_successfully
     healthcheck:
+      # Gate on /readyz (deep readiness), not /health (liveness): the web tier waits
+      # until the API's graph + corpus actually answer, so no request is proxied to a
+      # not-yet-ready backend. urlopen raises on a 503, which fails the check.
       test:
         - CMD
         - python
         - -c
-        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/readyz').status==200 else 1)"
       interval: 10s
       timeout: 5s
       retries: 5

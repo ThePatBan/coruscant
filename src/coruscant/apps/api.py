@@ -6,9 +6,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import logging
 import secrets
+import threading
+import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from coruscant.apps import composition
@@ -195,6 +197,17 @@ class HealthResponse(BaseModel):
     status: str
     documents: int
     graph_nodes: int
+
+
+class ReadinessResponse(BaseModel):
+    """Deep readiness (`/readyz`): whether every serving dependency answers.
+
+    Distinct from `/health` (liveness + info, never 503) so an orchestrator can hold
+    traffic until the app is genuinely ready to serve, not merely alive."""
+
+    status: str  # "ready" | "not ready"
+    checks: dict[str, bool]
+    detail: str | None = None
 
 
 class VersionResponse(BaseModel):
@@ -449,6 +462,49 @@ def _to_summary(document: NormalizedDocument) -> DocumentSummary:
     )
 
 
+class _FixedWindowRateLimiter:
+    """Per-key fixed-window limiter for the anonymous public surface (Phase 6).
+
+    In-process and dependency-free — right-sized for a single-instance launch. A
+    horizontally-scaled deployment would move this to a shared store (Redis); until
+    then each instance limits independently (documented as a known follow-up).
+    ``limit_per_minute <= 0`` disables limiting.
+    """
+
+    def __init__(self, limit_per_minute: int) -> None:
+        self.limit = limit_per_minute
+        self._lock = threading.Lock()
+        self._buckets: dict[str, tuple[int, int]] = {}  # key -> (window_minute, count)
+
+    def check(self, key: str) -> None:
+        if self.limit <= 0:
+            return
+        now_minute = int(time.time() // 60)
+        with self._lock:
+            window, count = self._buckets.get(key, (now_minute, 0))
+            if window != now_minute:  # new window: reset
+                window, count = now_minute, 0
+            count += 1
+            self._buckets[key] = (window, count)
+            over = count > self.limit
+        if over:
+            raise HTTPException(
+                status_code=429,
+                detail="public rate limit reached; sign in for higher limits",
+            )
+
+
+def _client_ip(request: Request) -> str:
+    """Best-effort client identity for rate limiting. Honours the first hop of
+    ``X-Forwarded-For`` (the app sits behind nginx in the compose topology); falls
+    back to the socket peer. Spoofable if the proxy is bypassed — acceptable for a
+    coarse anti-abuse limit, not for authz."""
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
 def create_app(
     retrieval_engine: Any | None = None,
     graph_store: KnowledgeGraphStore | None = None,
@@ -518,6 +574,11 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         if load_from_storage:
+            # Go-live safety: surface unsafe config on every boot; fail closed in
+            # production (CORUSCANT_PRODUCTION=true) rather than serve degraded.
+            for warning in settings.config_warnings():
+                logger.warning("config: %s", warning)
+            settings.ensure_launch_safe()
             state.engine = load_engine(settings)
             state.graph = load_graph_store(settings)
             state.intelligence = build_intelligence_store(settings)
@@ -553,9 +614,13 @@ def create_app(
     }
     pe = workspace_routers[composition.PORTFOLIO_EXPOSURE.slug]
 
-    def require_user(request: Request) -> StoredUser | None:
-        if not enforce_auth:
-            return None
+    # Anonymous public surface anti-abuse (Phase 6): fixed-window per client IP.
+    # Signed-in callers bypass it (they have per-plan quotas instead).
+    public_limiter = _FixedWindowRateLimiter(settings.public_read_rate_limit)
+
+    def _resolve_user(request: Request) -> StoredUser | None:
+        """Resolve the caller from a Bearer token or an X-API-Key; None if neither
+        identifies a user. Never raises — the callers decide whether that's fatal."""
         header = request.headers.get("Authorization", "")
         token = header[7:].strip() if header[:7].lower() == "bearer " else ""
         user = state.auth.user_from_token(token) if state.auth and token else None
@@ -566,15 +631,44 @@ def create_app(
                 owner = state.api_keys.resolve(api_key)
                 if owner:
                     user = state.auth.store.get(owner)
+        return user
+
+    def require_user(request: Request) -> StoredUser | None:
+        if not enforce_auth:
+            return None
+        user = _resolve_user(request)
         if user is None:
             raise HTTPException(status_code=401, detail="authentication required")
         return user
 
-    protected = [Depends(require_user)]
+    def public_read(request: Request) -> StoredUser | None:
+        """Gate for the curated public read surface (Phase 6, ``PUBLIC_READ`` routes).
 
-    def current_email(user: StoredUser | None = Depends(require_user)) -> str:
-        # When auth is enforced, user is a StoredUser; when disabled (tests) all
-        # callers share a single anonymous scope.
+        Authenticated callers pass through with their identity (no anonymous limit).
+        Anonymous callers are admitted only when ``public_read`` is enabled, and are
+        fixed-window rate-limited per client IP so the open surface can't be hammered.
+        When the public surface is disabled, this degrades to ``require_user`` — the
+        route re-locks to authenticated-only with zero further changes."""
+        if not enforce_auth:
+            return None
+        user = _resolve_user(request)
+        if user is not None:
+            return user
+        if not settings.public_read:
+            raise HTTPException(status_code=401, detail="authentication required")
+        public_limiter.check(_client_ip(request))
+        return None
+
+    protected = [Depends(require_user)]
+    public = [Depends(public_read)]
+
+    def current_email(request: Request) -> str:
+        # The caller's usage/ownership scope. Authenticated → their email; anonymous
+        # (public surface) or auth-disabled (tests) → a shared anonymous scope. Never
+        # raises: routes that must be authenticated already carry `protected`.
+        if not enforce_auth:
+            return "anonymous@local"
+        user = _resolve_user(request)
         return user.email if user is not None else "anonymous@local"
 
     def require_admin(request: Request) -> StoredUser:
@@ -730,23 +824,58 @@ def create_app(
     def version() -> VersionResponse:
         return VersionResponse(api_version=API_VERSION, schema_version=SCHEMA_VERSION)
 
+    @plat.get("/livez")
+    def livez() -> dict[str, str]:
+        # Liveness only: the process is up and serving. No dependency checks, so it
+        # never flaps while the graph loads — a restart-me signal, nothing more.
+        return {"status": "ok"}
+
     @plat.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:
-        return HealthResponse(
-            status="ok",
-            documents=_document_count(state.engine),
-            graph_nodes=state.graph.node_count(),
+        # Liveness + info. Resilient by contract: never 500s, so the UI health pills
+        # and the container liveness probe stay meaningful even mid-load. Reports
+        # `degraded` (not an error) if a dependency is briefly unavailable.
+        try:
+            return HealthResponse(
+                status="ok",
+                documents=_document_count(state.engine),
+                graph_nodes=state.graph.node_count(),
+            )
+        except Exception:  # pragma: no cover - defensive: health must not throw
+            logger.exception("health check degraded")
+            return HealthResponse(status="degraded", documents=0, graph_nodes=0)
+
+    @plat.get("/readyz", response_model=ReadinessResponse)
+    def readyz(response: Response) -> ReadinessResponse:
+        # Deep readiness: every serving dependency answers. Returns 503 when one does
+        # not, so an orchestrator holds traffic until the app is truly ready (unlike
+        # /health, which is liveness-only and always 200).
+        checks: dict[str, bool] = {}
+        detail: str | None = None
+        try:
+            checks["graph"] = state.graph.node_count() >= 0
+        except Exception as exc:  # pragma: no cover - defensive
+            checks["graph"] = False
+            detail = f"graph: {exc}"
+        checks["corpus"] = _document_count(state.engine) >= 0
+        # When auth is enforced, a serving app must have its auth store wired.
+        checks["auth"] = state.auth is not None if enforce_auth else True
+        ready = all(checks.values())
+        if not ready:
+            response.status_code = 503
+        return ReadinessResponse(
+            status="ready" if ready else "not ready", checks=checks, detail=detail
         )
 
     # ---- [PLATFORM] Reference corpus & retrieval ---------------------------
-    @plat.get("/companies", response_model=list[CompanyOut], dependencies=protected)
+    @plat.get("/companies", response_model=list[CompanyOut], dependencies=public)
     def companies() -> list[CompanyOut]:
         return [
             CompanyOut(slug=c.slug, name=c.name, industry=c.industry, country=c.country)
             for c in load_companies(settings.config_dir)
         ]
 
-    @plat.get("/sources", response_model=list[SourceOut], dependencies=protected)
+    @plat.get("/sources", response_model=list[SourceOut], dependencies=public)
     def sources() -> list[SourceOut]:
         return [
             SourceOut(
@@ -757,7 +886,7 @@ def create_app(
             for definition in default_registry().definitions()
         ]
 
-    @plat.get("/documents", response_model=list[DocumentSummary], dependencies=protected)
+    @plat.get("/documents", response_model=list[DocumentSummary], dependencies=public)
     def documents(company: str | None = None, source_type: str | None = None) -> list[DocumentSummary]:
         results: list[DocumentSummary] = []
         for document in _all_documents(state.engine):
@@ -769,7 +898,7 @@ def create_app(
             results.append(_to_summary(document))
         return results
 
-    @plat.get("/documents/{canonical_id}", response_model=DocumentDetail, dependencies=protected)
+    @plat.get("/documents/{canonical_id}", response_model=DocumentDetail, dependencies=public)
     def document_detail(canonical_id: str) -> DocumentDetail:
         for document in _all_documents(state.engine):
             if document.canonical_id == canonical_id:
@@ -782,7 +911,7 @@ def create_app(
                 )
         raise HTTPException(status_code=404, detail="document not found")
 
-    @plat.post("/retrieve", response_model=RetrieveResponse, dependencies=protected)
+    @plat.post("/retrieve", response_model=RetrieveResponse, dependencies=public)
     def retrieve(request: RetrieveRequest, email: str = Depends(current_email)) -> RetrieveResponse:
         _enforce_api_quota(email)
         _record_usage(email, "retrieve")
@@ -802,7 +931,7 @@ def create_app(
             query=request.query, answer=reasoning.answer(request.query), results=results
         )
 
-    @plat.get("/answer", response_model=AnswerResponse, dependencies=protected)
+    @plat.get("/answer", response_model=AnswerResponse, dependencies=public)
     def answer(q: str) -> AnswerResponse:
         reasoning = TemplateReasoningLayer(state.engine)
         return AnswerResponse(query=q, answer=reasoning.answer(q))
@@ -834,7 +963,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="saved search not found")
         return {"ok": True}
 
-    @plat.get("/compare", response_model=ChangeSet, dependencies=protected)
+    @plat.get("/compare", response_model=ChangeSet, dependencies=public)
     def compare(a: str, b: str) -> ChangeSet:
         """Side-by-side comparison of two documents: what is in `a` but not `b`."""
         by_id = {d.canonical_id: d for d in _all_documents(state.engine)}
@@ -848,7 +977,7 @@ def create_app(
             source_type=str(doc_a.metadata.get("source_name") or doc_a.document_type),
         )
 
-    @plat.get("/graph/company/{slug}", response_model=GraphResponse, dependencies=protected)
+    @plat.get("/graph/company/{slug}", response_model=GraphResponse, dependencies=public)
     def graph_company(slug: str) -> GraphResponse:
         node = state.graph.get_node("Company", slug)
         if node is None:
@@ -866,14 +995,14 @@ def create_app(
 
     # ---- [SHARED] Entity graph / relationship intelligence (generic reads + exposure engine) --------------------------
 
-    @plat.get("/entities", response_model=list[EntityRef], dependencies=protected)
+    @plat.get("/entities", response_model=list[EntityRef], dependencies=public)
     def entities(kind: str | None = None) -> list[EntityRef]:
         graph = state.graph
         if not isinstance(graph, KnowledgeGraphStore):
             return []
         return list_entities(graph, kind)
 
-    @plat.get("/entities/{kind}/{key}", response_model=EntityProfile, dependencies=protected)
+    @plat.get("/entities/{kind}/{key}", response_model=EntityProfile, dependencies=public)
     def entity(kind: str, key: str) -> EntityProfile:
         graph = state.graph
         profile = (
@@ -885,7 +1014,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="entity not found")
         return profile
 
-    @pe.get("/graph/exposure", response_model=ExposureResult, dependencies=protected)
+    @pe.get("/graph/exposure", response_model=ExposureResult, dependencies=public)
     def exposure(country: str) -> ExposureResult:
         graph = state.graph
         if not isinstance(graph, KnowledgeGraphStore):
@@ -930,7 +1059,7 @@ def create_app(
             return SectorExposure(sector=sector)
         return sector_exposure(graph, sector)
 
-    @plat.get("/graph/company-network", response_model=CompanyNetwork, dependencies=protected)
+    @plat.get("/graph/company-network", response_model=CompanyNetwork, dependencies=public)
     def company_network_endpoint(company: str, max_hops: int = 2) -> CompanyNetwork:
         """Multi-hop co-mention neighbourhood of `company` out to `max_hops`, each
         reachable company with a shortest evidence chain. Orientation, not exposure
@@ -970,14 +1099,14 @@ def create_app(
             return MarketTierExposure(tier=tier, label="")
         return market_tier_exposure(graph, tier)
 
-    @plat.get("/graph/co-executives", response_model=CoExecutiveResult, dependencies=protected)
+    @plat.get("/graph/co-executives", response_model=CoExecutiveResult, dependencies=public)
     def graph_co_executives() -> CoExecutiveResult:
         graph = state.graph
         if not isinstance(graph, KnowledgeGraphStore):
             return CoExecutiveResult()
         return co_executives(graph)
 
-    @pe.get("/graph/screening", response_model=ScreeningOverview, dependencies=protected)
+    @pe.get("/graph/screening", response_model=ScreeningOverview, dependencies=public)
     def graph_screening(as_of: str | None = None) -> ScreeningOverview:
         """PEP/sanctions screening of the people in the graph. ``connected: false``
         until a screen has run; optional ``as_of=YYYY-MM-DD`` answers "was this
@@ -988,7 +1117,7 @@ def create_app(
             return ScreeningOverview(connected=False)
         return screening_overview(graph, as_of=as_of)
 
-    @plat.get("/graph/resolution", response_model=ResolutionOverview, dependencies=protected)
+    @plat.get("/graph/resolution", response_model=ResolutionOverview, dependencies=public)
     def graph_resolution(as_of: str | None = None) -> ResolutionOverview:
         """GLEIF LEI-anchoring coverage: how much of the graph is resolved to a
         stable identity. ``connected: false`` until an anchoring run; optional
@@ -998,7 +1127,7 @@ def create_app(
             return ResolutionOverview(connected=False)
         return resolution_overview(graph, as_of=as_of)
 
-    @pe.get("/graph/coverage", response_model=CoverageOverview, dependencies=protected)
+    @pe.get("/graph/coverage", response_model=CoverageOverview, dependencies=public)
     def graph_coverage() -> CoverageOverview:
         """Whole-exchange coverage: the size and shape of the resolvable universe by
         market/exchange. ``connected: false`` until a coverage run has ingested one."""
@@ -1007,7 +1136,7 @@ def create_app(
             return CoverageOverview(connected=False)
         return coverage_overview(graph)
 
-    @pe.get("/graph/ownership", response_model=OwnershipOverview, dependencies=protected)
+    @pe.get("/graph/ownership", response_model=OwnershipOverview, dependencies=public)
     def graph_ownership() -> OwnershipOverview:
         """Ownership substrate: declared ownership, beneficial ownership, and
         accounting consolidation as three distinct edge types (never conflated).
@@ -1022,7 +1151,7 @@ def create_app(
     @pe.get(
         "/graph/company/{company_key}/owners",
         response_model=CompanyOwners,
-        dependencies=protected,
+        dependencies=public,
     )
     def graph_company_owners(company_key: str, as_of: str | None = None) -> CompanyOwners:
         """The ownership/control statements pointing at a company, access-tier
@@ -1044,7 +1173,7 @@ def create_app(
     @pe.get(
         "/graph/company/{company_key}/ownership-chain",
         response_model=CompanyOwnershipChains,
-        dependencies=protected,
+        dependencies=public,
     )
     def graph_ownership_chain(company_key: str, as_of: str | None = None) -> CompanyOwnershipChains:
         """UBO chain-following: the ownership chains leading up to a company, each hop
@@ -1062,7 +1191,7 @@ def create_app(
     @pe.get(
         "/graph/company/{company_key}/contagion",
         response_model=GroupContagion,
-        dependencies=protected,
+        dependencies=public,
     )
     def graph_contagion(company_key: str, as_of: str | None = None) -> GroupContagion:
         """Group / UBO contagion: given a directly-exposed company, the group members
@@ -1573,20 +1702,20 @@ def create_app(
 
     # ---- [SHARED] Intelligence (generic doc-intelligence + product analysis) ------------------------------------------------------
 
-    @plat.get("/documents/{canonical_id}/summary", response_model=AISummary, dependencies=protected)
+    @plat.get("/documents/{canonical_id}/summary", response_model=AISummary, dependencies=public)
     def document_summary(canonical_id: str) -> AISummary:
         summary = state.intelligence.get_summary(canonical_id) if state.intelligence else None
         if summary is None:
             raise HTTPException(status_code=404, detail="summary not available")
         return summary
 
-    @pe.get("/companies/{slug}/timeline", response_model=list[ExtractedEvent], dependencies=protected)
+    @pe.get("/companies/{slug}/timeline", response_model=list[ExtractedEvent], dependencies=public)
     def company_timeline(slug: str, limit: int = 50) -> list[ExtractedEvent]:
         if state.intelligence is None:
             return []
         return state.intelligence.list_events(company_slug=slug, limit=limit)
 
-    @pe.get("/companies/{slug}/changes", response_model=list[ChangeSet], dependencies=protected)
+    @pe.get("/companies/{slug}/changes", response_model=list[ChangeSet], dependencies=public)
     def company_changes(slug: str) -> list[ChangeSet]:
         if state.intelligence is None:
             return []
@@ -1655,7 +1784,7 @@ def create_app(
             country_exposures=exposures,
         )
 
-    @pe.get("/dashboard", response_model=DashboardResponse, dependencies=protected)
+    @pe.get("/dashboard", response_model=DashboardResponse, dependencies=public)
     def dashboard() -> DashboardResponse:
         documents = _all_documents(state.engine)
         latest = sorted(documents, key=lambda d: d.published_at or "", reverse=True)[:6]

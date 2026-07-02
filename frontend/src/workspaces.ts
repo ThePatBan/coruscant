@@ -143,6 +143,51 @@ export function workspaceForPath(pathname: string): WorkspaceKind {
   return "personal";
 }
 
+// The discovery destinations an anonymous visitor may read (Phase 6 public launch):
+// search, company profiles, relationships, the entity graph, evidence — the routes
+// the Public nav points at. Everything else under the signed-in shell (monitoring,
+// portfolio, alerts, workspaces, admin, enterprise) requires auth. Kept in sync with
+// the backend PUBLIC_READ allow-list (apps/api.py).
+const PUBLIC_READABLE_PREFIXES: readonly string[] = [
+  "/companies",
+  "/atlas",
+  "/changes",
+  "/search",
+  "/graph",
+  "/documents",
+  "/compare",
+];
+
+/** Whether an anonymous visitor may view this path (a curated read-only surface). */
+export function isPublicReadablePath(pathname: string): boolean {
+  return PUBLIC_READABLE_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+}
+
+export type RouteAccess = "allow" | "requireLogin";
+
+/**
+ * The single, deterministic access decision for a path. Signed-in visitors may go
+ * anywhere; anonymous visitors may read the public surface and are otherwise sent to
+ * sign in. Pure and total, so the shell guard is one testable call (workspaces.test.ts).
+ */
+export function routeAccess(pathname: string, ctx: { authed: boolean }): RouteAccess {
+  if (ctx.authed) return "allow";
+  if (isPublicReadablePath(pathname)) return "allow";
+  return "requireLogin";
+}
+
+/**
+ * Whether a visitor may ENTER a workspace — the deterministic entitlement gate.
+ * Public is always open; Personal and Enterprise require a signed-in session. The
+ * enterprise pilot admits any authenticated account today; deeper gating (org
+ * membership / plan / role) is a documented follow-up and belongs here, so callers
+ * never branch on entitlement themselves.
+ */
+export function canEnterWorkspace(kind: WorkspaceKind, ctx: { authed: boolean }): boolean {
+  if (kind === "public") return true;
+  return ctx.authed;
+}
+
 export interface HomeContext {
   authed: boolean;
   remembered?: WorkspaceKind | null;

@@ -11,7 +11,7 @@ import {
   IconLogout,
   IconShield,
 } from "./icons";
-import { resolveHomeWorkspace, WORKSPACES, workspaceForPath, workspaceStore } from "./workspaces";
+import { resolveHomeWorkspace, routeAccess, WORKSPACES, workspaceForPath, workspaceStore } from "./workspaces";
 import { AdminPage } from "./pages/AdminPage";
 import { AlertsPage } from "./pages/AlertsPage";
 import { AtlasStakeholderPage } from "./pages/AtlasStakeholderPage";
@@ -269,7 +269,11 @@ function WorkspaceShell() {
   const [navCollapsed, toggleNav] = useNavCollapsed();
   useDocumentTitle(location.pathname);
 
-  const workspace = workspaceForPath(location.pathname);
+  // Phase 6: an anonymous visitor is admitted to the curated public read surface
+  // (routeAccess) and the shell then wears the Public identity + discovery nav for
+  // them. A signed-in visitor gets the workspace that owns the path, unchanged.
+  const anon = !email;
+  const workspace = anon ? "public" : workspaceForPath(location.pathname);
   const ws = WORKSPACES[workspace];
   // Remember the active workspace so the home gate can bring the user back here —
   // but only once actually signed in, so a pre-redirect anonymous render doesn't
@@ -285,7 +289,7 @@ function WorkspaceShell() {
       </div>
     );
   }
-  if (!email) {
+  if (routeAccess(location.pathname, { authed: !anon }) === "requireLogin") {
     // Preserve the query string too, so a deep link like /search?q=… survives the
     // sign-in round-trip (the Public search box hands off here).
     return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
@@ -337,8 +341,25 @@ function WorkspaceShell() {
           </button>
           <div className="stats">
             <HealthPills />
-            <NotificationBell />
-            <UserMenu email={email} theme={theme} setTheme={setTheme} onLogout={logout} />
+            {email ? (
+              <>
+                <NotificationBell />
+                <UserMenu email={email} theme={theme} setTheme={setTheme} onLogout={logout} />
+              </>
+            ) : (
+              // Anonymous public browsing: no notifications/account menu — just the
+              // appearance toggle and a sign-in that returns here after login.
+              <>
+                <ThemeToggle theme={theme} setTheme={setTheme} />
+                <Link
+                  className="btn ghost"
+                  to="/login"
+                  state={{ from: location.pathname + location.search }}
+                >
+                  Sign in
+                </Link>
+              </>
+            )}
           </div>
         </header>
         <div className={fullBleed ? "content content-full" : "content"}>

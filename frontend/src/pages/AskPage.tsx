@@ -1,6 +1,7 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, type RetrieveResponse, type SavedSearch } from "../api";
+import { useAuth } from "../auth";
 import { docTypeLabel, Empty } from "../components";
 
 const SAMPLES = [
@@ -11,6 +12,7 @@ const SAMPLES = [
 ];
 
 export function AskPage() {
+  const { email } = useAuth();
   const [params] = useSearchParams();
   const [query, setQuery] = useState(() => params.get("q") ?? "");
   const [submitted, setSubmitted] = useState("");
@@ -20,12 +22,14 @@ export function AskPage() {
   const [saved, setSaved] = useState<SavedSearch[]>([]);
 
   const reloadSaved = useCallback(async () => {
+    // Saved searches are a signed-in feature; anonymous public visitors just search.
+    if (!email) return;
     try {
       setSaved(await api.savedSearches());
     } catch {
       /* saved searches are optional */
     }
-  }, []);
+  }, [email]);
   useEffect(() => {
     void reloadSaved();
   }, [reloadSaved]);
@@ -92,15 +96,17 @@ export function AskPage() {
           <button className="btn" type="submit" disabled={loading || !query.trim()}>
             {loading ? <span className="spinner" style={{ width: 14, height: 14 }} /> : "Ask"}
           </button>
-          <button
-            className="btn ghost"
-            type="button"
-            disabled={!query.trim()}
-            onClick={() => void save()}
-            title="Save this search"
-          >
-            ☆ Save
-          </button>
+          {email ? (
+            <button
+              className="btn ghost"
+              type="button"
+              disabled={!query.trim()}
+              onClick={() => void save()}
+              title="Save this search"
+            >
+              ☆ Save
+            </button>
+          ) : null}
         </div>
         <div className="chips">
           {SAMPLES.map((s) => (
