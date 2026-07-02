@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import logging
 import secrets
@@ -395,13 +395,28 @@ class EvaluateAllResult(BaseModel):
 
 
 @dataclass
+class WorkspaceServices:
+    """Portfolio-Exposure workspace services, held apart from the platform app-state.
+
+    Phase 3 (docs/PLATFORM.md §9): the product-specific services no longer sit flat on
+    ``_AppState``; the workspace routers reach them through ``state.workspace``. Built by
+    ``apps.workspace_runtime``. (``engine``/``graph``/``intelligence`` stay on ``_AppState``
+    as the shared core — read by both the platform and workspace routers.)
+    """
+
+    watchlists: SqliteWatchlistStore | None = None
+    portfolios: SqlitePortfolioStore | None = None
+    prices: PriceService | None = None
+    macro: MacroService | None = None
+    news: NewsService | None = None
+
+
+@dataclass
 class _AppState:
     engine: Any
     graph: KnowledgeGraphStore
     intelligence: SqliteIntelligenceStore | None = None
     auth: AuthService | None = None
-    watchlists: SqliteWatchlistStore | None = None
-    portfolios: SqlitePortfolioStore | None = None
     workspaces: SqliteWorkspaceStore | None = None
     audit: SqliteAuditStore | None = None
     api_keys: SqliteApiKeyStore | None = None
@@ -409,9 +424,7 @@ class _AppState:
     saved_searches: SqliteSavedSearchStore | None = None
     orgs: SqliteOrgStore | None = None
     usage: SqliteUsageStore | None = None
-    prices: PriceService | None = None
-    macro: MacroService | None = None
-    news: NewsService | None = None
+    workspace: WorkspaceServices = field(default_factory=WorkspaceServices)
 
 
 def _all_documents(engine: Any) -> list[NormalizedDocument]:
@@ -485,8 +498,6 @@ def create_app(
         graph=graph_store if graph_store is not None else InMemoryKnowledgeGraphStore(),
         intelligence=intelligence_store,
         auth=auth_service,
-        watchlists=watchlist_store,
-        portfolios=portfolio_store,
         workspaces=workspace_store,
         audit=audit_store,
         api_keys=api_key_store,
@@ -494,9 +505,13 @@ def create_app(
         saved_searches=saved_search_store,
         orgs=org_store,
         usage=usage_store,
-        prices=build_price_service(settings),
-        macro=build_macro_service(settings),
-        news=build_news_service(settings),
+        workspace=WorkspaceServices(
+            watchlists=watchlist_store,
+            portfolios=portfolio_store,
+            prices=build_price_service(settings),
+            macro=build_macro_service(settings),
+            news=build_news_service(settings),
+        ),
     )
 
     @asynccontextmanager
@@ -506,8 +521,8 @@ def create_app(
             state.graph = load_graph_store(settings)
             state.intelligence = build_intelligence_store(settings)
             state.auth = build_auth_service(settings)
-            state.watchlists = build_watchlist_store(settings)
-            state.portfolios = build_portfolio_store(settings)
+            state.workspace.watchlists = build_watchlist_store(settings)
+            state.workspace.portfolios = build_portfolio_store(settings)
             state.workspaces = build_workspace_store(settings)
             state.audit = build_audit_store(settings)
             state.api_keys = build_api_key_store(settings)
@@ -622,10 +637,10 @@ def create_app(
             )
 
     def _enforce_watchlist_quota(email: str) -> None:
-        if not _quota_enforced() or state.watchlists is None:
+        if not _quota_enforced() or state.workspace.watchlists is None:
             return
         plan = _effective_plan(email)
-        if len(state.watchlists.list_watchlists(email)) >= plan.max_watchlists:
+        if len(state.workspace.watchlists.list_watchlists(email)) >= plan.max_watchlists:
             raise HTTPException(
                 status_code=429,
                 detail=f"watchlist limit reached ({plan.max_watchlists} on the {plan.label} plan)",
@@ -637,9 +652,9 @@ def create_app(
         return state.auth
 
     def _watchlists() -> SqliteWatchlistStore:
-        if state.watchlists is None:
+        if state.workspace.watchlists is None:
             raise HTTPException(status_code=503, detail="watchlists are not configured")
-        return state.watchlists
+        return state.workspace.watchlists
 
     def _evaluate_watchlist(email: str, watchlist: Watchlist) -> int:
         if state.intelligence is None:
@@ -1139,7 +1154,7 @@ def create_app(
         The aggregate is equal-weighted across the sample (no holdings/weights yet)."""
         companies = load_companies(settings.config_dir)
         holdings_meta = [(c.slug, c.name, c.ticker_symbol) for c in companies]
-        service = state.prices
+        service = state.workspace.prices
         if service is None or not service.enabled:
             return summarize(holdings_meta, {}, total=len(companies), connected=False)
         quotes = service.quotes([symbol for _, _, symbol in holdings_meta])
@@ -1150,7 +1165,7 @@ def create_app(
         """Benchmark each GICS sector's holdings against its sector-index proxy
         (SPDR Select Sector ETF — free; the licensed MSCI index is a later feed).
         Reuses the live price feed, so it needs prices connected."""
-        service = state.prices
+        service = state.workspace.prices
         if service is None or not service.enabled:
             return PortfolioBenchmark(
                 connected=False,
@@ -1183,7 +1198,7 @@ def create_app(
     def country_macro(country: str) -> CountryMacro:
         """Country macro for the World tab: World Bank GDP/inflation + the
         benchmark-index move. Returns connected=false when the feed is off."""
-        service = state.macro
+        service = state.workspace.macro
         if service is None:
             return CountryMacro(country=country, connected=False, note="Macro not configured.")
         return service.country_macro(country)
@@ -1192,7 +1207,7 @@ def create_app(
     def news(country: str | None = None) -> NewsFeed:
         """Business-news headlines: global, or scoped to `country` (free GDELT).
         Returns connected=false when the feed is off — never fabricated headlines."""
-        service = state.news
+        service = state.workspace.news
         if service is None:
             return NewsFeed(connected=False, scope="global", note="News not configured.")
         return service.headlines(scope="country" if country else "global", country=country)
@@ -1262,9 +1277,9 @@ def create_app(
     # ---- [WORKSPACE] Portfolios --------------------------------------------------------
 
     def _portfolios() -> SqlitePortfolioStore:
-        if state.portfolios is None:
+        if state.workspace.portfolios is None:
             raise HTTPException(status_code=503, detail="portfolios are not configured")
-        return state.portfolios
+        return state.workspace.portfolios
 
     @pe.post("/portfolios", response_model=Portfolio, dependencies=protected)
     def create_portfolio(body: PortfolioCreate, email: str = Depends(current_email)) -> Portfolio:
@@ -1534,7 +1549,7 @@ def create_app(
         plan = _effective_plan(email)
         used = _api_calls_today(email)
         watchlists_used = (
-            len(state.watchlists.list_watchlists(email)) if state.watchlists is not None else 0
+            len(state.workspace.watchlists.list_watchlists(email)) if state.workspace.watchlists is not None else 0
         )
         return QuotaStatus(
             plan=plan.name,
