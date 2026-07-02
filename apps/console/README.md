@@ -1,7 +1,9 @@
-# Frontend
+# Console (`apps/console`)
 
-The Coruscant SPA — **React + Vite + TypeScript**. Three workspaces sharing one shell
-(see [../PRODUCT.md](../PRODUCT.md) and `src/workspaces.ts`):
+The Coruscant customer-facing SPA — **React + Vite + TypeScript**. Deploys to
+`console.coruscant.com` (see [../README.md](../README.md) for the app-boundary map).
+Three workspaces sharing one shell (see [../../PRODUCT.md](../../PRODUCT.md) and
+`src/workspaces.ts`):
 
 - **Public** — free, discovery-first: search, company profiles, the relationship graph
   (`/atlas`, the labelled stakeholder map), evidence, and what-changed. No account needed.
@@ -11,7 +13,7 @@ The Coruscant SPA — **React + Vite + TypeScript**. Three workspaces sharing on
 
 Key files: `src/App.tsx` (shell + routing), `src/workspaces.ts` (the three-workspace
 model + anonymous access gate), `src/api.ts` (typed API client), `src/index.css` (the
-design system — see [../DESIGN.md](../DESIGN.md)).
+design system — see [../../DESIGN.md](../../DESIGN.md)).
 
 ## Run
 

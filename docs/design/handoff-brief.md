@@ -17,7 +17,7 @@ instruments — treat it as a sample, not a real user portfolio.
 
 ---
 
-## Design tokens (from `frontend/src/index.css`)
+## Design tokens (from `apps/console/src/index.css`)
 
 **Aesthetic:** near-black "intelligence terminal", single **indigo** accent,
 **amber reserved for provenance/evidence only**. Dark is earned (long focused

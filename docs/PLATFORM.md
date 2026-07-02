@@ -151,7 +151,7 @@ The phase brief asks for three boundaries to be drawn. Here they are, mapped to 
    product-scoped intelligence endpoints (`/dashboard`, `/analyst`, `/signals`,
    company timeline/changes), the retired-but-routed frontend pages
    (`/companies /graph /portfolio /watchlists /workspaces /documents /compare /sources
-   /monitoring`, per the `TODO(retire)` block in `frontend/src/App.tsx`), and the
+   /monitoring`, per the `TODO(retire)` block in `apps/console/src/App.tsx`), and the
    product nav spine. These stay working; they are *labelled* now and *relocated* in a
    later phase — not rewritten here.
 

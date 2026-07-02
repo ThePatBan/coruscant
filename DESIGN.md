@@ -1,6 +1,6 @@
 # Coruscant — Design System
 
-> Documents the existing system in `frontend/src/index.css`. Extend it; do not
+> Documents the existing system in `apps/console/src/index.css`. Extend it; do not
 > fork it. New surfaces must read as part of the same instrument.
 
 ## Aesthetic
