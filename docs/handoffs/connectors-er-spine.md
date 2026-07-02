@@ -113,7 +113,7 @@ gate *external launch*, not *building* — but start the license conversations n
 - **Before merging, full CI locally, all green:**
   `ruff check src tests` · `mypy src` ·
   `env -u CORUSCANT_CONFIG_DIR -u CORUSCANT_DATA_DIR -u CORUSCANT_DATABASE_URL python3 -m pytest tests/ -q`
-  · `(cd frontend && npm run build)`.
+  · `(cd apps/console && npm run build)`.
 - **New graph edge types** (pep/sanctioned/owns%/beneficial_owner_of): add a
   **golden-parity case** (memory vs kuzu) and keep provenance on every edge.
 - **Git/PR flow:** branch off main; commit trailer

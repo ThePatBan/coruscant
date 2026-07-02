@@ -58,7 +58,7 @@ services:
 
   web:
     build:
-      context: ./frontend
+      context: ./apps/console
       dockerfile: Dockerfile
     image: coruscant-web:local
     ports:

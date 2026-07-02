@@ -3,7 +3,7 @@
 The single backend answer to "may this account use the enterprise surface?". Kept a
 pure function of ``(role, plan)`` so the same rule backs the API dependency
 (``require_entitlement`` in ``apps/api.py``) and is mirrored by the frontend gate
-(``frontend/src/workspaces.ts``). The entitlement *source* is deliberately minimal
+(``apps/console/src/workspaces.ts``). The entitlement *source* is deliberately minimal
 today — an ``admin`` role OR membership of an org on the ``enterprise`` plan — but this
 module is the seam a richer source (org membership, per-seat licensing, feature flags)
 slots into without touching a single route.

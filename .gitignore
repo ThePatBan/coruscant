@@ -21,6 +21,11 @@ venv/
 /data/
 *.db
 
+# Node / frontend apps (apps/*) — deps and build caches
+node_modules/
+.vite/
+*.local
+
 # OS
 .DS_Store
 Thumbs.db

@@ -75,7 +75,7 @@ make setup                                   # editable install + dev deps
 make test                                    # full regression suite
 coruscant ingest                             # run the lifecycle (offline/reference by default)
 make api                                     # serve the API on :8000
-cd frontend && npm install && npm run dev    # SPA on :5173, proxying /api -> :8000
+cd apps/console && npm install && npm run dev # SPA on :5173, proxying /api -> :8000
 ```
 
 **Production switches** (see [.env.example](.env.example)): `CORUSCANT_LIVE_SOURCES=["sec_edgar"]` for live EDGAR ingestion (declares a contact User-Agent, rate-limited); the live-feed flags above; multi-tenant quotas when an org store is configured.
@@ -105,7 +105,7 @@ React SPA (nginx) ──/api──▶ FastAPI ──▶ knowledge graph · expos
 - `src/coruscant/knowledge_graph` — projection, GICS/MSCI **taxonomy**, **instruments**, query engine, snapshot
 - `src/coruscant/pricing` · `macro` · `news` — the free, gated live feeds
 - `src/coruscant/intelligence` · `search` · `auth` · `apps` — cited intelligence, hybrid retrieval, auth, API/CLI/worker
-- `frontend/` — React + TypeScript SPA
+- `apps/console/` — React + TypeScript SPA (the customer-facing console; see [apps/README.md](apps/README.md))
 
 See the [Platform Brief](docs/PLATFORM.md) (what is platform vs what is this workspace), [docs/global-exposure-architecture.md](docs/global-exposure-architecture.md) (the plan of record), and the [ADRs](docs/adr/).
 
