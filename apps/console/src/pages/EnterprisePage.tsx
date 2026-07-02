@@ -10,8 +10,8 @@ import {
 } from "../icons";
 
 // The enterprise workspace overview. Several org-level capabilities already exist in
-// the platform (collaboration, scoped API keys, admin/policy, data ops) and are wired
-// live here for ENTITLED accounts; the rest is on the roadmap. An un-entitled account
+// the platform (collaboration, scoped API keys, organization settings, data ops) and are
+// wired live here for ENTITLED accounts; the rest is on the roadmap. An un-entitled account
 // sees this overview as an honest preview + upsell — never a live surface it can't use
 // (the entitlement is decided by the backend; see useAuth().enterprise). docs/PLATFORM.md.
 
@@ -36,10 +36,10 @@ const LIVE: Capability[] = [
     body: "Programmatic access with scoped API keys and account controls for your integrations.",
   },
   {
-    to: "/enterprise/policy",
+    to: "/enterprise/organization",
     Icon: IconShield,
-    title: "Policy & audit",
-    body: "Admin console: model routing, customers, audit trail, and the dead-letter queue.",
+    title: "Organization",
+    body: "Your organization's plan, usage, members, and access — org self-service.",
   },
   {
     to: "/enterprise/sources",
@@ -63,11 +63,11 @@ const PLANNED: { Icon: Icon; title: string; body: string }[] = [
 ];
 
 export function EnterprisePage() {
-  const { email, role, enterprise } = useAuth();
-  // Policy & audit opens the admin console, which is admin-only (the backend 403s a
-  // non-admin). Only surface it as "available now" to admins — everyone else shouldn't
-  // be sold a card that dead-ends.
-  const live = LIVE.filter((c) => c.to !== "/enterprise/policy" || role === "admin");
+  const { email, enterprise } = useAuth();
+  // Every capability here is customer-facing org self-service — internal Coruscant
+  // operations moved to the separate admin app (apps/admin) in Phase 9, so there is no
+  // admin-only card to filter out.
+  const live = LIVE;
 
   return (
     <div className="stack gap-lg">

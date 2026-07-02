@@ -20,9 +20,11 @@ venv/
 data/
 *.db
 
-# Console (apps/console) build artifacts / deps
+# Frontend app build artifacts / deps
 apps/console/node_modules/
 apps/console/dist/
+apps/admin/node_modules/
+apps/admin/dist/
 
 # Editor / OS
 .DS_Store

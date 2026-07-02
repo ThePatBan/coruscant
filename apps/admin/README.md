@@ -1,22 +1,49 @@
-# `apps/admin` — Internal admin console (planned)
+# `apps/admin` — Internal admin console
 
 **Deploy target:** `admin.coruscant.com`
-**Audience:** internal operators
-**Status:** placeholder — admin currently lives **embedded in `apps/console`**.
+**Audience:** Coruscant operations staff (admin accounts only)
+**Status:** live app — extracted from `apps/console` in Phase 9.
 
-The eventual standalone internal-operations console: the LLM gateway/admin, tenant and
-entitlement management, and ingestion/observability controls.
+The standalone internal-operations console. It is a separate deployable so that
+`console.coruscant.com` stays purely customer-facing and internal operations live on
+their own origin.
 
-### Where admin lives today
+## What's here
 
-For now the admin surface is a **route inside the console**, not a separate app:
+A Vite + React SPA (no router — a single authenticated surface):
 
-- Route: `/admin` in [`apps/console/src/App.tsx`](../console/src/App.tsx)
-- Page: [`apps/console/src/pages/AdminPage.tsx`](../console/src/pages/AdminPage.tsx)
+- **Model routing** — route each task tier to a provider/model, manage provider keys,
+  live-test a tier. (`GET/PUT /admin/llm`, `POST /admin/llm/test/{tier}`)
+- **Customers** — every account, its role, join date, and API usage.
+  (`GET /admin/customers`)
 
-Extracting it into this app (its own build, its own `admin.coruscant.com` deploy, with a
-shared auth/api client) is a **later phase**. Until then this directory intentionally
-contains only this README so the boundary is visible and reserved — no code is duplicated
-here, and CI does not build it.
+## Access
+
+Staff-only. The app signs in against `/auth/login`, reads the role from `/auth/me`, and
+admits only `role === "admin"` (see [`src/access.ts`](src/access.ts)). This is only a
+shell gate — the backend is the real authority: every `/admin/*` route is guarded by
+`require_admin` (see `src/coruscant/apps/api.py`).
+
+## API access
+
+Same-origin only. The app calls `/api/*`, which nginx proxies to the API
+([`nginx.conf`](nginx.conf)) — the exact-origin model for `admin.coruscant.com`. No CORS
+is involved; auth is Bearer-token (no cookies).
+
+## Develop
+
+```bash
+npm install
+npm run dev      # http://localhost:5174 (proxies /api -> http://localhost:8000)
+npm test         # vitest — pure access logic
+npm run build    # tsc -b && vite build
+```
+
+## Design system
+
+The visual language is the shared Coruscant design system. [`src/index.css`](src/index.css)
+is copied verbatim from the console; admin-only chrome is in
+[`src/admin-shell.css`](src/admin-shell.css). Extracting the shared stylesheet into a
+package is deferred to Phase 11 (see [../README.md](../README.md)).
 
 See [../README.md](../README.md) for the full frontend-surface map.

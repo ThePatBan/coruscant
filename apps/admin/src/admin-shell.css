@@ -1,0 +1,42 @@
+/* Admin-app-specific chrome. The shared design system (tokens, cards, buttons, tables,
+   auth card, .admin console styles) comes from index.css — copied verbatim from the
+   console. Only the standalone top-bar + content shell lives here, mirroring the
+   console's .topbar / .content so the two apps stay visually cohesive. */
+
+.admin-app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.admin-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 28px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.admin-topbar .brand {
+  padding: 0;
+}
+
+.admin-topbar .stats {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.admin-main {
+  padding: 32px 28px 80px;
+  width: 100%;
+  max-width: calc(var(--content-max) + 56px);
+  margin: 0 auto;
+}
