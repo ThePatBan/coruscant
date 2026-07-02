@@ -13,10 +13,10 @@ from hashlib import sha256
 from pathlib import Path
 from urllib.error import URLError
 
-from coruscant.apps.runtime import (
+from coruscant.apps.runtime import build_schedule_store
+from coruscant.apps.workspace_runtime import (
     build_registry,
     build_source_resolver,
-    build_schedule_store,
     run_ingestion,
 )
 from coruscant.common.config import CompanyConfig, Settings, SourceSetting, load_entities

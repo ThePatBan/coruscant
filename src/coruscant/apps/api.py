@@ -27,7 +27,6 @@ from coruscant.apps.runtime import (
     load_engine,
     load_graph_store,
     load_run_status,
-    source_monitoring,
 )
 from coruscant.apps.workspace_runtime import (
     build_macro_service,
@@ -35,6 +34,7 @@ from coruscant.apps.workspace_runtime import (
     build_portfolio_store,
     build_price_service,
     build_watchlist_store,
+    source_monitoring,
 )
 from coruscant.commercial.models import (
     DEFAULT_PLAN,

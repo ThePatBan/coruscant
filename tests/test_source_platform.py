@@ -5,7 +5,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from coruscant.apps.runtime import build_schedule_store, due_source_types, run_ingestion
+from coruscant.apps.runtime import build_schedule_store
+from coruscant.apps.workspace_runtime import (
+    due_source_types,
+    run_ingestion,
+)
 from coruscant.common.config import CompanyConfig, Settings, SourceSetting
 from coruscant.infrastructure.catalog import SqliteDocumentCatalog
 from coruscant.infrastructure.repositories import (

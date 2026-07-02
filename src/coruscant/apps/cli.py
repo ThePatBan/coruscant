@@ -12,15 +12,15 @@ import argparse
 from coruscant.apps.runtime import (
     backup,
     build_schedule_store,
-    due_source_types,
     load_engine,
     load_graph_store,
-    run_ingestion,
     seed_demo_user,
 )
 from coruscant.apps.workspace_runtime import (
+    due_source_types,
     run_anchor,
     run_coverage,
+    run_ingestion,
     run_ownership,
     run_portfolio,
     run_screening,
